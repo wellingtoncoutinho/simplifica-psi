@@ -10,10 +10,16 @@ export interface Patient {
   gender?: string;
   birthDate?: string;
   document?: string;
+  cpf?: string;
   occupation?: string;
+  profession?: string;
   address?: string;
   medication?: string; // Mantido por retrocompatibilidade, mas vamos focar em currentMedication no novo form
   emergencyContact?: string;
+  emergencyName?: string;
+  emergencyRelation?: string;
+  emergencyPhone?: string;
+  paymentNotes?: string;
   // Campos de Anamnese
   mainComplaint?: string;
   familyHistory?: string;

@@ -223,6 +223,22 @@ export default function App() {
       return;
     }
 
+    // Profile Settings Listener
+    const unsubProfile = onSnapshot(doc(db, 'profiles', user.uid), (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        setProfileSettings({
+          name: data.name || '',
+          crp: data.crp || '',
+          logo: data.logo || ''
+        });
+        // Also update localStorage as backup/cache
+        localStorage.setItem('prof_name', data.name || '');
+        localStorage.setItem('prof_crp', data.crp || '');
+        localStorage.setItem('prof_logo', data.logo || '');
+      }
+    });
+
     const qPatients = query(collection(db, 'patients'), where('ownerId', '==', user.uid));
     const unsubPatients = onSnapshot(qPatients, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Patient));
@@ -242,6 +258,7 @@ export default function App() {
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'transactions'));
 
     return () => {
+      unsubProfile();
       unsubPatients();
       unsubSessions();
       unsubTransactions();
@@ -299,7 +316,9 @@ export default function App() {
         gender: data.gender || '',
         birthDate: data.birthDate || '',
         document: data.document || '',
+        cpf: data.document || '',
         occupation: data.occupation || '',
+        profession: data.occupation || '',
         address: data.address || '',
         medication: data.medication || '',
         emergencyContact: data.emergencyContact || '',
@@ -1003,12 +1022,27 @@ export default function App() {
             <ProfileSettingsModal
               initialData={profileSettings}
               onClose={() => setIsSettingsOpen(false)}
-              onSave={(data: any) => {
-                localStorage.setItem('prof_name', data.name);
-                localStorage.setItem('prof_crp', data.crp);
-                localStorage.setItem('prof_logo', data.logo);
-                setProfileSettings(data);
-                setIsSettingsOpen(false);
+              onSave={async (data: any) => {
+                if (user) {
+                  try {
+                    await setDoc(doc(db, 'profiles', user.uid), {
+                      ...data,
+                      updatedAt: serverTimestamp()
+                    });
+                    // setProfileSettings will be updated by the onSnapshot listener
+                    setIsSettingsOpen(false);
+                  } catch (err) {
+                    console.error("Erro ao salvar perfil:", err);
+                    alert("Erro ao salvar configurações do perfil no banco de dados.");
+                  }
+                } else {
+                  // Fallback to localStorage if no user
+                  localStorage.setItem('prof_name', data.name);
+                  localStorage.setItem('prof_crp', data.crp);
+                  localStorage.setItem('prof_logo', data.logo);
+                  setProfileSettings(data);
+                  setIsSettingsOpen(false);
+                }
               }}
             />
           )}
@@ -1177,7 +1211,7 @@ function DashboardView({
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard onClick={onGoToAgenda} title="Sessões Hoje" value={validSessions.filter(s => s.date === new Date().toISOString().split('T')[0]).length.toString()} subtext="Agendadas para hoje" icon={CalendarIcon} color="text-purple-400" />
+        <StatCard onClick={onGoToAgenda} title="Sessões Hoje" value={validSessions.filter(s => s.date === format(new Date(), 'yyyy-MM-dd') && s.status !== 'Cancelada').length.toString()} subtext="Agendadas para hoje" icon={CalendarIcon} color="text-purple-400" />
         <StatCard onClick={() => {}} title="Pacientes Ativos" value={patients.filter(p => p.status !== 'Inativo').length.toString()} subtext="Gestão total" icon={Users} color="text-blue-400" />
         <StatCard onClick={() => {}} title="Receita Mensal Prevista" value={formatCurrency(monthlyPredictedIncome)} subtext="Previsão baseada em sessões" icon={DollarSign} color="text-pink-400" />
         <StatCard onClick={onGoToAgenda} title="Agendamentos da Semana" value={weeklySessions.length.toString()} subtext="Sessões nesta semana" icon={BarChart3} color="text-orange-400" />
@@ -1659,7 +1693,6 @@ function PatientsListView({
               <tr>
                 <th className="px-6 py-4">Nome</th>
                 <th className="px-6 py-4">Status</th>
-                <th className="px-6 py-4">Sessões</th>
                 <th className="px-6 py-4">Última Sessão</th>
                 <th className="px-8 py-4 text-center">Ações</th>
               </tr>
@@ -1690,7 +1723,6 @@ function PatientsListView({
                        {patient.status || 'Ativo'}
                      </span>
                   </td>
-                  <td className="px-6 py-5 text-sm text-text-muted">{patient.sessions} sessões</td>
                   <td className="px-6 py-5 text-sm text-text-muted">{patient.lastSession}</td>
                   <td className="px-6 py-5" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-center gap-4">
@@ -1755,7 +1787,7 @@ function PatientsListView({
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-text-muted">Nenhum paciente encontrado.</td>
+                  <td colSpan={4} className="px-6 py-12 text-center text-text-muted">Nenhum paciente encontrado.</td>
                 </tr>
               )}
             </tbody>
@@ -1788,11 +1820,7 @@ function PatientsListView({
                 </span>
               </div>
               
-              <div className="grid grid-cols-2 gap-4 text-xs">
-                <div className="space-y-1">
-                  <p className="text-[9px] text-text-muted uppercase font-bold tracking-widest">Sessões</p>
-                  <p className="text-text-main">{patient.sessions} sessões</p>
-                </div>
+              <div className="grid grid-cols-1 gap-4 text-xs">
                 <div className="space-y-1">
                   <p className="text-[9px] text-text-muted uppercase font-bold tracking-widest">Última</p>
                   <p className="text-text-main truncate">{patient.lastSession}</p>
@@ -1907,6 +1935,8 @@ function PatientDetailsView({
   
   const [expandedEvolutions, setExpandedEvolutions] = useState<Set<number>>(new Set());
   const [generatingPdfId, setGeneratingPdfId] = useState<number | null>(null);
+  const [isGeneratingAllPdf, setIsGeneratingAllPdf] = useState(false);
+  const [isSavingEvolution, setIsSavingEvolution] = useState(false);
 
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<any>(null);
@@ -1920,15 +1950,16 @@ function PatientDetailsView({
     if (patient) {
       setEditForm({
         ...patient,
-        cpf: patient.cpf || '',
+        cpf: patient.cpf || patient.document || '',
         birthDate: patient.birthDate || '',
-        profession: patient.profession || '',
+        profession: patient.profession || patient.occupation || '',
         emergencyName: patient.emergencyName || '',
         emergencyRelation: patient.emergencyRelation || '',
         emergencyPhone: patient.emergencyPhone || '',
         amount: patient.amount || '',
         sessions: patient.sessions || '0',
-        status: patient.status || 'Ativo'
+        status: patient.status || 'Ativo',
+        paymentNotes: patient.paymentNotes || ''
       });
     }
   }, [patient]);
@@ -1995,31 +2026,36 @@ function PatientDetailsView({
     }
   };
 
-  const handleAddEvolution = () => {
-    if (!newEvolutionNote.trim()) return;
+  const handleAddEvolution = async () => {
+    if (!newEvolutionNote.trim() || isSavingEvolution) return;
 
-    const formattedDate = evolutionDate.split('-').reverse().join('/');
+    setIsSavingEvolution(true);
+    try {
+      const formattedDate = evolutionDate.split('-').reverse().join('/');
 
-    const newEvolution = {
-      id: Date.now(),
-      date: formattedDate,
-      time: evolutionTime,
-      sessionNumber: evolutionSessionNumber,
-      note: newEvolutionNote
-    };
+      const newEvolution = {
+        id: Date.now(),
+        date: formattedDate,
+        time: evolutionTime,
+        sessionNumber: evolutionSessionNumber,
+        note: newEvolutionNote
+      };
 
-    onUpdatePatient({
-      ...patient,
-      clinicalData: {
-        ...clinicalData,
-        evoluções: [newEvolution, ...clinicalData.evoluções]
-      }
-    });
+      await onUpdatePatient({
+        ...patient,
+        clinicalData: {
+          ...clinicalData,
+          evoluções: [newEvolution, ...clinicalData.evoluções]
+        }
+      });
 
-    setNewEvolutionNote("");
-    setTranscriptionText("");
-    setEvolutionSessionNumber(prev => prev + 1);
-    setIsAddingEvolution(false);
+      setNewEvolutionNote("");
+      setTranscriptionText("");
+      setEvolutionSessionNumber(prev => prev + 1);
+      setIsAddingEvolution(false);
+    } finally {
+      setIsSavingEvolution(false);
+    }
   };
 
   const handleGenerateEvolution = async () => {
@@ -2034,9 +2070,11 @@ function PatientDetailsView({
     setIsGeneratingEvolution(true);
     try {
       const ai = new GoogleGenAI({ apiKey });
-      const prompt = `Atue como um psicólogo clínico experiente. Transforme a seguinte transcrição bruta de um áudio em um relato de sessão clínica fluido, detalhado, bem organizado em parágrafos e escrito de forma profissional, mas com um tom pessoal e menos engessado (estilo relato de caso).
+      const prompt = `Atue como um psicólogo clínico experiente. Transforme a seguinte transcrição bruta de um áudio em um relato de sessão clínica organizado em texto corrido e parágrafos, escrito de forma profissional, mas com um tom pessoal (estilo relato de caso).
       
-REGRA IMPORTANTÍSSIMA: Substitua TODOS os nomes próprios de pessoas (pacientes, parceiros, parentes, etc) mencionados na transcrição APENAS pela letra inicial do nome seguida de ponto (exemplo: Gabi -> G., Alana -> A., Carol -> C.). 
+REGRA IMPORTANTÍSSIMA 1: NUNCA invente, presuma ou adicione informações que não estejam na transcrição bruta. Se a transcrição for curta e contiver apenas o básico, devolva um relato curto e básico. O tamanho e a quantidade de detalhes do seu relato devem ser estritamente proporcionais à transcrição fornecida.
+
+REGRA IMPORTANTÍSSIMA 2: Substitua TODOS os nomes próprios de pessoas (pacientes, parceiros, parentes, etc) mencionados na transcrição APENAS pela letra inicial do nome seguida de ponto (exemplo: Gabi -> G., Alana -> A., Carol -> C.). 
 
 Mantenha o fluxo de narrativa em primeira pessoa do terapeuta (ex: "A paciente relatou...", "Questionei se...", "Trabalhei com ela..."). Não adicione saudações, devolva apenas o texto final do relato.
 
@@ -2215,7 +2253,9 @@ Relato:
       const finalY3 = (doc as any).lastAutoTable.finalY || finalY2;
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
-      doc.text("Wellington Coutinho\nPsicólogo Clínico | CRP 06/230538", 140, finalY3 + 30, { align: "center" });
+      const profName = profileSettings.name || "Profissional não cadastrado";
+      const profCRP = profileSettings.crp ? `CRP ${profileSettings.crp}` : "CRP não cadastrado";
+      doc.text(`${profName}\nPsicólogo Clínico | ${profCRP}`, 140, finalY3 + 30, { align: "center" });
 
       const pdfBlob = doc.output('blob');
       const safeDate = (evo.date || 'data').replace(/[\/\\]/g, '-');
@@ -2234,6 +2274,103 @@ Relato:
       }
     } finally {
       setGeneratingPdfId(null);
+    }
+  };
+
+  const handleGenerateAllPDFRecords = async () => {
+    if (!clinicalData.evoluções || clinicalData.evoluções.length === 0) {
+      alert("Não há evoluções registradas para gerar o prontuário.");
+      return;
+    }
+
+    setIsGeneratingAllPdf(true);
+    try {
+      const doc = new jsPDF();
+      let startY = 20;
+
+      if (profileSettings?.logo) {
+        try {
+          doc.addImage(profileSettings.logo, 'JPEG', 14, 10, 30, 30);
+          startY = 50;
+        } catch (e) {
+          console.error("Erro ao adicionar logo:", e);
+        }
+      }
+
+      if (profileSettings?.name || profileSettings?.crp) {
+        doc.setFontSize(10);
+        doc.setFont("helvetica", "normal");
+        const rightX = 196;
+        if (profileSettings.name) {
+          doc.text(`Psicólogo(a): ${profileSettings.name}`, rightX, 15, { align: 'right' });
+        }
+        if (profileSettings.crp) {
+          doc.text(`CRP: ${profileSettings.crp}`, rightX, 20, { align: 'right' });
+        }
+      }
+
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "bold");
+      doc.text("Prontuário Psicológico Completo", 14, startY);
+
+      doc.setFontSize(12);
+      doc.text("1. Identificação do Paciente", 14, startY + 15);
+      
+      autoTable(doc, {
+        startY: startY + 20,
+        theme: 'grid',
+        headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' },
+        body: [
+          ['Nome Completo', patient.name || ''],
+          ['Data de Nascimento', patient.birthDate || ''],
+          ['CPF/RG', patient.cpf || patient.document || ''],
+          ['Contatos (Telefone/E-mail)', `${patient.phone || ''} / ${patient.email || ''}`],
+        ],
+        columnStyles: {
+          0: { cellWidth: 70, fontStyle: 'bold' },
+          1: { cellWidth: 'auto' }
+        }
+      });
+
+      let currentY = (doc as any).lastAutoTable.finalY + 20;
+      doc.text("2. Evoluções Clínicas", 14, currentY);
+      currentY += 10;
+
+      const sortedEvolutions = [...clinicalData.evoluções].sort((a, b) => {
+        const dateA = a.date.split('/').reverse().join('-');
+        const dateB = b.date.split('/').reverse().join('-');
+        return dateA.localeCompare(dateB);
+      });
+
+      sortedEvolutions.forEach((evo, index) => {
+        if (currentY > 250) {
+          doc.addPage();
+          currentY = 20;
+        }
+
+        doc.setFontSize(10);
+        doc.setFont("helvetica", "bold");
+        doc.text(`Sessão #${evo.sessionNumber || index + 1} - ${evo.date} ${evo.time ? `às ${evo.time}` : ''}`, 14, currentY);
+        currentY += 7;
+        
+        doc.setFont("helvetica", "normal");
+        const lines = doc.splitTextToSize(evo.note, 180);
+        doc.text(lines, 14, currentY);
+        currentY += (lines.length * 5) + 10;
+      });
+
+      const pdfBlob = doc.output('blob');
+      const fileName = `Prontuario_Completo_${patient.name.replace(/\s+/g, '_')}.pdf`;
+      const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+      
+      onUpload(file, 'prontuario');
+      alert("Prontuário completo gerado e salvo na Biblioteca de Documentos com sucesso!");
+
+    } catch (err: any) {
+      console.error(err);
+      alert("Erro ao gerar PDF completo.");
+    } finally {
+      setIsGeneratingAllPdf(false);
     }
   };
 
@@ -2483,7 +2620,7 @@ Relato:
                                 className="text-xs font-bold text-text-main bg-transparent outline-none"
                               />
                             ) : (
-                              <span className="text-xs font-bold text-text-main">{patient.cpf || 'Não informado'}</span>
+                              <span className="text-xs font-bold text-text-main">{patient.cpf || patient.document || 'Não informado'}</span>
                             )}
                           </div>
                           <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
@@ -2511,7 +2648,7 @@ Relato:
                                 className="text-xs font-bold text-text-main bg-transparent outline-none"
                               />
                             ) : (
-                              <span className="text-xs font-bold text-text-main">{patient.profession || 'Não informada'}</span>
+                              <span className="text-xs font-bold text-text-main">{patient.profession || patient.occupation || 'Não informada'}</span>
                             )}
                           </div>
                         </div>
@@ -2659,6 +2796,24 @@ Relato:
                             <span className="text-xs font-bold text-text-main">{patient.sessions || '0'}</span>
                           )}
                         </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-8 border-t border-border-ui space-y-4">
+                      <h4 className="text-xs font-bold text-primary uppercase tracking-widest">Informações de Pagamento (Notas Internas)</h4>
+                      <div className="p-4 rounded-2xl bg-surface-muted border border-border-ui">
+                        {isEditing ? (
+                          <textarea 
+                            placeholder="Ex: Paga todo dia 05 e 20, valor diferenciado, etc..."
+                            value={editForm.paymentNotes} 
+                            onChange={(e) => setEditForm({...editForm, paymentNotes: e.target.value})}
+                            className="w-full text-sm text-text-main bg-transparent outline-none min-h-[100px] resize-none"
+                          />
+                        ) : (
+                          <p className="text-sm text-text-main whitespace-pre-wrap">
+                            {patient.paymentNotes || 'Nenhuma informação de pagamento registrada.'}
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -2821,10 +2976,10 @@ Relato:
                           </button>
                           <button 
                             onClick={handleAddEvolution}
-                            disabled={!newEvolutionNote.trim()}
+                            disabled={!newEvolutionNote.trim() || isSavingEvolution}
                             className="bg-primary text-white px-6 py-2 rounded-xl text-xs font-bold hover:opacity-90 transition-all disabled:opacity-50"
                           >
-                            Salvar Evolução
+                            {isSavingEvolution ? 'Salvando...' : 'Salvar Evolução'}
                           </button>
                         </div>
                       </motion.div>
@@ -3113,6 +3268,23 @@ Relato:
                           }} 
                           className="hidden" 
                         />
+                         <button 
+                          onClick={handleGenerateAllPDFRecords}
+                          disabled={isGeneratingAllPdf}
+                          className="bg-blue-500/10 text-blue-500 border border-blue-500/20 px-4 py-2 rounded-xl text-xs font-bold hover:bg-blue-500 hover:text-white transition-all uppercase flex items-center gap-2"
+                        >
+                           {isGeneratingAllPdf ? (
+                             <>
+                               <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                               Gerando...
+                             </>
+                           ) : (
+                             <>
+                               <FileDown size={14} />
+                               Baixar Prontuário Completo
+                             </>
+                           )}
+                        </button>
                         <button 
                           onClick={() => { setUploadCategory('prontuario'); setTimeout(() => fileInputRef.current?.click(), 0); }}
                           className="bg-primary/20 text-primary px-4 py-2 rounded-xl text-xs font-bold hover:bg-primary hover:text-white transition-all border border-primary/20 uppercase"
