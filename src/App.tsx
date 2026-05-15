@@ -61,7 +61,8 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Cake,
-  Sparkles
+  Sparkles,
+  Menu
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency } from './lib/utils';
