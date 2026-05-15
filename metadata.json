@@ -1,0 +1,13 @@
+{
+  "name": "ProntuPsi - Gestão Psicológica",
+  "description": "Dashboard inteligente para psicólogos com gestão de prontuários, financeiro e agenda integrada com IA.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "AI-powered session summaries",
+    "Patient management",
+    "Financial tracking",
+    "Integrated calendar"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "projectId": "simpsifica",
+  "appId": "1:818632391464:web:7c9598de653fa146c2ee1d",
+  "apiKey": "AIzaSyAsx_SBWcINH7DrJ6ExTJhCi-E3HTzYpzQ",
+  "authDomain": "simpsifica.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "simpsifica.firebasestorage.app",
+  "messagingSenderId": "818632391464",
+  "measurementId": ""
+}

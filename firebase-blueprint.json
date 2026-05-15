@@ -1,0 +1,118 @@
+{
+  "entities": {
+    "Patient": {
+      "title": "Patient",
+      "description": "Information about a patient and their clinical history.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
+        "sessions": { "type": "number" },
+        "lastSession": { "type": "string" },
+        "photo": { "type": "string" },
+        "cpf": { "type": "string" },
+        "birthDate": { "type": "string" },
+        "profession": { "type": "string" },
+        "emergencyName": { "type": "string" },
+        "emergencyRelation": { "type": "string" },
+        "emergencyPhone": { "type": "string" },
+        "clinicalData": {
+          "type": "object",
+          "properties": {
+            "anamnese": {
+              "type": "object",
+              "properties": {
+                "queixa": { "type": "string" },
+                "historico": { "type": "string" },
+                "exame": { "type": "string" }
+              }
+            },
+            "evoluções": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": { "type": "number" },
+                  "date": { "type": "string" },
+                  "note": { "type": "string" }
+                }
+              }
+            },
+            "smartNotes": {
+              "type": "object",
+              "properties": {
+                "padroes": { "type": "string" },
+                "progresso": { "type": "string" },
+                "sugestao": { "type": "string" },
+                "topicos": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "aiSummaries": {
+          "type": "object",
+          "properties": {
+            "observacoes": { "type": "array", "items": { "type": "string" } },
+            "evolucao": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "ownerId"]
+    },
+    "Session": {
+      "title": "Session",
+      "description": "Information about a therapy session.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "patientId": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "duration": { "type": "string" },
+        "type": { "enum": ["Presencial", "Online"] },
+        "status": { "enum": ["Agendada", "Realizada", "Cancelada"] },
+        "recurrence": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["patientId", "date", "time", "ownerId"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Information about a financial transaction.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "patientId": { "type": "string" },
+        "patientName": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "status": { "enum": ["Pago", "Aguardando", "Cancelada"] },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["patientId", "amount", "date", "ownerId"]
+    }
+  },
+  "firestore": {
+    "/patients/{patientId}": {
+      "schema": "Patient",
+      "description": "Collection of patients for the clinic."
+    },
+    "/sessions/{sessionId}": {
+      "schema": "Session",
+      "description": "Collection of sessions scheduled."
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Collection of financial transactions."
+    }
+  }
+}

@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #09090b;
+  --color-card: #14141d;
+  --color-primary: #8b5cf6;
+  --color-primary-dark: #7c3aed;
+  --color-secondary: #ec4899;
+  --color-accent: #3b82f6;
+  --color-text-main: #fafafa;
+  --color-text-muted: #a1a1aa;
+  --color-border-ui: rgba(255, 255, 255, 0.05);
+  --color-bg-muted: rgba(255, 255, 255, 0.03);
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-background text-text-main font-sans antialiased transition-colors duration-300;
+  }
+
+  body.light {
+    --color-background: #ffffff;
+    --color-card: #f8fafc;
+    --color-text-main: #0f172a;
+    --color-text-muted: #64748b;
+    --color-border-ui: #e2e8f0;
+    --color-bg-muted: rgba(15, 23, 42, 0.03);
+  }
+}
+
+.glass-card {
+  @apply bg-card border border-border-ui shadow-xl backdrop-blur-sm transition-all duration-300;
+}
+
+.side-nav-active {
+  @apply bg-primary/10 text-primary border border-primary/20;
+}
+
+.bg-surface-muted {
+  @apply bg-bg-muted transition-colors duration-300;
+}
+
+.gradient-border {
+  background: linear-gradient(var(--color-card), var(--color-card)) padding-box,
+              linear-gradient(to right, var(--color-primary), var(--color-secondary)) border-box;
+  border: 1px solid transparent;
+}
+
+.gradient-border {
+  background: linear-gradient(var(--color-card), var(--color-card)) padding-box,
+              linear-gradient(to right, var(--color-primary), var(--color-secondary)) border-box;
+  border: 1px solid transparent;
+}

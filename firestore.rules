@@ -1,0 +1,96 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Primitives
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() { 
+      return isSignedIn() && request.auth.token.email == 'acessoriavitrinni@gmail.com' && request.auth.token.email_verified == true; 
+    }
+
+    function isOwner(data) { 
+      return isSignedIn() && data.get('ownerId', null) == request.auth.uid; 
+    }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // Validation Blueprints
+    function isValidPatient(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.ownerId == request.auth.uid
+        && (data.get('status', 'Ativo') in ['Ativo', 'Inativo'])
+        && (data.get('email', null) == null || (data.email is string && data.email.size() <= 200))
+        && (data.get('phone', null) == null || (data.phone is string && data.phone.size() <= 50))
+        && (data.get('sessions', 0) is number)
+        && (data.get('lastSession', null) == null || (data.lastSession is string && data.lastSession.size() <= 100))
+        && (data.get('photo', null) == null || (data.photo is string && data.photo.size() <= 1000))
+        && (data.get('cpf', null) == null || (data.cpf is string && data.cpf.size() <= 20))
+        && (data.get('birthDate', null) == null || (data.birthDate is string && data.birthDate.size() <= 20))
+        && (data.get('profession', null) == null || (data.profession is string && data.profession.size() <= 100))
+        && (data.get('emergencyName', null) == null || (data.emergencyName is string && data.emergencyName.size() <= 100))
+        && (data.get('emergencyRelation', null) == null || (data.emergencyRelation is string && data.emergencyRelation.size() <= 100))
+        && (data.get('emergencyPhone', null) == null || (data.emergencyPhone is string && data.emergencyPhone.size() <= 50))
+        && (data.get('clinicalData', null) == null || data.clinicalData is map)
+        && (data.get('aiSummaries', null) == null || data.aiSummaries is map)
+        && (data.get('createdAt', null) == null || data.createdAt is string)
+        && (data.get('updatedAt', null) == null || data.updatedAt is string);
+    }
+
+    function isValidSession(data) {
+      return data.patientId is string && isValidId(data.patientId)
+        && data.date is string && data.date.size() <= 20
+        && data.time is string && data.time.size() <= 10
+        && data.ownerId == request.auth.uid
+        && (data.get('duration', '50min') is string)
+        && (data.get('type', 'Presencial') in ['Presencial', 'Online'])
+        && (data.get('status', 'Agendada') in ['Agendada', 'Realizada', 'Cancelada'])
+        && (data.get('recurrence', null) == null || (data.recurrence is string && data.recurrence.size() <= 50))
+        && (data.get('createdAt', null) == null || data.createdAt is string)
+        && (data.get('updatedAt', null) == null || data.updatedAt is string);
+    }
+
+    function isValidTransaction(data) {
+      return data.patientId is string && isValidId(data.patientId)
+        && data.amount is number
+        && data.date is string && data.date.size() <= 20
+        && data.ownerId == request.auth.uid
+        && (data.get('patientName', null) == null || (data.patientName is string && data.patientName.size() <= 200))
+        && (data.get('status', 'Aguardando') in ['Pago', 'Aguardando', 'Cancelada'])
+        && (data.get('createdAt', null) == null || data.createdAt is string)
+        && (data.get('updatedAt', null) == null || data.updatedAt is string);
+    }
+
+    // Collection Match Blocks
+    match /patients/{patientId} {
+      allow get: if isOwner(existing());
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(patientId) && isValidPatient(incoming());
+      allow update: if isOwner(existing()) && isValidPatient(incoming()) 
+        && incoming().ownerId == existing().ownerId;
+      allow delete: if isOwner(existing()) || isAdmin();
+    }
+
+    match /sessions/{sessionId} {
+      allow get: if isOwner(existing());
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(sessionId) && isValidSession(incoming());
+      allow update: if isOwner(existing()) && isValidSession(incoming())
+        && incoming().ownerId == existing().ownerId;
+      allow delete: if isOwner(existing()) || isAdmin();
+    }
+
+    match /transactions/{transactionId} {
+      allow get: if isOwner(existing());
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(transactionId) && isValidTransaction(incoming());
+      allow update: if isOwner(existing()) && isValidTransaction(incoming())
+        && incoming().ownerId == existing().ownerId;
+      allow delete: if isOwner(existing()) || isAdmin();
+    }
+  }
+}
