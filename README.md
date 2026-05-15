@@ -18,3 +18,4 @@ View your app in AI Studio: https://ai.studio/apps/07a2437b-5ffa-458c-8160-0c871
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+# simplifica-psi
