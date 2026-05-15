@@ -180,8 +180,9 @@ export default function App() {
   const [triageInitialName, setTriageInitialName] = useState('');
   const [triageInitialDay, setTriageInitialDay] = useState('');
   const [triageInitialTime, setTriageInitialTime] = useState('');
-  const [lastAction, setLastAction] = useState<{ type: string, ids: string[], oldData?: any } | null>(null);
+  const [lastAction, setLastAction] = useState<any>(null);
   const [showUndoToast, setShowUndoToast] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Auth Observer
   useEffect(() => {
@@ -728,16 +729,24 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen bg-background text-text-main overflow-hidden">
-      {/* Sidebar */}
-      <aside className="w-64 border-r border-white/5 flex flex-col bg-card/50 backdrop-blur-md">
-        <div className="p-6 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center">
-            <span className="font-bold text-xl italic text-white flex items-baseline">
-              S<span className="text-xs">p</span>
-            </span>
+    <div className="flex h-screen bg-background text-text-main overflow-hidden relative">
+      {/* Sidebar - Desktop and Mobile */}
+      <aside className={cn(
+        "fixed inset-y-0 left-0 z-50 w-72 border-r border-white/5 flex flex-col bg-card/90 backdrop-blur-xl transition-all duration-300 lg:static lg:w-64 lg:bg-card/50",
+        isMobileMenuOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+      )}>
+        <div className="p-6 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center">
+              <span className="font-bold text-xl italic text-white flex items-baseline">
+                S<span className="text-xs">p</span>
+              </span>
+            </div>
+            <h1 className="text-xl font-bold tracking-tight">Simplifica<span className="text-primary">Psi</span></h1>
           </div>
-          <h1 className="text-xl font-bold tracking-tight">Simplifica<span className="text-primary">Psi</span></h1>
+          <button onClick={() => setIsMobileMenuOpen(false)} className="lg:hidden text-text-muted hover:text-text-main">
+            <ChevronRight className="rotate-180" size={24} />
+          </button>
         </div>
 
         <nav className="flex-1 px-4 space-y-1 py-4">
@@ -747,6 +756,7 @@ export default function App() {
               onClick={() => {
                 setActiveTab(item.id);
                 setSelectedPatient(null);
+                setIsMobileMenuOpen(false);
               }}
               className={cn(
                 "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group text-sm",
@@ -786,44 +796,63 @@ export default function App() {
           </div>
       </aside>
 
+      {/* Backdrop for mobile menu */}
+      <AnimatePresence>
+        {isMobileMenuOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsMobileMenuOpen(false)}
+            className="fixed inset-0 bg-background/60 backdrop-blur-sm z-40 lg:hidden"
+          />
+        )}
+      </AnimatePresence>
+
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto relative bg-background transition-colors duration-300">
         {/* Header */}
-        <header className="sticky top-0 z-20 glass-card border-x-0 border-t-0 p-4 flex items-center justify-between px-8">
+        <header className="sticky top-0 z-30 glass-card border-x-0 border-t-0 p-4 flex items-center justify-between px-4 lg:px-8">
           <div className="flex items-center gap-4 text-text-muted text-sm flex-1">
+             <button 
+               onClick={() => setIsMobileMenuOpen(true)}
+               className="lg:hidden p-2 rounded-xl bg-surface-muted text-text-main"
+             >
+               <Menu size={20} />
+             </button>
              {(activeTab === 'pacientes' || activeTab === 'prontuarios') && !selectedPatient && (
                <div className="flex items-center gap-4 w-full animate-in fade-in slide-in-from-left-4 duration-300">
-                  <Search size={18} className="text-text-muted" />
+                  <Search size={18} className="text-text-muted hidden sm:block" />
                   <input 
                     type="text" 
-                    placeholder="Buscar pacientes ou agendamentos..." 
+                    placeholder="Buscar pacientes..." 
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="bg-transparent border-none outline-none focus:ring-0 w-full max-w-md text-text-main"
+                    className="bg-transparent border-none outline-none focus:ring-0 w-full max-w-md text-text-main text-xs sm:text-sm"
                   />
                </div>
              )}
           </div>
 
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3 lg:gap-6">
             <button 
               onClick={() => setIsSettingsOpen(true)}
               className="text-text-muted hover:text-text-main p-2 rounded-xl bg-surface-muted hover:opacity-80 transition-all shadow-sm"
               title="Configurações do Perfil"
             >
-              <Settings size={20} />
+              <Settings size={18} className="lg:w-5 lg:h-5" />
             </button>
             <button 
               onClick={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
               className="text-text-muted hover:text-text-main p-2 rounded-xl bg-surface-muted hover:opacity-80 transition-all shadow-sm"
             >
-              {theme === 'dark' ? <Moon size={20} /> : <Sun size={20} />}
+              {theme === 'dark' ? <Moon size={18} className="lg:w-5 lg:h-5" /> : <Sun size={18} className="lg:w-5 lg:h-5" />}
             </button>
           </div>
         </header>
 
         {/* Content Area */}
-        <div className="p-8 max-w-7xl mx-auto">
+        <div className="p-4 lg:p-8 max-w-7xl mx-auto">
           <AnimatePresence mode="wait">
             {activeTab === 'dashboard' && (
               <DashboardView 
@@ -1269,17 +1298,17 @@ function AddPatientModal({ onClose, onSave, initialName = '', initialDay = 'Segu
       <motion.div 
         initial={{ scale: 0.9, y: 20 }}
         animate={{ scale: 1, y: 0 }}
-        className="glass-card w-full max-w-4xl rounded-[32px] overflow-hidden shadow-2xl my-8 max-h-[90vh] flex flex-col"
+        className="glass-card w-full max-w-4xl md:rounded-[32px] overflow-hidden shadow-2xl md:my-8 h-full md:max-h-[90vh] flex flex-col"
       >
-        <div className="p-8 flex items-center justify-between border-b border-white/5 shrink-0">
-          <h3 className="text-2xl font-bold text-text-main">Novo Paciente</h3>
+        <div className="p-4 md:p-8 flex items-center justify-between border-b border-white/5 shrink-0">
+          <h3 className="text-xl md:text-2xl font-bold text-text-main">Novo Paciente</h3>
           <button onClick={onClose} className="text-text-muted hover:text-text-main p-2">
             <ChevronRight size={24} className="rotate-180" />
           </button>
         </div>
 
-        <div className="p-8 overflow-y-auto custom-scrollbar flex-1">
-          <form id="add-patient-form" onSubmit={handleSubmit} className="space-y-8">
+        <div className="p-4 md:p-8 overflow-y-auto custom-scrollbar flex-1">
+          <form id="add-patient-form" onSubmit={handleSubmit} className="space-y-6 md:space-y-8">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Basic Info */}
               <div className="space-y-5">
@@ -1562,11 +1591,11 @@ function PatientsListView({
       animate={{ opacity: 1 }}
       className="space-y-6"
     >
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold">Pacientes</h2>
           <p className="text-text-muted text-sm">Gerencie sua lista de pacientes e históricos.</p>
-          <div className="flex gap-4 mt-4">
+          <div className="flex flex-wrap gap-2 mt-4">
             <button 
               onClick={() => setActiveTab('ativos')}
               className={cn(
@@ -1589,7 +1618,7 @@ function PatientsListView({
         </div>
         <button 
           onClick={onAddClick}
-          className="bg-primary hover:bg-primary-dark text-white px-6 py-2.5 rounded-xl font-medium flex items-center gap-2 transition-all shadow-lg shadow-primary/20"
+          className="w-full sm:w-auto bg-primary hover:bg-primary-dark text-white px-6 py-2.5 rounded-xl font-medium flex items-center justify-center gap-2 transition-all shadow-lg shadow-primary/20"
         >
           <Plus size={20} />
           Novo Paciente
@@ -1597,121 +1626,178 @@ function PatientsListView({
       </div>
 
       <div className="glass-card rounded-3xl overflow-visible">
-        <table className="w-full text-left">
-          <thead className="bg-surface-muted text-xs text-text-muted font-bold uppercase tracking-widest">
-            <tr>
-              <th className="px-6 py-4">Nome</th>
-              <th className="px-6 py-4">Status</th>
-              <th className="px-6 py-4">Sessões</th>
-              <th className="px-6 py-4">Última Sessão</th>
-              <th className="px-6 py-4 text-center">Ações</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border-ui">
-            {displayPatients.length > 0 ? displayPatients.map(patient => (
-              <tr 
-                key={patient.id} 
-                className="hover:bg-surface-muted cursor-pointer transition-colors group"
-                onClick={() => onSelect(patient.id)}
-              >
-                <td className="px-6 py-5">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold">
-                      {patient.name[0]}
+        {/* Desktop Table */}
+        <div className="hidden md:block">
+          <table className="w-full text-left">
+            <thead className="bg-surface-muted text-xs text-text-muted font-bold uppercase tracking-widest">
+              <tr>
+                <th className="px-6 py-4">Nome</th>
+                <th className="px-6 py-4">Status</th>
+                <th className="px-6 py-4">Sessões</th>
+                <th className="px-6 py-4">Última Sessão</th>
+                <th className="px-8 py-4 text-center">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border-ui">
+              {displayPatients.length > 0 ? displayPatients.map(patient => (
+                <tr 
+                  key={patient.id} 
+                  className="hover:bg-surface-muted cursor-pointer transition-colors group"
+                  onClick={() => onSelect(patient.id)}
+                >
+                  <td className="px-6 py-5">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold">
+                        {patient.name[0]}
+                      </div>
+                      <div>
+                        <p className="font-medium text-sm">{patient.name}</p>
+                        <p className="text-xs text-text-muted">{patient.email}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-medium text-sm">{patient.name}</p>
-                      <p className="text-xs text-text-muted">{patient.email}</p>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-6 py-5">
-                   <span className={cn(
-                     "text-[10px] px-2 py-0.5 rounded-full border font-bold",
-                     patient.status === 'Inativo' ? "bg-orange-500/10 text-orange-500 border-orange-500/10" : "bg-green-500/10 text-green-400 border-green-500/10"
-                   )}>
-                     {patient.status || 'Ativo'}
-                   </span>
-                </td>
-                <td className="px-6 py-5 text-sm text-text-muted">{patient.sessions} sessões</td>
-                <td className="px-6 py-5 text-sm text-text-muted">{patient.lastSession}</td>
-                <td className="px-6 py-5" onClick={(e) => e.stopPropagation()}>
-                  <div className="flex justify-center gap-4">
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onGoToAgenda();
-                      }}
-                      className="p-1 rounded-lg hover:bg-primary/10 hover:text-primary text-text-muted transition-all"
-                      title="Ver na Agenda"
-                    >
-                      <CalendarIcon size={18} />
-                    </button>
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelect(patient.id);
-                      }}
-                      className="p-1 rounded-lg hover:bg-primary/10 hover:text-primary text-text-muted transition-all"
-                      title="Ver Prontuário"
-                    >
-                      <FileText size={18} />
-                    </button>
-                    <div className="relative">
+                  </td>
+                  <td className="px-6 py-5">
+                     <span className={cn(
+                       "text-[10px] px-2 py-0.5 rounded-full border font-bold",
+                       patient.status === 'Inativo' ? "bg-orange-500/10 text-orange-500 border-orange-500/10" : "bg-green-500/10 text-green-400 border-green-500/10"
+                     )}>
+                       {patient.status || 'Ativo'}
+                     </span>
+                  </td>
+                  <td className="px-6 py-5 text-sm text-text-muted">{patient.sessions} sessões</td>
+                  <td className="px-6 py-5 text-sm text-text-muted">{patient.lastSession}</td>
+                  <td className="px-6 py-5" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-center gap-4">
                       <button 
                         onClick={(e) => {
                           e.stopPropagation();
-                          setOpenMenuId(openMenuId === patient.id ? null : patient.id);
+                          onGoToAgenda();
                         }}
-                        className="p-1 rounded-lg hover:bg-surface-muted-dark hover:text-text-main text-text-muted transition-all"
+                        className="p-1 rounded-lg hover:bg-primary/10 hover:text-primary text-text-muted transition-all"
+                        title="Ver na Agenda"
                       >
-                        <MoreVertical size={18} />
+                        <CalendarIcon size={18} />
                       </button>
-                      
-                      {openMenuId === patient.id && (
-                        <div className="absolute right-0 top-full mt-2 w-48 rounded-xl bg-card border border-border-ui shadow-xl z-30 py-2 animate-in fade-in zoom-in-95 duration-100">
-                          <button 
-                            onClick={() => onSelect(patient.id)}
-                            className="w-full text-left px-4 py-2 text-xs font-bold uppercase text-text-main hover:bg-surface-muted transition-colors flex items-center gap-2"
-                          >
-                            <Users size={14} /> Dados do Perfil
-                          </button>
-                          {activeTab === 'inativos' && (
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onUpdatePatient({ ...patient, status: 'Ativo' });
-                              }}
-                              className="w-full text-left px-4 py-2 text-xs font-bold uppercase text-green-500 hover:bg-green-500/10 transition-colors flex items-center gap-2"
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelect(patient.id);
+                        }}
+                        className="p-1 rounded-lg hover:bg-primary/10 hover:text-primary text-text-muted transition-all"
+                        title="Ver Prontuário"
+                      >
+                        <FileText size={18} />
+                      </button>
+                      <div className="relative">
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenMenuId(openMenuId === patient.id ? null : patient.id);
+                          }}
+                          className="p-1 rounded-lg hover:bg-surface-muted-dark hover:text-text-main text-text-muted transition-all"
+                        >
+                          <MoreVertical size={18} />
+                        </button>
+                        <AnimatePresence>
+                          {openMenuId === patient.id && (
+                            <motion.div 
+                              initial={{ opacity: 0, scale: 0.95 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              exit={{ opacity: 0, scale: 0.95 }}
+                              className="absolute right-0 top-10 w-48 bg-card border border-border-ui rounded-2xl shadow-xl z-20 py-2"
                             >
-                              <TrendingUp size={14} /> Reativar Paciente
-                            </button>
+                               <button 
+                                onClick={() => onUpdatePatient({ ...patient, status: patient.status === 'Inativo' ? 'Ativo' : 'Inativo' })}
+                                className="w-full text-left px-4 py-2 text-xs text-text-main hover:bg-surface-muted transition-colors flex items-center gap-2"
+                               >
+                                  {patient.status === 'Inativo' ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+                                  {patient.status === 'Inativo' ? 'Reativar Paciente' : 'Inativar Paciente'}
+                               </button>
+                               <button 
+                                onClick={() => onDeletePatient(patient.id)}
+                                className="w-full text-left px-4 py-2 text-xs text-red-500 hover:bg-red-500/10 transition-colors flex items-center gap-2"
+                               >
+                                  <Trash2 size={14} />
+                                  Excluir Definitivamente
+                               </button>
+                            </motion.div>
                           )}
-                          <div className="h-px bg-border-ui my-1" />
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onDeletePatient(patient.id);
-                            }}
-                            className="w-full text-left px-4 py-2 text-xs font-bold uppercase text-red-500 hover:bg-red-500/10 transition-colors flex items-center gap-2"
-                          >
-                            <Trash2 size={14} /> {activeTab === 'ativos' ? 'Arquivar Paciente' : 'Excluir Definitivo'}
-                          </button>
-                        </div>
-                      )}
+                        </AnimatePresence>
+                      </div>
                     </div>
+                  </td>
+                </tr>
+              )) : (
+                <tr>
+                  <td colSpan={5} className="px-6 py-12 text-center text-text-muted">Nenhum paciente encontrado.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Mobile List View */}
+        <div className="md:hidden divide-y divide-border-ui">
+          {displayPatients.length > 0 ? displayPatients.map(patient => (
+            <div 
+              key={patient.id} 
+              className="p-4 space-y-4 hover:bg-surface-muted transition-colors"
+              onClick={() => onSelect(patient.id)}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-primary/20 text-primary flex items-center justify-center text-sm font-bold">
+                    {patient.name[0]}
                   </div>
-                </td>
-              </tr>
-            )) : (
-              <tr>
-                <td colSpan={5} className="px-6 py-12 text-center text-text-muted">
-                  Nenhum paciente encontrado para sua busca.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+                  <div>
+                    <p className="font-bold text-sm">{patient.name}</p>
+                    <p className="text-xs text-text-muted truncate max-w-[150px]">{patient.email}</p>
+                  </div>
+                </div>
+                <span className={cn(
+                  "text-[9px] px-2 py-0.5 rounded-full border font-bold uppercase tracking-widest",
+                  patient.status === 'Inativo' ? "bg-orange-500/10 text-orange-500 border-orange-500/10" : "bg-green-500/10 text-green-400 border-green-500/10"
+                )}>
+                  {patient.status || 'Ativo'}
+                </span>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4 text-xs">
+                <div className="space-y-1">
+                  <p className="text-[9px] text-text-muted uppercase font-bold tracking-widest">Sessões</p>
+                  <p className="text-text-main">{patient.sessions} sessões</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[9px] text-text-muted uppercase font-bold tracking-widest">Última</p>
+                  <p className="text-text-main truncate">{patient.lastSession}</p>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2 border-t border-border-ui" onClick={(e) => e.stopPropagation()}>
+                <button 
+                  onClick={() => onGoToAgenda()}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-surface-muted text-text-muted hover:text-primary transition-all text-[10px] font-bold uppercase tracking-widest"
+                >
+                  <CalendarIcon size={14} /> Agenda
+                </button>
+                <button 
+                  onClick={() => onSelect(patient.id)}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary/10 text-primary transition-all text-[10px] font-bold uppercase tracking-widest"
+                >
+                  <FileText size={14} /> Prontuário
+                </button>
+                <button 
+                  onClick={() => setOpenMenuId(openMenuId === patient.id ? null : patient.id)}
+                  className="w-10 h-10 flex items-center justify-center rounded-xl bg-surface-muted text-text-muted"
+                >
+                  <MoreVertical size={18} />
+                </button>
+              </div>
+            </div>
+          )) : (
+            <div className="px-6 py-12 text-center text-text-muted">Nenhum paciente encontrado.</div>
+          )}
+        </div>
       </div>
     </motion.div>
   );
@@ -2254,20 +2340,21 @@ Relato:
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Left Nav */}
-        <div className="lg:col-span-3 space-y-2">
+        {/* Nav with overflow for mobile */}
+        <div className="lg:col-span-3">
+          <div className="flex flex-row overflow-x-auto pb-4 lg:flex-col lg:overflow-visible gap-2 no-scrollbar">
             {[
-              { id: 'perfil', label: 'Perfil do Paciente', icon: Users },
-              { id: 'prontuario', label: 'Prontuário Geral', icon: FileText, badge: 'NOVO' },
+              { id: 'perfil', label: 'Perfil', icon: Users },
+              { id: 'prontuario', label: 'Prontuário', icon: FileText, badge: 'NOVO' },
               { id: 'anamnese', label: 'Anamnese', icon: FileText },
-              { id: 'biblioteca', label: 'Biblioteca de Documentos', icon: FolderOpen },
-              { id: 'smartnotes', label: 'Resumo SimplificaPsi', icon: BarChart3 },
+              { id: 'biblioteca', label: 'Biblioteca', icon: FolderOpen },
+              { id: 'smartnotes', label: 'Resumo', icon: BarChart3 },
             ].map(item => (
              <button
                 key={item.id}
                 onClick={() => setActiveSubTab(item.id as any)}
                 className={cn(
-                  "w-full flex items-center gap-3 px-4 py-4 rounded-2xl transition-all text-sm glass-card hover:bg-surface-muted",
+                  "flex items-center gap-3 px-4 py-3 lg:py-4 rounded-2xl transition-all text-xs lg:text-sm glass-card hover:bg-surface-muted whitespace-nowrap min-w-max",
                   activeSubTab === item.id ? "border-primary text-primary shadow-sm" : "text-text-main"
                 )}
              >
@@ -2280,6 +2367,7 @@ Relato:
                 )}
              </button>
            ))}
+          </div>
         </div>
 
         {/* Content Area */}
@@ -3553,7 +3641,8 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left">
+          {/* Desktop Table */}
+          <table className="w-full text-left hidden md:table">
             <thead>
               <tr className="bg-surface-muted text-[10px] text-text-muted font-bold uppercase tracking-widest">
                 <th className="px-8 py-4">Paciente / Sessão</th>
@@ -3633,13 +3722,62 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
               })}
               {displaySessions.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-8 py-20 text-center text-text-muted uppercase text-xs tracking-widest opacity-50">
+                  <td colSpan={6} className="px-8 py-20 text-center text-text-muted uppercase text-xs tracking-widest opacity-50">
                     Nenhum registro encontrado para este filtro.
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+
+          {/* Mobile Cards */}
+          <div className="md:hidden divide-y divide-white/5">
+            {displaySessions.map(session => {
+              const p = patients.find(pat => pat.id === session.patientId);
+              return (
+                <div key={session.id} className="p-4 space-y-4">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="text-sm font-bold text-text-main uppercase">{p?.name || session.triageName || 'Paciente'}</p>
+                      <p className="text-[10px] text-text-muted uppercase tracking-tighter">{format(new Date(session.date + 'T12:00:00'), 'dd/MM/yyyy')} • {session.time}</p>
+                    </div>
+                    <p className="text-sm font-bold text-text-main font-mono">{formatCurrency(parseFloat(session.amount) || parseFloat(p?.amount) || 0)}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => onUpdateSession({ ...session, paid: !session.paid })}
+                      className={cn(
+                        "flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all border",
+                        session.paid ? "bg-green-500/10 text-green-500 border-green-500/20" : "bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
+                      )}
+                    >
+                      {session.paid ? 'Recebido' : 'Pendente'}
+                    </button>
+                    <button 
+                      onClick={() => onUpdateSession({ ...session, nfIssued: !session.nfIssued })}
+                      className={cn(
+                        "w-12 flex items-center justify-center rounded-xl border transition-all",
+                        session.nfIssued ? "bg-primary/10 text-primary border-primary/20" : "bg-surface-muted text-text-muted border-transparent"
+                      )}
+                    >
+                      <Receipt size={18} />
+                    </button>
+                    <button 
+                      onClick={() => onDeleteSession(session.id)}
+                      className="w-12 flex items-center justify-center rounded-xl bg-red-500/10 text-red-500"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            {displaySessions.length === 0 && (
+              <div className="p-12 text-center text-text-muted uppercase text-[10px] tracking-widest opacity-50">
+                Nenhum registro.
+              </div>
+            )}
+          </div>
         </div>
       </section>
 
@@ -3650,7 +3788,8 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
             <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Total: {formatCurrency(manualExpenses)}</span>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-left">
+            {/* Desktop Table */}
+            <table className="w-full text-left hidden md:table">
               <thead>
                 <tr className="bg-surface-muted text-[10px] text-text-muted font-bold uppercase tracking-widest">
                   <th className="px-8 py-4">Descrição</th>
@@ -3683,6 +3822,27 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
                 ))}
               </tbody>
             </table>
+
+            {/* Mobile Cards */}
+            <div className="md:hidden divide-y divide-white/5">
+              {displayExpenses.map(expense => (
+                <div key={expense.id} className="p-4 space-y-3">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="text-sm font-bold text-text-main uppercase">{expense.description}</p>
+                      <p className="text-[10px] text-text-muted font-mono">{expense.date}</p>
+                    </div>
+                    <p className="text-sm font-bold text-red-500 font-mono">-{formatCurrency(expense.amount)}</p>
+                  </div>
+                  <button 
+                    onClick={() => onDeleteTransaction(expense.id)}
+                    className="w-full py-2.5 rounded-xl bg-red-500/10 text-red-500 text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2"
+                  >
+                    <Trash2 size={14} /> Excluir Despesa
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
       )}
