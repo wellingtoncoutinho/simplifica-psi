@@ -62,7 +62,8 @@ import {
   ArrowDownRight,
   Cake,
   Sparkles,
-  Menu
+  Menu,
+  UserCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency } from './lib/utils';
@@ -184,6 +185,25 @@ export default function App() {
   const [lastAction, setLastAction] = useState<any>(null);
   const [showUndoToast, setShowUndoToast] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [touchStart, setTouchStart] = useState(0);
+  const [touchEnd, setTouchEnd] = useState(0);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    setTouchStart(e.targetTouches[0].clientX);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    setTouchEnd(e.targetTouches[0].clientX);
+  };
+
+  const handleTouchEnd = () => {
+    if (touchStart - touchEnd > 75) {
+      setIsMobileMenuOpen(false); // Swipe left
+    }
+    if (touchEnd - touchStart > 75 && touchStart < 50) {
+      setIsMobileMenuOpen(true); // Swipe right from edge
+    }
+  };
 
   // Auth Observer
   useEffect(() => {
@@ -730,7 +750,12 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen bg-background text-text-main overflow-hidden relative">
+    <div 
+      className="flex h-screen bg-background text-text-main overflow-hidden relative"
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+    >
       {/* Sidebar - Desktop and Mobile */}
       <aside className={cn(
         "fixed inset-y-0 left-0 z-50 w-72 border-r border-white/5 flex flex-col bg-card/90 backdrop-blur-xl transition-all duration-300 lg:static lg:w-64 lg:bg-card/50",
@@ -841,7 +866,7 @@ export default function App() {
               className="text-text-muted hover:text-text-main p-2 rounded-xl bg-surface-muted hover:opacity-80 transition-all shadow-sm"
               title="Configurações do Perfil"
             >
-              <Settings size={18} className="lg:w-5 lg:h-5" />
+              <UserCircle size={18} className="lg:w-5 lg:h-5" />
             </button>
             <button 
               onClick={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
@@ -2000,11 +2025,10 @@ function PatientDetailsView({
   const handleGenerateEvolution = async () => {
     if (!transcriptionText.trim()) return;
     
-    let apiKey = localStorage.getItem('gemini_api_key');
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
-      apiKey = window.prompt("Por favor, insira sua chave da API do Google Gemini para usar a Inteligência Artificial:");
-      if (!apiKey) return;
-      localStorage.setItem('gemini_api_key', apiKey);
+      alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
+      return;
     }
 
     setIsGeneratingEvolution(true);
@@ -2032,8 +2056,7 @@ Transcrição bruta a ser convertida:
     } catch (err: any) {
       console.error(err);
       if (err.message?.includes('API key')) {
-        localStorage.removeItem('gemini_api_key');
-        alert("Chave da API inválida. Tente novamente.");
+        alert("Chave da API inválida ou não configurada corretamente.");
       } else {
         alert("Erro ao gerar relato com IA. Verifique o console.");
       }
@@ -2067,11 +2090,10 @@ Transcrição bruta a ser convertida:
   };
 
   const handleGeneratePDFRecord = async (evo: any) => {
-    let apiKey = localStorage.getItem('gemini_api_key');
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
-      apiKey = window.prompt("Por favor, insira sua chave da API do Google Gemini para usar a Inteligência Artificial:");
-      if (!apiKey) return;
-      localStorage.setItem('gemini_api_key', apiKey);
+      alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
+      return;
     }
 
     setGeneratingPdfId(evo.id);
@@ -2206,8 +2228,7 @@ Relato:
     } catch (err: any) {
       console.error(err);
       if (err.message?.includes('API key')) {
-        localStorage.removeItem('gemini_api_key');
-        alert("Chave da API inválida. Tente novamente.");
+        alert("Chave da API inválida ou não configurada corretamente.");
       } else {
         alert("Erro ao gerar PDF do Prontuário. Verifique o console.");
       }
@@ -2237,15 +2258,12 @@ Relato:
 
     setIsGeneratingAI(true);
     try {
-      let apiKey = localStorage.getItem('gemini_api_key');
-      if (!apiKey) {
-        apiKey = window.prompt("Por favor, insira sua chave da API do Google Gemini para usar a Inteligência Artificial:");
-        if (!apiKey) {
-          setIsGeneratingAI(false);
-          return;
-        }
-        localStorage.setItem('gemini_api_key', apiKey);
-      }
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) {
+      setIsGeneratingAI(false);
+      alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
+      return;
+    }
 
       const ai = new GoogleGenAI({ apiKey });
       
@@ -3931,6 +3949,7 @@ function CalendarView({ sessions, patients, onAddSession, onDeleteSession, onTri
   const [currentDate, setCurrentDate] = useState(new Date());
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingSession, setEditingSession] = useState<any>(null);
+  const [selectedMobileDay, setSelectedMobileDay] = useState<Date | null>(null);
 
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(monthStart);
@@ -4125,11 +4144,13 @@ function CalendarView({ sessions, patients, onAddSession, onDeleteSession, onTri
             return (
               <div 
                 key={day.toString()} 
+                onClick={() => setSelectedMobileDay(day)}
                 className={cn(
-                  "p-2 border-r border-b border-white/5 relative group transition-colors",
+                  "p-2 border-r border-b border-white/5 relative group transition-colors cursor-pointer md:cursor-default",
                   !isCurrentMonth && "bg-white/[0.02] opacity-30",
                   idx % 7 === 6 && "border-r-0",
-                  isTodayDay && "bg-primary/5"
+                  isTodayDay && "bg-primary/5",
+                  "min-h-[80px] md:min-h-0"
                 )}
               >
                 <div className="flex justify-between items-center mb-2 px-1">
@@ -4146,7 +4167,7 @@ function CalendarView({ sessions, patients, onAddSession, onDeleteSession, onTri
                   )}
                 </div>
 
-                <div className="space-y-1 overflow-y-auto max-h-[100px] custom-scrollbar pr-1">
+                <div className="space-y-1 overflow-y-auto max-h-[100px] custom-scrollbar pr-1 hidden md:block">
                   {sessions.map(session => (
                     <div 
                       key={session.id}
@@ -4237,11 +4258,149 @@ function CalendarView({ sessions, patients, onAddSession, onDeleteSession, onTri
                     </div>
                   ))}
                 </div>
+                {/* Mobile indicators (dots/bars) */}
+                <div className="md:hidden flex flex-col gap-1 mt-1">
+                  {sessions.slice(0, 3).map(session => (
+                    <div 
+                      key={`mob-${session.id}`} 
+                      className={cn(
+                        "h-1.5 w-full rounded-full",
+                        session.status === 'Cancelada' ? "bg-red-500/50" : session.isTriage ? "bg-orange-500" : "bg-primary"
+                      )} 
+                    />
+                  ))}
+                  {sessions.length > 3 && (
+                    <div className="text-[8px] text-center text-text-muted font-bold">+{sessions.length - 3}</div>
+                  )}
+                </div>
               </div>
             );
           })}
         </div>
       </section>
+
+      {/* Mobile Day Details Modal */}
+      <AnimatePresence>
+        {selectedMobileDay && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-0 md:p-4 bg-background/80 backdrop-blur-sm"
+          >
+            <motion.div 
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="glass-card w-full max-w-md h-[80vh] md:h-auto md:max-h-[80vh] md:rounded-[32px] rounded-t-[32px] overflow-hidden shadow-2xl flex flex-col"
+            >
+              <div className="p-6 border-b border-white/5 flex items-center justify-between shrink-0">
+                <div>
+                  <h3 className="text-xl font-bold text-text-main capitalize">{format(selectedMobileDay, 'EEEE, d', { locale: ptBR })}</h3>
+                  <p className="text-sm text-text-muted capitalize">{format(selectedMobileDay, 'MMMM yyyy', { locale: ptBR })}</p>
+                </div>
+                <button onClick={() => setSelectedMobileDay(null)} className="p-2 rounded-xl hover:bg-surface-muted transition-colors">
+                  <Plus className="rotate-45" size={24} />
+                </button>
+              </div>
+
+              <div className="p-6 overflow-y-auto flex-1 space-y-4">
+                {getDaySessions(selectedMobileDay).length === 0 ? (
+                  <div className="text-center py-12 text-text-muted">
+                    <CalendarIcon size={48} className="mx-auto opacity-20 mb-4" />
+                    <p className="text-sm">Nenhum agendamento para este dia.</p>
+                  </div>
+                ) : (
+                  getDaySessions(selectedMobileDay).map(session => (
+                    <div 
+                      key={session.id}
+                      className={cn(
+                        "p-4 rounded-2xl border text-sm font-bold relative",
+                        session.status === 'Cancelada' 
+                          ? "bg-red-500/10 border-red-500/20 text-red-400 opacity-80" 
+                          : session.isTriage 
+                            ? "bg-orange-500/10 border-orange-500/20 text-orange-400" 
+                            : "bg-primary/10 border-primary/20 text-primary"
+                      )}
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="uppercase tracking-tight text-lg truncate flex-1">{session.patientName || 'Paciente'}</span>
+                        <span className="shrink-0 text-base">{session.time}</span>
+                      </div>
+                      
+                      <div className="flex justify-between items-center text-[10px] uppercase tracking-widest font-bold mb-4 opacity-80">
+                        <span>{session.status === 'Cancelada' ? 'Cancelada' : session.type}</span>
+                        {!session.isTriage && session.status !== 'Cancelada' && <span>#{session.sessionNumber}</span>}
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {session.isTriage && session.status !== 'Cancelada' && (
+                          <button 
+                            onClick={() => { setSelectedMobileDay(null); onTriageToPatient(session.patientName, session.dayName, session.time); }}
+                            className="flex-1 bg-primary/20 text-primary py-2 rounded-xl text-xs font-bold hover:bg-primary hover:text-white transition-all border border-primary/20 uppercase"
+                          >Efetivar</button>
+                        )}
+                        
+                        {session.status !== 'Cancelada' && (
+                          <>
+                            <button 
+                              onClick={() => { 
+                                setSelectedMobileDay(null);
+                                setEditingSession({
+                                  ...session,
+                                  date: format(selectedMobileDay, 'yyyy-MM-dd'),
+                                  originalDate: format(selectedMobileDay, 'yyyy-MM-dd'),
+                                  originalTime: session.time
+                                });
+                                setIsModalOpen(true);
+                              }}
+                              className="flex-1 bg-white/10 text-white py-2 rounded-xl text-xs font-bold hover:bg-white/20 transition-all border border-white/5 uppercase"
+                            >Editar</button>
+                            <button 
+                              onClick={() => { 
+                                if (confirm('Deseja cancelar este atendimento?')) {
+                                  onAddSession({
+                                    id: session.id,
+                                    patientId: session.patientId || '',
+                                    triageName: session.triageName || session.patientName || '',
+                                    date: format(selectedMobileDay, 'yyyy-MM-dd'),
+                                    originalDate: format(selectedMobileDay, 'yyyy-MM-dd'),
+                                    time: session.time,
+                                    originalTime: session.time,
+                                    status: 'Cancelada',
+                                    isTriage: session.isTriage,
+                                    type: session.type
+                                  });
+                                }
+                              }}
+                              className="flex-1 bg-red-500/10 text-red-400 py-2 rounded-xl text-xs font-bold hover:bg-red-500 hover:text-white transition-all border border-red-500/20 uppercase"
+                            >Cancelar</button>
+                          </>
+                        )}
+                        
+                        {!session.id?.toString().startsWith('virtual-') && (
+                           <button 
+                            onClick={() => { 
+                              if (confirm('Deseja excluir permanentemente este registro da agenda?')) {
+                                onDeleteSession(session.id);
+                              }
+                            }}
+                            className="p-2 bg-red-500/10 text-red-400 rounded-xl hover:bg-red-500 hover:text-white transition-all border border-red-500/20"
+                            title="Excluir Registro"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {isModalOpen && (
