@@ -88,6 +88,7 @@ import {
   orderBy
 } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
+import { Joyride, EventData, STATUS, Step, TooltipRenderProps } from 'react-joyride';
 
 enum OperationType {
   CREATE = 'create',
@@ -168,6 +169,7 @@ export default function App() {
   const [selectedPatient, setSelectedPatient] = useState<string | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [runTour, setRunTour] = useState(false);
   const [profileSettings, setProfileSettings] = useState({
     name: localStorage.getItem('prof_name') || '',
     crp: localStorage.getItem('prof_crp') || '',
@@ -299,11 +301,125 @@ export default function App() {
     }
   }, [theme]);
 
+  // Trigger Tour on first login if name/CRP are not set and tour not completed
+  useEffect(() => {
+    if (!loading && user) {
+      const isTourCompleted = localStorage.getItem('simplificapsi_tour_completed') === 'true';
+      if (isTourCompleted) return;
+
+      const isProfileEmpty = !profileSettings?.name && !profileSettings?.crp;
+      if (isProfileEmpty) {
+        const timer = setTimeout(() => {
+          setRunTour(true);
+        }, 1500);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [loading, user, profileSettings]);
+
   const filteredPatients = useMemo(() => {
     return patients.filter(p => 
       p.name.toLowerCase().includes(searchQuery.toLowerCase())
     );
   }, [patients, searchQuery]);
+
+  // Product Tour steps configuration
+  const tourSteps: Step[] = useMemo(() => [
+    {
+      target: 'body',
+      placement: 'center',
+      title: 'Boas-vindas ao SimplificaPsi! 👋',
+      content: (
+        <div className="space-y-3">
+          <p>Olá! Ficamos muito felizes em ter você aqui. O SimplificaPsi foi desenhado para tornar a gestão do seu consultório de psicologia simples, rápida e inteligente.</p>
+          <p className="font-bold text-primary">Vamos fazer um tour rápido de 1 minuto para você conhecer os principais recursos?</p>
+        </div>
+      )
+    },
+    {
+      target: '#profile-settings-button',
+      placement: 'bottom',
+      title: 'Configurações do Perfil e CRP 🪪',
+      content: (
+        <div className="space-y-2">
+          <p>O primeiro passo é clicar aqui para preencher o seu <strong className="font-bold text-text-main">Nome</strong> e <strong className="font-bold text-text-main">CRP</strong>.</p>
+          <p className="text-xs text-text-muted">Isso é fundamental, pois esses dados serão usados para assinar digitalmente e gerar automaticamente os prontuários e laudos em PDF dos seus pacientes!</p>
+        </div>
+      )
+    },
+    {
+      target: '#nav-pacientes',
+      placement: 'right',
+      title: 'Seus Pacientes 👥',
+      content: (
+        <div className="space-y-2">
+          <p>Na aba <strong className="font-bold text-text-main">Pacientes</strong>, você faz a gestão completa de quem você atende.</p>
+          <p className="text-xs text-text-muted">Aqui você cadastra novos pacientes, gerencia dados de contato, visualiza o histórico de sessões e mantém as fichas clínicas sempre organizadas.</p>
+        </div>
+      )
+    },
+    {
+      target: '#nav-prontuarios',
+      placement: 'right',
+      title: '✨ IA & Prontuários Inteligentes',
+      content: (
+        <div className="space-y-2">
+          <p>Chega de gastar horas digitando relatos após as sessões! Nesta aba, nossa <strong className="font-bold text-text-main">Inteligência Artificial</strong> gera prontuários estruturados.</p>
+          <p className="text-xs text-text-muted">Basta colar ou ditar a transcrição bruta da sessão. A IA resume, substitui nomes de terceiros por iniciais (garantindo sigilo) e envia o relato final direto para a pasta <strong className="font-bold text-text-main">Biblioteca</strong> do paciente.</p>
+        </div>
+      )
+    },
+    {
+      target: '#nav-financeiro',
+      placement: 'right',
+      title: 'Controle Financeiro 💰',
+      content: (
+        <div className="space-y-2">
+          <p>Monitore a saúde do seu consultório sem espresso.</p>
+          <p className="text-xs text-text-muted">Acompanhe sessões pagas, pendentes de cobrança, faturamento mensal e fluxo de caixa de forma visual, simplificada e automatizada.</p>
+        </div>
+      )
+    },
+    {
+      target: 'body',
+      placement: 'center',
+      title: '📲 SimplificaPsi no seu Celular!',
+      content: (
+        <div className="space-y-3">
+          <p className="text-sm">Sabia que você pode salvar o SimplificaPsi na tela inicial do seu celular para acessar como se fosse um app nativo?</p>
+          <div className="bg-primary/5 p-3 rounded-xl border border-primary/10 text-[11px] space-y-2 text-left">
+            <p>🍏 <strong className="font-bold text-text-main">No iPhone (iOS)</strong>: Abra o site no <strong className="font-bold text-text-main">Safari</strong>, clique no ícone de <strong className="font-bold text-text-main">Compartilhar</strong> (quadrado com seta para cima) e selecione <strong className="font-bold text-text-main">Adicionar à Tela de Início</strong>.</p>
+            <p>🤖 <strong className="font-bold text-text-main">No Android</strong>: Abra no <strong className="font-bold text-text-main">Chrome</strong>, clique nos <strong className="font-bold text-text-main">três pontinhos</strong> no canto superior direito e escolha <strong className="font-bold text-text-main">Adicionar à Tela inicial</strong> ou <strong className="font-bold text-text-main">Instalar aplicativo</strong>.</p>
+          </div>
+          <p className="text-xs font-bold text-accent">Muito mais prático para o seu dia a dia!</p>
+        </div>
+      )
+    }
+  ], []);
+
+  // Callback to handle tour transitions and auto-opening mobile menu
+  const handleJoyrideCallback = (data: EventData) => {
+    const { action, index, status, type } = data;
+
+    if (type === 'step:before') {
+      const target = tourSteps[index]?.target;
+      const isMobile = window.innerWidth < 1024;
+
+      if (isMobile) {
+        if (target === '#nav-pacientes' || target === '#nav-prontuarios' || target === '#nav-financeiro') {
+          setIsMobileMenuOpen(true);
+        } else {
+          setIsMobileMenuOpen(false);
+        }
+      }
+    }
+
+    if (status === STATUS.FINISHED || status === STATUS.SKIPPED) {
+      setRunTour(false);
+      localStorage.setItem('simplificapsi_tour_completed', 'true');
+      setIsMobileMenuOpen(false);
+    }
+  };
 
   const handleAddPatient = async (data: any) => {
     if (!user) return;
@@ -775,6 +891,20 @@ export default function App() {
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
+      {/* Interactive Product Tour */}
+      <Joyride
+        steps={tourSteps}
+        run={runTour}
+        continuous={true}
+        onEvent={handleJoyrideCallback}
+        tooltipComponent={CustomTooltip}
+        options={{
+          overlayColor: 'rgba(0, 0, 0, 0.65)',
+          zIndex: 10000,
+          overlayClickAction: false,
+        }}
+      />
+
       {/* Sidebar - Desktop and Mobile */}
       <aside className={cn(
         "fixed inset-y-0 left-0 z-50 w-72 border-r border-white/5 flex flex-col bg-card/90 backdrop-blur-xl transition-all duration-300 lg:static lg:w-64 lg:bg-card/50",
@@ -798,6 +928,7 @@ export default function App() {
           {menuItems.map((item) => (
             <button
               key={item.id}
+              id={`nav-${item.id}`}
               onClick={() => {
                 setActiveTab(item.id);
                 setSelectedPatient(null);
@@ -881,6 +1012,7 @@ export default function App() {
 
           <div className="flex items-center gap-3 lg:gap-6">
             <button 
+              id="profile-settings-button"
               onClick={() => setIsSettingsOpen(true)}
               className="text-text-muted hover:text-text-main p-2 rounded-xl bg-surface-muted hover:opacity-80 transition-all shadow-sm"
               title="Configurações do Perfil"
@@ -4909,5 +5041,93 @@ function ProfileSettingsModal({ initialData, onClose, onSave }: any) {
         </button>
       </motion.div>
     </motion.div>
+  );
+}
+
+function CustomTooltip({
+  continuous,
+  index,
+  step,
+  backProps,
+  closeProps,
+  primaryProps,
+  tooltipProps,
+  skipProps,
+  size
+}: TooltipRenderProps) {
+  const isLight = document.body.classList.contains('light');
+  const bg = isLight ? '#ffffff' : 'rgba(20, 20, 29, 0.9)';
+  const textColor = isLight ? 'text-slate-900' : 'text-slate-100';
+  const mutedColor = isLight ? 'text-slate-500' : 'text-slate-400';
+  const borderColor = isLight ? 'border-slate-200' : 'border-white/10';
+  
+  const getButtonText = () => {
+    if (index === 0) return 'Começar o Tour 🚀';
+    if (index === size - 1) return 'Concluir ✨';
+    return 'Avançar ➡️';
+  };
+
+  return (
+    <div 
+      {...tooltipProps} 
+      className={`max-w-sm md:max-w-md w-full rounded-[24px] p-6 shadow-2xl relative overflow-hidden transition-all duration-300 animate-in fade-in zoom-in-95 border ${borderColor}`}
+      style={{
+        background: bg,
+        backdropFilter: 'blur(16px)',
+      }}
+    >
+      {/* Decorative top border gradient line */}
+      <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-primary via-secondary to-accent" />
+      
+      {/* Step Progress Bubble */}
+      <div className="flex items-center justify-between mb-4 mt-1">
+        <span className="text-[10px] font-bold text-primary uppercase tracking-widest bg-primary/10 px-3 py-1 rounded-full">
+          Passo {index + 1} de {size}
+        </span>
+        {index < size - 1 && (
+          <button 
+            {...skipProps}
+            className="text-xs text-text-muted hover:text-text-main transition-colors uppercase tracking-wider font-bold"
+          >
+            Pular
+          </button>
+        )}
+      </div>
+
+      {/* Title */}
+      {step.title && (
+        <h3 className={`text-base font-bold ${textColor} mb-2 leading-tight flex items-center gap-2`}>
+          {step.title}
+        </h3>
+      )}
+
+      {/* Content */}
+      <div className={`text-xs ${mutedColor} mb-6 leading-relaxed`}>
+        {step.content}
+      </div>
+
+      {/* Buttons */}
+      <div className="flex items-center justify-between pt-4 border-t border-white/5">
+        {/* Back Button */}
+        {index > 0 ? (
+          <button 
+            {...backProps}
+            className="px-4 py-2 text-xs font-bold text-text-muted hover:text-text-main transition-colors uppercase tracking-wider flex items-center gap-1.5"
+          >
+            <ChevronLeft size={14} /> Voltar
+          </button>
+        ) : (
+          <div />
+        )}
+
+        {/* Primary/Next/Finish Button */}
+        <button 
+          {...primaryProps}
+          className="bg-primary text-white hover:opacity-90 px-5 py-2.5 rounded-xl text-xs font-bold font-mono uppercase transition-all shadow-md shadow-primary/20 flex items-center gap-1.5 cursor-pointer"
+        >
+          {getButtonText()}
+        </button>
+      </div>
+    </div>
   );
 }
