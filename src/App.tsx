@@ -47,6 +47,10 @@ import {
   MoreVertical,
   Plus,
   Mic,
+  Play,
+  Pause,
+  Square,
+  Loader2,
   Save,
   LogIn,
   Trash2,
@@ -63,7 +67,8 @@ import {
   Cake,
   Sparkles,
   Menu,
-  UserCircle
+  UserCircle,
+  HelpCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency } from './lib/utils';
@@ -87,7 +92,7 @@ import {
   serverTimestamp,
   orderBy
 } from 'firebase/firestore';
-import { onAuthStateChanged, User } from 'firebase/auth';
+import { onAuthStateChanged, User, GoogleAuthProvider } from 'firebase/auth';
 import { Joyride, EventData, STATUS, Step, TooltipRenderProps } from 'react-joyride';
 
 enum OperationType {
@@ -167,14 +172,19 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [selectedPatient, setSelectedPatient] = useState<string | null>(null);
-  const [theme, setTheme] = useState<'light' | 'dark'>('dark');
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSupportOpen, setIsSupportOpen] = useState(false);
+  const [supportType, setSupportType] = useState('Melhoria');
+  const [supportMessage, setSupportMessage] = useState('');
   const [runTour, setRunTour] = useState(false);
   const [profileSettings, setProfileSettings] = useState({
     name: localStorage.getItem('prof_name') || '',
     crp: localStorage.getItem('prof_crp') || '',
-    logo: localStorage.getItem('prof_logo') || ''
+    logo: localStorage.getItem('prof_logo') || '',
+    isGoogleCalendarEnabled: localStorage.getItem('prof_gcal_enabled') === 'true'
   });
+  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(localStorage.getItem('google_calendar_access_token'));
   const [patients, setPatients] = useState<Patient[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -232,12 +242,14 @@ export default function App() {
         setProfileSettings({
           name: data.name || '',
           crp: data.crp || '',
-          logo: data.logo || ''
+          logo: data.logo || '',
+          isGoogleCalendarEnabled: data.isGoogleCalendarEnabled || false
         });
         // Also update localStorage as backup/cache
         localStorage.setItem('prof_name', data.name || '');
         localStorage.setItem('prof_crp', data.crp || '');
         localStorage.setItem('prof_logo', data.logo || '');
+        localStorage.setItem('prof_gcal_enabled', data.isGoogleCalendarEnabled ? 'true' : 'false');
       }
     });
 
@@ -304,7 +316,7 @@ export default function App() {
   // Trigger Tour on first login if name/CRP are not set and tour not completed
   useEffect(() => {
     if (!loading && user) {
-      const isTourCompleted = localStorage.getItem('simplificapsi_tour_completed') === 'true';
+      const isTourCompleted = localStorage.getItem('simplepsi_tour_completed') === 'true';
       if (isTourCompleted) return;
 
       const isProfileEmpty = !profileSettings?.name && !profileSettings?.crp;
@@ -328,10 +340,10 @@ export default function App() {
     {
       target: 'body',
       placement: 'center',
-      title: 'Boas-vindas ao SimplificaPsi! 👋',
+      title: 'Boas-vindas ao SimplePsi!',
       content: (
         <div className="space-y-3">
-          <p>Olá! Ficamos muito felizes em ter você aqui. O SimplificaPsi foi desenhado para tornar a gestão do seu consultório de psicologia simples, rápida e inteligente.</p>
+          <p>Olá! Ficamos muito felizes em ter você aqui. O SimplePsi foi desenhado para tornar a gestão do seu consultório de psicologia simples, rápida e inteligente.</p>
           <p className="font-bold text-primary">Vamos fazer um tour rápido de 1 minuto para você conhecer os principais recursos?</p>
         </div>
       )
@@ -383,10 +395,10 @@ export default function App() {
     {
       target: 'body',
       placement: 'center',
-      title: '📲 SimplificaPsi no seu Celular!',
+      title: '📲 SimplePsi no seu Celular!',
       content: (
         <div className="space-y-3">
-          <p className="text-sm">Sabia que você pode salvar o SimplificaPsi na tela inicial do seu celular para acessar como se fosse um app nativo?</p>
+          <p className="text-sm">Sabia que você pode salvar o SimplePsi na tela inicial do seu celular para acessar como se fosse um app nativo?</p>
           <div className="bg-primary/5 p-3 rounded-xl border border-primary/10 text-[11px] space-y-2 text-left">
             <p>🍏 <strong className="font-bold text-text-main">No iPhone (iOS)</strong>: Abra o site no <strong className="font-bold text-text-main">Safari</strong>, clique no ícone de <strong className="font-bold text-text-main">Compartilhar</strong> (quadrado com seta para cima) e selecione <strong className="font-bold text-text-main">Adicionar à Tela de Início</strong>.</p>
             <p>🤖 <strong className="font-bold text-text-main">No Android</strong>: Abra no <strong className="font-bold text-text-main">Chrome</strong>, clique nos <strong className="font-bold text-text-main">três pontinhos</strong> no canto superior direito e escolha <strong className="font-bold text-text-main">Adicionar à Tela inicial</strong> ou <strong className="font-bold text-text-main">Instalar aplicativo</strong>.</p>
@@ -416,7 +428,7 @@ export default function App() {
 
     if (status === STATUS.FINISHED || status === STATUS.SKIPPED) {
       setRunTour(false);
-      localStorage.setItem('simplificapsi_tour_completed', 'true');
+      localStorage.setItem('simplepsi_tour_completed', 'true');
       setIsMobileMenuOpen(false);
     }
   };
@@ -447,6 +459,7 @@ export default function App() {
         amount: parseFloat(data.amount) || 0,
         recurrence: data.recurrence || 'Semanal',
         modality: data.modality || 'Online',
+        meetingLink: data.meetingLink || '',
         ownerId: user.uid,
         createdAt: data.firstSessionDate ? new Date(data.firstSessionDate + 'T12:00:00').toISOString() : new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -517,6 +530,383 @@ export default function App() {
     }
   };
 
+  const handleSendSupport = () => {
+    if (!supportMessage.trim()) return;
+
+    const email = "simplepsi.app@gmail.com";
+    const subject = encodeURIComponent(`SimplePsi - ${supportType === 'Melhoria' ? 'Ideia de Melhoria' : 'Relato de Erro'}`);
+    const body = encodeURIComponent(
+      `Olá Equipe SimplePsi,\n\n` +
+      `Estou entrando em contato a partir da plataforma.\n\n` +
+      `- Usuário: ${user?.displayName || 'Sem nome'}\n` +
+      `- E-mail: ${user?.email || 'Sem email'}\n` +
+      `- Tipo de Feedback: ${supportType === 'Melhoria' ? 'Sugestão de Melhoria' : 'Relato de Erro'}\n\n` +
+      `Mensagem:\n` +
+      `${supportMessage}\n\n` +
+      `Atenciosamente,\n` +
+      `${user?.displayName || 'Doutor(a)'}`
+    );
+
+    window.open(`mailto:${email}?subject=${subject}&body=${body}`, '_blank');
+    setIsSupportOpen(false);
+    setSupportMessage('');
+  };
+
+  // Google Calendar Authentication & Sync Helpers
+  const handleGoogleLogin = async () => {
+    try {
+      const result = await signInWithGoogle();
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential && credential.accessToken) {
+        localStorage.setItem('google_calendar_access_token', credential.accessToken);
+        setGoogleAccessToken(credential.accessToken);
+      }
+    } catch (err) {
+      console.error("Erro no login com Google:", err);
+    }
+  };
+
+  const getFutureAgendaSlots = (daysCount: number) => {
+    const slots: any[] = [];
+    const today = new Date();
+    
+    for (let i = 0; i < daysCount; i++) {
+      const day = new Date();
+      day.setDate(today.getDate() + i);
+      const dayName = format(day, 'eeee', { locale: ptBR });
+      const capitalizedDayName = dayName.charAt(0).toUpperCase() + dayName.slice(1);
+      const dateStr = format(day, 'yyyy-MM-dd');
+      
+      // 1. Recorded Sessions from Firestore
+      const recorded = sessions.filter(s => s.status !== 'Cancelada' && s.date === dateStr);
+      recorded.forEach(s => {
+        slots.push({
+          id: s.id,
+          patientId: s.patientId,
+          patientName: s.isTriage ? s.triageName : (patients.find(p => p.id === s.patientId)?.name || 'Paciente'),
+          date: s.date,
+          time: s.time,
+          type: s.type,
+          duration: s.duration || '50min',
+          status: s.status,
+          isTriage: s.isTriage,
+          googleEventId: s.googleEventId
+        });
+      });
+
+      // 2. Recurrent Sessions from Patients
+      patients.forEach(p => {
+        if (p.status === 'Inativo') return;
+        if (p.sessionDay === capitalizedDayName && p.sessionTime && p.sessionDay !== '' && p.sessionDay !== 'Nenhum') {
+          // Skip if there's already a recorded session for this patient today
+          const hasRecorded = recorded.some(s => s.patientId === p.id);
+          const hasCancelled = sessions.some(s => s.patientId === p.id && s.status === 'Cancelada' && s.date === dateStr);
+          
+          if (hasRecorded || hasCancelled) return;
+
+          const pCreatedAt = new Date((p as any).createdAt || p.birthDate || '2024-01-01');
+          const weeksDiff = Math.abs(differenceInWeeks(startOfDay(day), startOfDay(pCreatedAt)));
+          
+          let shouldRender = false;
+          if (!p.recurrence || p.recurrence === 'Semanal') shouldRender = true;
+          else if (p.recurrence === 'Quinzenal') shouldRender = weeksDiff % 2 === 0;
+          else if (p.recurrence === 'Mensal') shouldRender = weeksDiff % 4 === 0;
+
+          if (shouldRender) {
+            slots.push({
+              id: `virtual-${p.id}-${dateStr}`,
+              patientId: p.id,
+              patientName: p.name,
+              date: dateStr,
+              time: p.sessionTime,
+              type: p.modality || 'Online',
+              duration: '50min',
+              status: 'Recorrente',
+              isTriage: false,
+              sessionValue: p.sessionAmount || 0
+            });
+          }
+        }
+      });
+    }
+    
+    return slots;
+  };
+
+  const syncAllFutureSessionsToGoogle = async (accessToken: string) => {
+    try {
+      if (!user) return;
+      
+      const totalPatients = patients.length;
+      const activePatientsWithSchedule = patients.filter(p => p.status !== 'Inativo' && p.sessionDay && p.sessionDay !== 'Nenhum' && p.sessionTime).length;
+      
+      // 1. Get all future agenda slots for the next 30 days
+      const futureSlots = getFutureAgendaSlots(30);
+
+      // Filter slots that don't have a Google Event ID yet
+      const pendingSlots = futureSlots.filter(s => !s.googleEventId);
+
+      // Diagnostic Alert
+      alert(`SimplePsi - Diagnóstico de Sincronização:\n\n` +
+            `- Total de Pacientes: ${totalPatients}\n` +
+            `- Pacientes com dia/hora fixos: ${activePatientsWithSchedule}\n` +
+            `- Consultas detectadas nos próximos 30 dias: ${futureSlots.length}\n` +
+            `- Consultas pendentes de envio ao Google: ${pendingSlots.length}\n\n` +
+            `Ao clicar em OK, iniciaremos a sincronização destas consultas.`);
+
+      if (pendingSlots.length === 0) {
+        console.log("Nenhuma consulta futura pendente de sincronização.");
+        return;
+      }
+
+      console.log(`Iniciando sincronização em lote de ${pendingSlots.length} consultas futuras...`);
+      
+      // Temporary override to ensure local token is active
+      localStorage.setItem('google_calendar_access_token', accessToken);
+
+      let successCount = 0;
+      let failCount = 0;
+      let lastErrorMessage = '';
+
+      for (const slot of pendingSlots) {
+        try {
+          if (slot.id.startsWith('virtual-')) {
+            // Materialize virtual session as a real session document in Firestore
+            const sessionData = {
+              patientId: slot.patientId,
+              date: slot.date,
+              time: slot.time,
+              duration: slot.duration || '50min',
+              type: slot.type || 'Presencial',
+              status: 'Agendada',
+              amount: parseFloat(slot.sessionValue) || 0,
+              cost: 0,
+              paid: false,
+              nfIssued: false,
+              ownerId: user.uid,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            };
+
+            const docRef = await addDoc(collection(db, 'sessions'), sessionData);
+            const success = await syncSessionToGoogleCalendar(sessionData, docRef.id, true);
+            if (success) successCount++;
+            else failCount++;
+          } else {
+            // Already a recorded session, sync it directly
+            const success = await syncSessionToGoogleCalendar(slot, slot.id, true);
+            if (success) successCount++;
+            else failCount++;
+          }
+        } catch (errSlot: any) {
+          failCount++;
+          lastErrorMessage = errSlot.message || String(errSlot);
+          console.error("Falha ao sincronizar slot individual:", slot, errSlot);
+        }
+      }
+
+      alert(`Resultado da Sincronização:\n\n` +
+            `- Consultas enviadas com sucesso: ${successCount}\n` +
+            `- Consultas com falha: ${failCount}` +
+            (failCount > 0 ? `\n- Último erro relatado: ${lastErrorMessage}` : ''));
+
+    } catch (err: any) {
+      console.error("Erro na sincronização em lote:", err);
+      alert("Erro crítico na sincronização: " + (err.message || err));
+    }
+  };
+
+  const handleConnectGoogleCalendar = async () => {
+    try {
+      const result = await signInWithGoogle();
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential && credential.accessToken) {
+        localStorage.setItem('google_calendar_access_token', credential.accessToken);
+        setGoogleAccessToken(credential.accessToken);
+        
+        // Turn on the toggle in profiles document too!
+        if (user) {
+          const profileRef = doc(db, 'profiles', user.uid);
+          await setDoc(profileRef, { isGoogleCalendarEnabled: true }, { merge: true });
+        }
+
+        // Inform user about batch sync
+        alert("Google Agenda conectado com sucesso! O SimplePsi vai iniciar a sincronização automática de todas as suas consultas futuras agora. Aguarde um instante...");
+
+        await syncAllFutureSessionsToGoogle(credential.accessToken);
+
+        alert("Tudo pronto! Todas as suas consultas futuras foram sincronizadas e espelhadas com sucesso no Google Agenda.");
+      } else {
+        alert("Não foi possível obter a autorização da Google Agenda. Tente novamente.");
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert("Erro ao conectar com Google Agenda: " + (err.message || err));
+    }
+  };
+
+  const formatLocalIsoString = (dateStr: string, timeStr: string, durationStr: string) => {
+    try {
+      const [hours, minutes] = timeStr.split(':').map(Number);
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const d = new Date(year, month - 1, day, hours, minutes);
+
+      let durationMinutes = 50;
+      if (durationStr?.includes('h')) {
+        durationMinutes = parseFloat(durationStr) * 60;
+      } else if (durationStr?.includes('min')) {
+        durationMinutes = parseFloat(durationStr);
+      }
+
+      const endD = new Date(d.getTime() + durationMinutes * 60000);
+
+      const pad = (num: number) => num.toString().padStart(2, '0');
+      const formatTz = (dateObj: Date) => {
+        const tzo = -dateObj.getTimezoneOffset();
+        const dif = tzo >= 0 ? '+' : '-';
+        return dateObj.getFullYear() +
+          '-' + pad(dateObj.getMonth() + 1) +
+          '-' + pad(dateObj.getDate()) +
+          'T' + pad(dateObj.getHours()) +
+          ':' + pad(dateObj.getMinutes()) +
+          ':' + pad(dateObj.getSeconds()) +
+          dif + pad(Math.floor(Math.abs(tzo) / 60)) +
+          ':' + pad(Math.abs(tzo) % 60);
+      };
+
+      return {
+        start: formatTz(d),
+        end: formatTz(endD)
+      };
+    } catch (e) {
+      console.error("Erro ao formatar data/hora:", e);
+      return {
+        start: `${dateStr}T${timeStr}:00-03:00`,
+        end: `${dateStr}T${timeStr}:00-03:00`
+      };
+    }
+  };
+
+  const getCalendarAuthHeaders = () => {
+    const token = localStorage.getItem('google_calendar_access_token');
+    return token ? {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    } : null;
+  };
+
+  const syncSessionToGoogleCalendar = async (sessionData: any, sessionId: string, bypassEnabledCheck = false): Promise<boolean> => {
+    if (!profileSettings.isGoogleCalendarEnabled && !bypassEnabledCheck) return false;
+    const headers = getCalendarAuthHeaders();
+    if (!headers) return false;
+
+    try {
+      const p = patients.find(pat => pat.id === sessionData.patientId);
+      const patientName = p ? p.name : (sessionData.triageName || "Paciente");
+      const meetingLink = p?.meetingLink || "";
+      const { start, end } = formatLocalIsoString(sessionData.date, sessionData.time, sessionData.duration || '50min');
+
+      const body = {
+        summary: `Consulta - ${patientName}`,
+        description: `Consulta clínica agendada via SimplePsi.\nPaciente: ${patientName}\nModalidade: ${sessionData.type || 'Presencial'}` + 
+                     (meetingLink ? `\nLink da Sessão: ${meetingLink}` : ''),
+        location: meetingLink || '',
+        start: {
+          dateTime: start,
+          timeZone: "America/Sao_Paulo"
+        },
+        end: {
+          dateTime: end,
+          timeZone: "America/Sao_Paulo"
+        }
+      };
+
+      const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      });
+
+      if (response.status === 401) {
+        console.warn("Token da Google Agenda expirou.");
+        return false;
+      }
+
+      if (response.ok) {
+        const event = await response.json();
+        const sessionRef = doc(db, 'sessions', sessionId);
+        await updateDoc(sessionRef, { googleEventId: event.id });
+        return true;
+      } else {
+        const errText = await response.text();
+        console.error("Erro da API do Google Calendar:", errText);
+        throw new Error(errText);
+      }
+    } catch (err: any) {
+      console.error("Erro ao sincronizar com Google Agenda:", err);
+      throw err;
+    }
+  };
+
+  const updateSessionInGoogleCalendar = async (sessionData: any) => {
+    if (!profileSettings.isGoogleCalendarEnabled || !sessionData.googleEventId) return;
+    const headers = getCalendarAuthHeaders();
+    if (!headers) return;
+
+    try {
+      const p = patients.find(pat => pat.id === sessionData.patientId);
+      const patientName = p ? p.name : (sessionData.triageName || "Paciente");
+      const meetingLink = p?.meetingLink || "";
+      const { start, end } = formatLocalIsoString(sessionData.date, sessionData.time, sessionData.duration || '50min');
+
+      const body = {
+        summary: `Consulta - ${patientName}`,
+        description: `Consulta clínica agendada via SimplePsi.\nPaciente: ${patientName}\nModalidade: ${sessionData.type || 'Presencial'}` + 
+                     (meetingLink ? `\nLink da Sessão: ${meetingLink}` : ''),
+        location: meetingLink || '',
+        start: {
+          dateTime: start,
+          timeZone: "America/Sao_Paulo"
+        },
+        end: {
+          dateTime: end,
+          timeZone: "America/Sao_Paulo"
+        }
+      };
+
+      const response = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${sessionData.googleEventId}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify(body)
+      });
+
+      if (response.status === 401) {
+        console.warn("Token da Google Agenda expirou.");
+      }
+    } catch (err) {
+      console.error("Erro ao atualizar evento na Google Agenda:", err);
+    }
+  };
+
+  const deleteSessionFromGoogleCalendar = async (googleEventId: string) => {
+    if (!profileSettings.isGoogleCalendarEnabled || !googleEventId) return;
+    const headers = getCalendarAuthHeaders();
+    if (!headers) return;
+
+    try {
+      const response = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${googleEventId}`, {
+        method: 'DELETE',
+        headers
+      });
+
+      if (response.status === 401) {
+        console.warn("Token da Google Agenda expirou.");
+      }
+    } catch (err) {
+      console.error("Erro ao excluir evento da Google Agenda:", err);
+    }
+  };
+
   const handleAddSession = async (data: any) => {
     if (!user) return;
     try {
@@ -542,6 +932,9 @@ export default function App() {
              await updateDoc(sessionRef, { status: 'Cancelada', updatedAt: new Date().toISOString() });
              createdIds.push(data.id);
              setLastAction({ type: 'update', ids: createdIds, oldData: oldDoc });
+             if (oldDoc && oldDoc.googleEventId) {
+               await deleteSessionFromGoogleCalendar(oldDoc.googleEventId);
+             }
          }
          setShowUndoToast(true);
          setTimeout(() => setShowUndoToast(false), 8000);
@@ -585,7 +978,7 @@ export default function App() {
       if (data.id && !data.id.toString().startsWith('virtual-')) {
         const oldDoc = sessions.find(s => s.id === data.id);
         const sessionRef = doc(db, 'sessions', data.id);
-        await updateDoc(sessionRef, {
+        const updatedData = {
           patientId: data.patientId || '',
           isTriage: data.isTriage || false,
           triageName: data.triageName || '',
@@ -595,8 +988,19 @@ export default function App() {
           status: data.status || 'Agendada',
           amount: parseFloat(data.amount) || parseFloat(oldDoc?.amount as any) || 0,
           updatedAt: new Date().toISOString()
-        });
+        };
+        await updateDoc(sessionRef, updatedData);
         setLastAction({ type: 'update', ids: [data.id], oldData: oldDoc });
+
+        // Google Agenda Sync
+        if (oldDoc && oldDoc.googleEventId) {
+          if (updatedData.status === 'Cancelada') {
+            await deleteSessionFromGoogleCalendar(oldDoc.googleEventId);
+          } else {
+            await updateSessionInGoogleCalendar({ ...updatedData, googleEventId: oldDoc.googleEventId });
+          }
+        }
+
         setShowUndoToast(true);
         setTimeout(() => setShowUndoToast(false), 8000);
         return;
@@ -641,6 +1045,11 @@ export default function App() {
       
       const ref = await addDoc(collection(db, 'sessions'), sessionData);
       createdIds.push(ref.id);
+
+      // Google Agenda Sync
+      if (sessionData.status !== 'Cancelada') {
+        await syncSessionToGoogleCalendar(sessionData, ref.id);
+      }
       
       setLastAction({ type: 'add', ids: createdIds });
       setShowUndoToast(true);
@@ -655,6 +1064,10 @@ export default function App() {
     try {
       if (lastAction.type === 'add' || lastAction.type === 'cancel' || lastAction.type === 'move') {
         for (const id of lastAction.ids) {
+          const sessionToDelete = sessions.find(s => s.id === id);
+          if (sessionToDelete && sessionToDelete.googleEventId) {
+            await deleteSessionFromGoogleCalendar(sessionToDelete.googleEventId);
+          }
           await deleteDoc(doc(db, 'sessions', id));
         }
       } else if (lastAction.type === 'update' && lastAction.oldData) {
@@ -662,6 +1075,9 @@ export default function App() {
           const sessionRef = doc(db, 'sessions', id);
           const { id: _, ...oldDataWithoutId } = lastAction.oldData;
           await updateDoc(sessionRef, { ...oldDataWithoutId, updatedAt: new Date().toISOString() });
+          if (lastAction.oldData.googleEventId) {
+            await updateSessionInGoogleCalendar({ ...oldDataWithoutId, googleEventId: lastAction.oldData.googleEventId });
+          }
         }
       }
       setLastAction(null);
@@ -703,6 +1119,15 @@ export default function App() {
         ...data,
         updatedAt: new Date().toISOString()
       });
+
+      // Google Agenda Sync
+      if (data.googleEventId) {
+        if (data.status === 'Cancelada') {
+          await deleteSessionFromGoogleCalendar(data.googleEventId);
+        } else {
+          await updateSessionInGoogleCalendar({ ...data, googleEventId: data.googleEventId });
+        }
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `sessions/${updatedSession.id}`);
     }
@@ -724,6 +1149,10 @@ export default function App() {
              updatedAt: new Date().toISOString()
          });
          return;
+      }
+      const sessionToDelete = sessions.find(s => s.id === id);
+      if (sessionToDelete && sessionToDelete.googleEventId) {
+        await deleteSessionFromGoogleCalendar(sessionToDelete.googleEventId);
       }
       await deleteDoc(doc(db, 'sessions', id));
     } catch (err) {
@@ -832,7 +1261,7 @@ export default function App() {
       <div className="flex items-center justify-center h-screen bg-background text-text-main">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm font-bold uppercase tracking-widest animate-pulse">Carregando SimplificaPsi...</p>
+          <p className="text-sm font-bold uppercase tracking-widest animate-pulse">Carregando SimplePsi...</p>
         </div>
       </div>
     );
@@ -852,19 +1281,14 @@ export default function App() {
           <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-primary via-accent to-pink-500" />
           
           <div className="space-y-4">
-            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center mx-auto shadow-lg rotate-3">
-              <span className="font-bold text-3xl italic text-white flex items-baseline">
-                S<span className="text-sm">p</span>
-              </span>
-            </div>
-            <h1 className="text-3xl font-extrabold tracking-tight">Simplifica<span className="text-primary">Psi</span></h1>
+            <img src="/logo.png" alt="Simple Psi" className="w-32 h-32 object-contain mx-auto rounded-3xl shadow-xl border border-white/10" />
             <p className="text-text-muted text-sm px-4">Seu consultório inteligente, seguro e para sempre.</p>
           </div>
 
           <div className="space-y-4 pt-4">
              <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Acesse sua conta</p>
              <button 
-              onClick={signInWithGoogle}
+              onClick={handleGoogleLogin}
               className="w-full h-14 rounded-2xl bg-white text-black flex items-center justify-center gap-4 font-bold transition-all hover:scale-[1.02] active:scale-95 shadow-xl shadow-black/10 group"
              >
                 <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5 group-hover:animate-bounce" />
@@ -912,12 +1336,8 @@ export default function App() {
       )}>
         <div className="p-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center">
-              <span className="font-bold text-xl italic text-white flex items-baseline">
-                S<span className="text-xs">p</span>
-              </span>
-            </div>
-            <h1 className="text-xl font-bold tracking-tight">Simplifica<span className="text-primary">Psi</span></h1>
+            <img src="/apple-touch-icon.png" className="w-10 h-10 object-contain rounded-xl shadow-lg border border-white/5" alt="Logo" />
+            <h1 className="text-xl font-bold tracking-tight">Simple<span className="text-primary">Psi</span></h1>
           </div>
           <button onClick={() => setIsMobileMenuOpen(false)} className="lg:hidden text-text-muted hover:text-text-main">
             <ChevronRight className="rotate-180" size={24} />
@@ -953,7 +1373,15 @@ export default function App() {
           ))}
         </nav>
 
-          <div className="p-4 mt-auto border-t border-white/5 space-y-4">
+          <div className="p-4 mt-auto border-t border-white/5 space-y-3">
+            <button 
+              onClick={() => setIsSupportOpen(true)}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-text-muted hover:text-primary hover:bg-primary/5 rounded-xl transition-all border border-transparent hover:border-primary/10 group"
+            >
+              <HelpCircle size={15} className="text-text-muted group-hover:text-primary transition-colors" />
+              <span>Suporte & Sugestões</span>
+            </button>
+
             <div className="flex items-center gap-3 p-2">
               <div className="w-10 h-10 rounded-full bg-gradient-to-br from-accent to-primary flex items-center justify-center text-sm font-bold text-white overflow-hidden">
                 {user.photoURL ? <img src={user.photoURL} alt={user.displayName || ''} className="w-full h-full object-cover" /> : user.displayName?.charAt(0) || 'U'}
@@ -1041,6 +1469,8 @@ export default function App() {
                 transactions={transactions} 
                 onPatientSelect={(id) => { setSelectedPatient(id); setActiveTab('pacientes'); }} 
                 onGoToAgenda={() => setActiveTab('agenda')}
+                onGoToFinanceiro={() => setActiveTab('financeiro')}
+                onGoToPacientes={() => { setSelectedPatient(null); setActiveTab('pacientes'); }}
                 onDeletePatient={handleDeletePatient}
               />
             )}
@@ -1114,6 +1544,9 @@ export default function App() {
                 onDeleteSession={handleDeleteSession}
                 onUndo={handleUndo}
                 lastAction={lastAction}
+                isGoogleCalendarEnabled={profileSettings.isGoogleCalendarEnabled}
+                googleAccessToken={googleAccessToken}
+                onOpenSettings={() => setIsSettingsOpen(true)}
                 onTriageToPatient={(name, day, time) => {
                   setTriageInitialName(name);
                   setTriageInitialDay(day);
@@ -1154,6 +1587,8 @@ export default function App() {
             <ProfileSettingsModal
               initialData={profileSettings}
               onClose={() => setIsSettingsOpen(false)}
+              googleAccessToken={googleAccessToken}
+              onConnectGoogleCalendar={handleConnectGoogleCalendar}
               onSave={async (data: any) => {
                 if (user) {
                   try {
@@ -1177,6 +1612,106 @@ export default function App() {
                 }
               }}
             />
+          )}
+        </AnimatePresence>
+
+        {/* Support & Feedback Modal */}
+        <AnimatePresence>
+          {isSupportOpen && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-background/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+            >
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="bg-card border border-border-ui w-full max-w-md rounded-[32px] p-8 space-y-6 shadow-2xl relative overflow-hidden text-left"
+              >
+                <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-primary via-accent to-pink-500" />
+                
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-primary">
+                    <HelpCircle size={24} />
+                    <h3 className="text-xl font-bold text-text-main">Suporte & Sugestões</h3>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      setIsSupportOpen(false);
+                      setSupportMessage('');
+                    }}
+                    className="text-text-muted hover:text-text-main text-xs uppercase tracking-widest font-bold"
+                  >
+                    Fechar
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  <p className="text-xs text-text-muted leading-relaxed">
+                    Percebeu algum erro na plataforma ou tem uma ideia incrível de melhoria? Envie-nos uma mensagem! Seu feedback vai direto para nossa equipe.
+                  </p>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Tipo de Mensagem</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setSupportType('Melhoria')}
+                        className={cn(
+                          "py-3 rounded-2xl text-xs font-bold uppercase tracking-wider border transition-all",
+                          supportType === 'Melhoria'
+                            ? "bg-primary text-white border-primary shadow-lg shadow-primary/10"
+                            : "bg-surface-muted text-text-muted border-border-ui hover:bg-primary/5 hover:text-primary"
+                        )}
+                      >
+                        💡 Sugerir Melhoria
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSupportType('Erro')}
+                        className={cn(
+                          "py-3 rounded-2xl text-xs font-bold uppercase tracking-wider border transition-all",
+                          supportType === 'Erro'
+                            ? "bg-red-500 text-white border-red-500 shadow-lg shadow-red-500/10"
+                            : "bg-surface-muted text-text-muted border-border-ui hover:bg-red-500/5 hover:text-red-500"
+                        )}
+                      >
+                        ⚠️ Relatar Erro
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Sua Mensagem</label>
+                    <textarea
+                      rows={5}
+                      value={supportMessage}
+                      onChange={(e) => setSupportMessage(e.target.value)}
+                      placeholder={supportType === 'Melhoria' 
+                        ? "Descreva sua ideia de melhoria ou funcionalidade que gostaria de ver no SimplePsi..." 
+                        : "Descreva o erro ou comportamento inesperado que você percebeu..."
+                      }
+                      className="w-full bg-surface-muted border border-border-ui rounded-2xl p-4 text-xs text-text-main focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/40 placeholder:text-text-muted/40 resize-none leading-relaxed transition-all"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleSendSupport}
+                  disabled={!supportMessage.trim()}
+                  className={cn(
+                    "w-full py-4 rounded-2xl text-xs font-bold uppercase tracking-widest text-white shadow-lg transition-all flex items-center justify-center gap-2",
+                    supportMessage.trim()
+                      ? (supportType === 'Melhoria' ? "bg-primary hover:opacity-90 shadow-primary/15 hover:scale-[1.01]" : "bg-red-500 hover:opacity-90 shadow-red-500/15 hover:scale-[1.01]")
+                      : "bg-text-muted/20 text-text-muted cursor-not-allowed shadow-none"
+                  )}
+                >
+                  {supportType === 'Melhoria' ? 'Enviar Sugestão 💡' : 'Enviar Relato ⚠️'}
+                </button>
+              </motion.div>
+            </motion.div>
           )}
         </AnimatePresence>
 
@@ -1218,6 +1753,8 @@ function DashboardView({
   sessions, 
   transactions,
   onGoToAgenda,
+  onGoToFinanceiro,
+  onGoToPacientes,
   onDeletePatient
 }: { 
   user: User | null,
@@ -1227,6 +1764,8 @@ function DashboardView({
   sessions: any[], 
   transactions: any[],
   onGoToAgenda: () => void,
+  onGoToFinanceiro: () => void,
+  onGoToPacientes: () => void,
   onDeletePatient: (id: string) => void
 }) {
   const validSessions = useMemo(() => {
@@ -1335,7 +1874,7 @@ function DashboardView({
     >
       <div>
         <h2 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-          Olá {user?.displayName ? user.displayName.split(' ')[0] : 'Doutor(a)'}! 👋 💜
+          Olá {user?.displayName ? user.displayName.split(' ')[0] : 'Doutor(a)'}!
         </h2>
         <p className="text-text-muted mt-2">Você está no controle da sua rotina. Vamos começar?</p>
         <p className="text-[10px] text-text-muted mt-1 uppercase tracking-wider">Última atualização: {new Date().toLocaleTimeString()}</p>
@@ -1344,8 +1883,8 @@ function DashboardView({
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard onClick={onGoToAgenda} title="Sessões Hoje" value={validSessions.filter(s => s.date === format(new Date(), 'yyyy-MM-dd') && s.status !== 'Cancelada').length.toString()} subtext="Agendadas para hoje" icon={CalendarIcon} color="text-purple-400" />
-        <StatCard onClick={() => {}} title="Pacientes Ativos" value={patients.filter(p => p.status !== 'Inativo').length.toString()} subtext="Gestão total" icon={Users} color="text-blue-400" />
-        <StatCard onClick={() => {}} title="Receita Mensal Prevista" value={formatCurrency(monthlyPredictedIncome)} subtext="Previsão baseada em sessões" icon={DollarSign} color="text-pink-400" />
+        <StatCard onClick={onGoToPacientes} title="Pacientes Ativos" value={patients.filter(p => p.status !== 'Inativo').length.toString()} subtext="Gestão total" icon={Users} color="text-blue-400" />
+        <StatCard onClick={onGoToFinanceiro} title="Receita Mensal Prevista" value={formatCurrency(monthlyPredictedIncome)} subtext="Previsão baseada em sessões" icon={DollarSign} color="text-pink-400" />
         <StatCard onClick={onGoToAgenda} title="Agendamentos da Semana" value={weeklySessions.length.toString()} subtext="Sessões nesta semana" icon={BarChart3} color="text-orange-400" />
       </div>
 
@@ -1413,7 +1952,13 @@ function DashboardView({
              {alerts.length > 0 ? alerts.map((alert, idx) => (
                <div 
                 key={idx} 
-                onClick={() => onPatientSelect(alert.patient.id)}
+                onClick={() => {
+                  if (alert.type === 'finance') {
+                    onGoToFinanceiro();
+                  } else {
+                    onPatientSelect(alert.patient.id);
+                  }
+                }}
                 className="p-4 flex items-center gap-4 rounded-2xl bg-surface-muted border border-border-ui hover:bg-white/5 transition-all cursor-pointer group"
                >
                   <div className={cn(
@@ -1471,6 +2016,7 @@ function AddPatientModal({ onClose, onSave, initialName = '', initialDay = 'Segu
     amount: '',
     recurrence: 'Semanal',
     modality: 'Online',
+    meetingLink: '',
     firstSessionDate: new Date().toISOString().split('T')[0]
   });
 
@@ -1632,6 +2178,17 @@ function AddPatientModal({ onClose, onSave, initialName = '', initialDay = 'Segu
                     <input type="number" placeholder="Ex: 250" value={formData.amount} onChange={(e) => setFormData({...formData, amount: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
                   </div>
 
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Link de Atendimento (ex: Google Meet, Zoom)</label>
+                    <input 
+                      type="url" 
+                      placeholder="https://meet.google.com/xyz-abc-123" 
+                      value={formData.meetingLink} 
+                      onChange={(e) => setFormData({...formData, meetingLink: e.target.value})} 
+                      className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary placeholder:text-text-muted/40" 
+                    />
+                  </div>
+
                   {formData.recurrence !== 'Nenhuma' && (
                     <div className="space-y-2 animate-in fade-in slide-in-from-top-2 duration-300">
                       <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
@@ -1698,7 +2255,7 @@ function ProntuariosListView({ patients, onSelect }: { patients: any[], onSelect
               <div>
                 <h4 className="font-bold text-text-main uppercase text-sm tracking-tight">{patient.name}</h4>
                 <p className="text-xs text-text-muted">
-                  {(parseInt(patient.sessions) || 0) + (patient.clinicalData?.evoluções?.length || 0)} sessões realizadas
+                  {Math.max(parseInt(patient.sessions) || 0, patient.clinicalData?.evoluções?.length || 0)} sessões realizadas
                 </p>
               </div>
             </div>
@@ -2052,6 +2609,9 @@ function PatientDetailsView({
   const [isAddingEvolution, setIsAddingEvolution] = useState(false);
   const [newEvolutionNote, setNewEvolutionNote] = useState("");
   const [isRecording, setIsRecording] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
 
   // Novos estados para a evolução aprimorada
@@ -2077,6 +2637,10 @@ function PatientDetailsView({
   const [uploadCategory, setUploadCategory] = useState<'prontuario' | 'anexo'>('anexo');
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const timerIntervalRef = useRef<any>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     if (patient) {
@@ -2121,40 +2685,171 @@ function PatientDetailsView({
     }
   };
 
-  const startRecording = () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert("Seu navegador não suporta reconhecimento de voz.");
+  const startAudioRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      audioChunksRef.current = [];
+
+      let mimeType = 'audio/webm';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'audio/mp4';
+      }
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'audio/ogg';
+      }
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'audio/wav';
+      }
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = '';
+      }
+
+      const recorder = mimeType 
+        ? new MediaRecorder(stream, { mimeType }) 
+        : new MediaRecorder(stream);
+      
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        const finalBlob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        await transcribeAudio(finalBlob);
+      };
+
+      recorder.start(1000);
+      setIsRecording(true);
+      setIsPaused(false);
+      setRecordingDuration(0);
+
+      timerIntervalRef.current = setInterval(() => {
+        setRecordingDuration(prev => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error("Erro ao acessar microfone:", err);
+      alert("Não foi possível acessar o microfone. Por favor, verifique as permissões de áudio do seu navegador.");
+    }
+  };
+
+  const pauseAudioRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.pause();
+      setIsPaused(true);
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+      }
+    }
+  };
+
+  const resumeAudioRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'paused') {
+      mediaRecorderRef.current.resume();
+      setIsPaused(false);
+      timerIntervalRef.current = setInterval(() => {
+        setRecordingDuration(prev => prev + 1);
+      }, 1000);
+    }
+  };
+
+  const stopAudioRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      setIsPaused(false);
+
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+      }
+
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+    }
+  };
+
+  const cancelAudioRecording = () => {
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.onstop = null;
+      if (mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+    }
+
+    setIsRecording(false);
+    setIsPaused(false);
+    setRecordingDuration(0);
+
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+    }
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+    }
+
+    audioChunksRef.current = [];
+  };
+
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const transcribeAudio = async (blob: Blob) => {
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) {
+      alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
       return;
     }
 
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
+    setIsTranscribing(true);
+    try {
+      const reader = new FileReader();
+      reader.readAsDataURL(blob);
+      reader.onloadend = async () => {
+        try {
+          const base64data = reader.result as string;
+          const base64String = base64data.split(',')[1];
+          const mimeType = blob.type || 'audio/webm';
 
-    recognitionRef.current = new SpeechRecognition();
-    recognitionRef.current.lang = 'pt-BR';
-    recognitionRef.current.continuous = false;
-    recognitionRef.current.interimResults = false;
+          const ai = new GoogleGenAI({ apiKey });
+          const prompt = "Transcreva o áudio acima na íntegra, com máxima precisão. Escreva exatamente o que foi falado (em português), palavra por palavra, de forma corrida. Não adicione resumos, comentários, introduções ou explicações. Apenas retorne a transcrição bruta pura.";
 
-    recognitionRef.current.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript;
-      setNewEvolutionNote(prev => prev + (prev ? ' ' : '') + transcript);
-    };
+          const response = await ai.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: [
+              {
+                inlineData: {
+                  data: base64String,
+                  mimeType: mimeType
+                }
+              },
+              prompt
+            ]
+          });
 
-    recognitionRef.current.onstart = () => setIsRecording(true);
-    recognitionRef.current.onend = () => setIsRecording(false);
-    recognitionRef.current.onerror = (event: any) => {
-      console.error(event.error);
-      setIsRecording(false);
-    };
-
-    recognitionRef.current.start();
-  };
-
-  const stopRecording = () => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
+          if (response.text) {
+            setTranscriptionText(prev => prev ? prev + " " + response.text : response.text);
+          } else {
+            alert("Não foi possível transcrever nada do áudio fornecido.");
+          }
+        } catch (err: any) {
+          console.error("Erro ao transcrever com Gemini:", err);
+          alert("Erro ao transcrever o áudio. Tente novamente.");
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+    } catch (err: any) {
+      console.error("Erro ao processar blob do gravador:", err);
+      alert("Erro ao processar o arquivo de áudio.");
+      setIsTranscribing(false);
     }
   };
 
@@ -2896,6 +3591,32 @@ Relato:
                             <span className="text-xs font-bold text-text-main">{patient.recurrence || 'Semanal'}</span>
                           )}
                         </div>
+
+                        <div className="col-span-2 lg:col-span-4 flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
+                          <span className="text-xs text-text-muted">Link de Atendimento (ex: Google Meet, Zoom)</span>
+                          {isEditing ? (
+                            <input 
+                              type="url"
+                              placeholder="https://meet.google.com/xyz-abc-123"
+                              value={editForm.meetingLink || ''} 
+                              onChange={(e) => setEditForm({...editForm, meetingLink: e.target.value})}
+                              className="text-xs font-bold text-text-main bg-transparent outline-none w-full placeholder:text-text-muted/40"
+                            />
+                          ) : (
+                            patient.meetingLink ? (
+                              <a 
+                                href={patient.meetingLink} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                className="text-xs font-bold text-primary hover:underline flex items-center gap-1 mt-0.5 break-all"
+                              >
+                                {patient.meetingLink}
+                              </a>
+                            ) : (
+                              <span className="text-xs font-bold text-text-muted italic">Nenhum cadastrado</span>
+                            )
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -3069,25 +3790,129 @@ Relato:
                           </div>
                         </div>
 
-                        <div className="space-y-2">
-                           <div className="flex items-center justify-between">
-                             <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Transcrição do Áudio</label>
-                           </div>
-                           <textarea 
-                             value={transcriptionText}
-                             onChange={(e) => setTranscriptionText(e.target.value)}
-                             placeholder="Cole a transcrição bruta do áudio aqui..."
-                             className="w-full bg-surface-muted border border-border-ui rounded-xl p-4 text-sm text-text-main outline-none focus:border-primary min-h-[100px] resize-none"
-                           />
-                           <button 
-                             onClick={handleGenerateEvolution}
-                             disabled={isGeneratingEvolution || !transcriptionText.trim()}
-                             className="w-full bg-orange-500/10 text-orange-500 border border-orange-500/20 py-3 rounded-xl text-xs font-bold hover:bg-orange-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                           >
-                             <BarChart3 size={16} />
-                             {isGeneratingEvolution ? "Processando com IA..." : "✨ Gerar Relato com IA"}
-                           </button>
-                        </div>
+                        <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Transcrição do Áudio</label>
+                            </div>
+
+                            {/* Elegant Audio Recorder Interface */}
+                            <div className="glass-card p-4 rounded-2xl border border-white/5 bg-white/5 relative overflow-hidden transition-all duration-300">
+                              {isTranscribing ? (
+                                <div className="flex flex-col items-center justify-center py-4 space-y-3 animate-pulse">
+                                  <Loader2 size={24} className="text-primary animate-spin" />
+                                  <p className="text-xs font-bold text-primary uppercase tracking-widest text-center">Transcrevendo áudio com Inteligência Artificial...</p>
+                                </div>
+                              ) : isRecording ? (
+                                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 py-2">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-3 h-3 rounded-full bg-red-500 animate-ping" />
+                                    <span className="text-[10px] font-bold text-red-500 uppercase tracking-widest">
+                                      {isPaused ? "GRAVAÇÃO PAUSADA" : "GRAVANDO"}
+                                    </span>
+                                    
+                                    {/* Bouncing Audio Waveform Animation */}
+                                    <div className="flex items-end gap-0.5 h-4 ml-1">
+                                      {[...Array(6)].map((_, i) => (
+                                        <div 
+                                          key={i} 
+                                          className="w-0.5 bg-primary rounded-full transition-all duration-300"
+                                          style={{ 
+                                            height: isPaused ? '4px' : '100%',
+                                            animation: isPaused ? 'none' : `bounce 1s ease-in-out infinite alternate`,
+                                            animationDelay: `${i * 0.15}s`
+                                          }} 
+                                        />
+                                      ))}
+                                    </div>
+                                    <style>{`
+                                      @keyframes bounce {
+                                        0% { height: 4px; }
+                                        100% { height: 16px; }
+                                      }
+                                    `}</style>
+                                  </div>
+
+                                  <div className="flex items-center gap-4">
+                                    <span className="text-base font-bold text-text-main font-mono tracking-wider bg-surface-muted px-3 py-1 rounded-xl border border-white/5">
+                                      {formatDuration(recordingDuration)}
+                                    </span>
+
+                                    <div className="flex items-center gap-2">
+                                      {isPaused ? (
+                                        <button
+                                          onClick={resumeAudioRecording}
+                                          className="p-2.5 bg-green-500/20 hover:bg-green-500/30 text-green-500 rounded-xl transition-all border border-green-500/20"
+                                          title="Retomar Gravação"
+                                        >
+                                          <Play size={16} />
+                                        </button>
+                                      ) : (
+                                        <button
+                                          onClick={pauseAudioRecording}
+                                          className="p-2.5 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-500 rounded-xl transition-all border border-yellow-500/20"
+                                          title="Pausar Gravação"
+                                        >
+                                          <Pause size={16} />
+                                        </button>
+                                      )}
+
+                                      <button
+                                        onClick={stopAudioRecording}
+                                        className="p-2.5 bg-primary text-white rounded-xl transition-all hover:bg-primary-hover shadow-lg shadow-primary/20 flex items-center justify-center gap-1.5 px-4 font-bold text-xs uppercase tracking-widest"
+                                        title="Parar e Transcrever"
+                                      >
+                                        <Square size={12} className="fill-white" />
+                                        Concluir
+                                      </button>
+
+                                      <button
+                                        onClick={cancelAudioRecording}
+                                        className="p-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-500 rounded-xl transition-all border border-red-500/10"
+                                        title="Descartar Áudio"
+                                      >
+                                        <Trash2 size={16} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 py-1">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                                      <Mic size={20} />
+                                    </div>
+                                    <div>
+                                      <p className="text-xs font-bold text-text-main uppercase tracking-tight">Gravador de Relatos</p>
+                                      <p className="text-[10px] text-text-muted">Grave o áudio da sessão e o SimplePsi transcreve automaticamente.</p>
+                                    </div>
+                                  </div>
+
+                                  <button
+                                    onClick={startAudioRecording}
+                                    className="w-full sm:w-auto bg-primary text-white px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest hover:opacity-90 hover:scale-[1.02] transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/15"
+                                  >
+                                    <Mic size={16} />
+                                    Gravar Áudio
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+
+                            <textarea 
+                              value={transcriptionText}
+                              onChange={(e) => setTranscriptionText(e.target.value)}
+                              placeholder="Fale no gravador acima ou cole a transcrição bruta do áudio aqui..."
+                              className="w-full bg-surface-muted border border-border-ui rounded-xl p-4 text-sm text-text-main outline-none focus:border-primary min-h-[120px] resize-none"
+                            />
+                            <button 
+                              onClick={handleGenerateEvolution}
+                              disabled={isGeneratingEvolution || !transcriptionText.trim()}
+                              className="w-full bg-orange-500/10 text-orange-500 border border-orange-500/20 py-3 rounded-xl text-xs font-bold hover:bg-orange-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <BarChart3 size={16} />
+                              {isGeneratingEvolution ? "Processando com IA..." : "✨ Gerar Relato com IA"}
+                            </button>
+                         </div>
 
                         <div className="space-y-2">
                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Relato Final da Sessão</label>
@@ -3322,14 +4147,14 @@ Relato:
                         <div className="w-10 h-10 rounded-full bg-orange-500/10 text-orange-500 flex items-center justify-center">
                           <BarChart3 size={20} />
                         </div>
-                        <h3 className="text-xl font-bold text-text-main">Resumo SimplificaPsi IA</h3>
+                        <h3 className="text-xl font-bold text-text-main">Resumo SimplePsi IA</h3>
                       </div>
                       <button 
                         onClick={handleGenerateAI}
                         disabled={isGeneratingAI}
                         className="bg-orange-500 text-white px-4 py-2 rounded-xl text-xs font-bold hover:opacity-90 transition-all flex items-center gap-2"
                       >
-                        {isGeneratingAI ? "Analisando..." : "✨ Gerar Análise SimplificaPsi"}
+                        {isGeneratingAI ? "Analisando..." : "✨ Gerar Análise SimplePsi"}
                       </button>
                     </div>
 
@@ -3507,6 +4332,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
   onDeleteSession: (id: string) => void
 }) {
   const [filter, setFilter] = useState<'all' | 'paid' | 'pending'>('all');
+  const [currentFinanceDate, setCurrentFinanceDate] = useState(new Date());
   const [isAddingExpense, setIsAddingExpense] = useState(false);
   const [expenseForm, setExpenseForm] = useState({ description: '', amount: '', date: new Date().toISOString().split('T')[0] });
   const [historyModalOpen, setHistoryModalOpen] = useState<'receita' | 'giro' | 'despesa' | 'lucro' | null>(null);
@@ -3595,8 +4421,8 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
   };
 
   const displaySessions = useMemo(() => {
-    const start = startOfWeek(new Date(), { weekStartsOn: 0 });
-    const end = endOfWeek(new Date(), { weekStartsOn: 0 });
+    const start = startOfWeek(currentFinanceDate, { weekStartsOn: 0 });
+    const end = endOfWeek(currentFinanceDate, { weekStartsOn: 0 });
 
     let list = [...sessions.filter(s => s.status !== 'Cancelada')];
     
@@ -3641,13 +4467,18 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
 
     list = list.filter(s => {
       const d = new Date(s.date + 'T12:00:00');
-      const isCurrentWeek = d >= start && d <= end;
+      const isSelectedWeek = d >= start && d <= end;
+      const isCurrentWeek = isSameDay(startOfWeek(new Date(), { weekStartsOn: 0 }), start);
       const isPastOrCurrent = d <= end;
       const isUnpaid = !s.paid;
       
-      // Mostrar se for desta semana OU se for uma sessão pendente passada/atual.
-      // Sessões pendentes do FUTURO não devem poluir o giro semanal da tela.
-      return isCurrentWeek || (isUnpaid && isPastOrCurrent);
+      if (isCurrentWeek) {
+        // Mostrar se for desta semana OU se for uma sessão pendente passada/atual.
+        return isSelectedWeek || (isUnpaid && isPastOrCurrent);
+      } else {
+        // Se for outra semana, mostrar apenas as consultas dessa semana.
+        return isSelectedWeek;
+      }
     });
 
     list = list.sort((a, b) => {
@@ -3660,7 +4491,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
     if (filter === 'pending') list = list.filter(s => !s.paid);
     
     return list;
-  }, [sessions, patients, filter]);
+  }, [sessions, patients, filter, currentFinanceDate]);
 
   const displayExpenses = useMemo(() => {
     return transactions.filter(t => t.type === 'Despesa').sort((a, b) => b.date.localeCompare(a.date));
@@ -3953,8 +4784,37 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
       </AnimatePresence>
 
       <section className="glass-card rounded-[32px] overflow-hidden border border-white/5 shadow-2xl">
-        <div className="p-8 border-b border-white/5 flex items-center justify-between bg-white/5">
+        <div className="p-8 border-b border-white/5 flex flex-col md:flex-row items-center justify-between gap-4 bg-white/5">
           <h4 className="font-bold text-lg text-text-main uppercase tracking-widest">Controle de Atendimentos</h4>
+          
+          <div className="flex items-center gap-4 bg-surface-muted/50 p-2 rounded-2xl border border-white/5">
+            <button 
+              onClick={() => setCurrentFinanceDate(prev => subWeeks(prev, 1))}
+              className="p-2 hover:bg-white/5 rounded-xl text-text-muted hover:text-text-main transition-colors"
+              title="Semana Anterior"
+            >
+              <ChevronLeft size={20} />
+            </button>
+            <span className="text-xs font-bold text-text-main uppercase tracking-wider font-mono">
+              Semana: {format(startOfWeek(currentFinanceDate, { weekStartsOn: 0 }), 'dd/MM/yyyy')} - {format(endOfWeek(currentFinanceDate, { weekStartsOn: 0 }), 'dd/MM/yyyy')}
+            </span>
+            <button 
+              onClick={() => setCurrentFinanceDate(prev => addWeeks(prev, 1))}
+              className="p-2 hover:bg-white/5 rounded-xl text-text-muted hover:text-text-main transition-colors"
+              title="Próxima Semana"
+            >
+              <ChevronRight size={20} />
+            </button>
+            {!isSameDay(startOfWeek(new Date(), { weekStartsOn: 0 }), startOfWeek(currentFinanceDate, { weekStartsOn: 0 })) && (
+              <button 
+                onClick={() => setCurrentFinanceDate(new Date())}
+                className="text-[9px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl bg-primary/20 text-primary border border-primary/20 hover:bg-primary/30 transition-all ml-2"
+              >
+                Hoje
+              </button>
+            )}
+          </div>
+
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full bg-yellow-500" />
@@ -3988,7 +4848,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
                         </div>
                         <div>
                           <p className="text-sm font-bold text-text-main uppercase">{p?.name || session.triageName || 'Paciente'}</p>
-                          <p className="text-[10px] text-text-muted uppercase tracking-tighter">{session.type} • {session.duration || '50min'}</p>
+                          <p className="text-[10px] text-text-muted uppercase tracking-tighter">{session.type} • {p?.cpf || p?.document ? `CPF: ${p.cpf || p.document}` : 'SEM CPF'}</p>
                         </div>
                       </div>
                     </td>
@@ -4062,7 +4922,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
                   <div className="flex justify-between items-start">
                     <div>
                       <p className="text-sm font-bold text-text-main uppercase">{p?.name || session.triageName || 'Paciente'}</p>
-                      <p className="text-[10px] text-text-muted uppercase tracking-tighter">{format(new Date(session.date + 'T12:00:00'), 'dd/MM/yyyy')} • {session.time}</p>
+                      <p className="text-[10px] text-text-muted uppercase tracking-tighter">{format(new Date(session.date + 'T12:00:00'), 'dd/MM/yyyy')} • {session.time} • {session.type} • {p?.cpf || p?.document ? `CPF: ${p.cpf || p.document}` : 'SEM CPF'}</p>
                     </div>
                     <p className="text-sm font-bold text-text-main font-mono">{formatCurrency(parseFloat(session.amount) || parseFloat(p?.amount) || 0)}</p>
                   </div>
@@ -4241,14 +5101,28 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
   );
 }
 
-function CalendarView({ sessions, patients, onAddSession, onDeleteSession, onTriageToPatient, onUndo, lastAction }: { 
+function CalendarView({ 
+  sessions, 
+  patients, 
+  onAddSession, 
+  onDeleteSession, 
+  onTriageToPatient, 
+  onUndo, 
+  lastAction,
+  isGoogleCalendarEnabled,
+  googleAccessToken,
+  onOpenSettings
+}: { 
   sessions: any[], 
   patients: any[], 
   onAddSession: (data: any) => void,
   onDeleteSession: (id: string) => void,
   onTriageToPatient: (name: string, day: string, time: string) => void,
   onUndo?: () => void,
-  lastAction?: any
+  lastAction?: any,
+  isGoogleCalendarEnabled?: boolean,
+  googleAccessToken?: string | null,
+  onOpenSettings?: () => void
 }) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -4377,7 +5251,24 @@ function CalendarView({ sessions, patients, onAddSession, onDeleteSession, onTri
     >
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight text-text-main">Agenda Mensal</h2>
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="text-3xl font-bold tracking-tight text-text-main">Agenda Mensal</h2>
+            {isGoogleCalendarEnabled && googleAccessToken ? (
+              <span className="flex items-center gap-1.5 px-3 py-1 bg-green-500/10 text-green-400 border border-green-500/20 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm select-none">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                Google Sincronizado
+              </span>
+            ) : (
+              <button
+                onClick={onOpenSettings}
+                className="flex items-center gap-1.5 px-3 py-1 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-500 border border-yellow-500/20 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm transition-all shrink-0 cursor-pointer"
+                title="Configurar Google Agenda"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-yellow-500" />
+                Google Desconectado
+              </button>
+            )}
+          </div>
           <p className="text-text-muted mt-2">Visão completa do seu consultório e recorrências.</p>
         </div>
         
@@ -4465,7 +5356,7 @@ function CalendarView({ sessions, patients, onAddSession, onDeleteSession, onTri
                     {format(day, 'd')}
                   </span>
                   {sessions.length > 0 && (
-                    <span className="text-[8px] font-bold text-text-muted uppercase tracking-tighter opacity-50">
+                    <span className="text-[8px] font-bold text-text-muted uppercase tracking-tighter opacity-50 hidden md:inline">
                       {sessions.length} {sessions.length === 1 ? 'Sessão' : 'Sessões'}
                     </span>
                   )}
@@ -4959,7 +5850,7 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
   );
 }
 
-function ProfileSettingsModal({ initialData, onClose, onSave }: any) {
+function ProfileSettingsModal({ initialData, onClose, onSave, googleAccessToken, onConnectGoogleCalendar }: any) {
   const [formData, setFormData] = useState(initialData);
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -5030,6 +5921,64 @@ function ProfileSettingsModal({ initialData, onClose, onSave }: any) {
                 <input type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
               </label>
             </div>
+          </div>
+
+          {/* Google Calendar Sync Panel */}
+          <div className="space-y-3 pt-4 border-t border-white/5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-text-main uppercase tracking-tight">Sincronizar Google Agenda</p>
+                <p className="text-[10px] text-text-muted">Espelhar consultas automaticamente em tempo real.</p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={formData.isGoogleCalendarEnabled} 
+                  onChange={async (e) => {
+                    const checked = e.target.checked;
+                    setFormData({ ...formData, isGoogleCalendarEnabled: checked });
+                  }}
+                  className="sr-only peer" 
+                />
+                <div className="w-11 h-6 bg-surface-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+              </label>
+            </div>
+
+            {formData.isGoogleCalendarEnabled && (
+              <>
+                <div className="glass-card p-3.5 rounded-xl border border-white/5 bg-white/5 flex items-center justify-between gap-4 mt-2">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${googleAccessToken ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
+                    <span className="text-[10px] font-bold text-text-main uppercase tracking-wider">
+                      {googleAccessToken ? 'CONECTADO' : 'NÃO CONECTADO'}
+                    </span>
+                  </div>
+                  <button
+                    onClick={onConnectGoogleCalendar}
+                    type="button"
+                    className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all"
+                  >
+                    {googleAccessToken ? 'Reconectar' : 'Conectar Google'}
+                  </button>
+                </div>
+
+                {!googleAccessToken && (
+                  <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-2xl p-3.5 mt-2 space-y-2">
+                    <p className="text-[10px] font-bold text-yellow-500 uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-500" />
+                      Instruções de Segurança e Conexão
+                    </p>
+                    <p className="text-[9px] text-text-muted leading-relaxed">
+                      Como o SimplePsi é uma plataforma privada de gestão clínica dedicada, o Google pode exibir uma tela com o aviso <strong className="text-text-main">"O Google não verificou este app"</strong>. Isso é absolutamente seguro e esperado para ferramentas customizadas.
+                    </p>
+                    <div className="text-[9px] text-text-muted leading-relaxed pl-2 border-l border-white/5 space-y-1">
+                      <p>1. Na tela de aviso, clique em <strong className="text-text-main">"Avançado"</strong> (no canto inferior esquerdo).</p>
+                      <p>2. Depois, clique em <strong className="text-text-main">"Acessar simplepsi (não seguro)"</strong> para autorizar a sincronização segura da sua agenda.</p>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
 

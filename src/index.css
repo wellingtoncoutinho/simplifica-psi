@@ -1,17 +1,17 @@
 @import "tailwindcss";
 
 @theme {
-  --color-background: #09090b;
-  --color-card: #14141d;
-  --color-primary: #8b5cf6;
-  --color-primary-dark: #7c3aed;
-  --color-secondary: #ec4899;
-  --color-accent: #3b82f6;
-  --color-text-main: #fafafa;
-  --color-text-muted: #a1a1aa;
-  --color-border-ui: rgba(255, 255, 255, 0.05);
-  --color-bg-muted: rgba(255, 255, 255, 0.03);
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --color-background: #181615;      /* Deep espresso organic dark */
+  --color-card: #211e1d;            /* Rich warm clay-brown */
+  --color-primary: #8da693;         /* Calming light eucalyptus/sage green */
+  --color-primary-dark: #748b7a;    /* Muted sage */
+  --color-secondary: #c58971;       /* Terracota/warm clay */
+  --color-accent: #b36d53;          /* Sandstone amber */
+  --color-text-main: #faf8f5;       /* Soothing warm white/sand */
+  --color-text-muted: #a8a19c;      /* Muted warm sand-grey */
+  --color-border-ui: rgba(230, 225, 218, 0.08); /* Very soft warm sand border */
+  --color-bg-muted: rgba(141, 166, 147, 0.06);
+  --font-sans: "Outfit", "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
 @layer base {
@@ -20,17 +20,21 @@
   }
 
   body.light {
-    --color-background: #ffffff;
-    --color-card: #f8fafc;
-    --color-text-main: #0f172a;
-    --color-text-muted: #64748b;
-    --color-border-ui: #e2e8f0;
-    --color-bg-muted: rgba(15, 23, 42, 0.03);
+    --color-background: #faf8f5;    /* Soothing warm sandstone/cream */
+    --color-card: #ffffff;          /* Pure soft white */
+    --color-primary: #5f7d5c;       /* Calming Sage/Olive Green */
+    --color-primary-dark: #4d664b;  /* Deep Spruce/Sage */
+    --color-secondary: #b36d53;     /* Warm clay/terracotta */
+    --color-accent: #8da693;        /* Soft eucalyptus green/grey */
+    --color-text-main: #1e2621;     /* Very deep charcoal forest green */
+    --color-text-muted: #68756d;    /* Muted eucalyptus grey */
+    --color-border-ui: #e6e1da;     /* Very fine linen beige border */
+    --color-bg-muted: rgba(95, 125, 92, 0.04);
   }
 }
 
 .glass-card {
-  @apply bg-card border border-border-ui shadow-xl backdrop-blur-sm transition-all duration-300;
+  @apply bg-card border border-border-ui shadow-sm transition-all duration-300 rounded-[24px];
 }
 
 .side-nav-active {
@@ -39,12 +43,6 @@
 
 .bg-surface-muted {
   @apply bg-bg-muted transition-colors duration-300;
-}
-
-.gradient-border {
-  background: linear-gradient(var(--color-card), var(--color-card)) padding-box,
-              linear-gradient(to right, var(--color-primary), var(--color-secondary)) border-box;
-  border: 1px solid transparent;
 }
 
 .gradient-border {

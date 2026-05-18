@@ -30,6 +30,7 @@ export interface Patient {
   sessionAmount?: number;
   recurrence?: 'Semanal' | 'Quinzenal' | 'Mensal' | 'Nenhuma';
   modality?: 'Online' | 'Presencial';
+  meetingLink?: string;
 }
 
 export interface Session {
@@ -43,6 +44,7 @@ export interface Session {
   recurrence?: 'Semanal' | 'Quinzenal' | 'Mensal' | 'Nenhuma';
   isTriage?: boolean;
   triageName?: string;
+  googleEventId?: string;
   // Financial fields
   amount?: number;
   paid?: boolean;
