@@ -553,9 +553,9 @@ Como posso te ajudar hoje?`
   };
 
   const shouldShowWhatsAppSupport = () => {
-    if (supportInteractionCount >= 2) return true;
+    if (supportInteractionCount >= 5) return true;
     const lower = supportMessages.map(m => m.content.toLowerCase()).join(' ');
-    return lower.includes('whatsapp') || lower.includes('humano') || lower.includes('wellington') || lower.includes('pessoa') || lower.includes('contato') || lower.includes('falar com alguém') || lower.includes('atendimento');
+    return lower.includes('whatsapp') || lower.includes('suporte humano') || lower.includes('falar com atendente') || lower.includes('suporte direto');
   };
 
   const handleSendSupport = async () => {
@@ -618,7 +618,7 @@ Como posso te ajudar hoje?`
            - Configuração de Nome e CRP que assinam automaticamente o rodapé de todos os prontuários e relatórios gerados em PDF de forma dinâmica.
            - Integração das credenciais do Google Agenda.
 
-        Se o usuário demonstrar frustração intensa ou se esta for a 3ª interação ou mais, informe amigavelmente que ele também pode nos chamar no suporte direto do WhatsApp clicando no botão que acabamos de disponibilizar logo abaixo na janela de chat.
+        Se o usuário demonstrar frustração extrema ou se esta for a 5ª interação ou mais, informe amigavelmente que ele também pode nos chamar no suporte direto do WhatsApp clicando no botão de suporte que aparecerá na janela de chat.
       `;
 
       const response = await ai.models.generateContent({
@@ -1784,19 +1784,19 @@ Como posso te ajudar hoje?`
                       <div>
                         <h4 className="text-xs font-bold text-primary font-outfit">Precisa de suporte humano?</h4>
                         <p className="text-[10px] text-text-muted leading-relaxed mt-0.5">
-                          O Wellington está online no WhatsApp pronto para resolver o seu problema com todo o histórico deste chat já compartilhado.
+                          A nossa equipe de suporte está online no WhatsApp pronta para te ajudar com todo o histórico deste chat já compartilhado.
                         </p>
                       </div>
                     </div>
                     <a
                       href={`https://wa.me/5562983208784?text=${encodeURIComponent(
-                        `Olá Wellington! Estou usando o SimplePsi e preciso de uma ajudinha com a plataforma. Aqui está o histórico da minha conversa com a IA de Suporte:\n\n${supportMessages.map(m => `${m.role === 'user' ? 'Paciente/Psicólogo' : 'IA Assistente'}: ${m.content}`).join('\n\n')}`
+                        `Olá Suporte SimplePsi! Estou usando o sistema e preciso de suporte com a plataforma. Aqui está o histórico da minha conversa com a IA de Suporte:\n\n${supportMessages.map(m => `${m.role === 'user' ? 'Psicólogo' : 'IA Assistente'}: ${m.content}`).join('\n\n')}`
                       )}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center justify-center gap-2 w-full py-3 bg-[#25D366] hover:bg-[#20BA5A] text-white text-xs font-bold uppercase tracking-wider rounded-xl transition-all shadow-md shadow-green-500/10 hover:scale-[1.01]"
                     >
-                      💬 Chamar Wellington no WhatsApp
+                      💬 Chamar Suporte no WhatsApp
                     </a>
                   </div>
                 )}
