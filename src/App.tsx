@@ -192,6 +192,7 @@ Como posso te ajudar hoje?`
   const [isGeneratingSupport, setIsGeneratingSupport] = useState(false);
   const [supportMessageInput, setSupportMessageInput] = useState('');
   const [supportInteractionCount, setSupportInteractionCount] = useState(0);
+  const [supportSessionId, setSupportSessionId] = useState('');
   const [runTour, setRunTour] = useState(false);
   const [profileSettings, setProfileSettings] = useState({
     name: localStorage.getItem('prof_name') || '',
@@ -568,7 +569,23 @@ Como posso te ajudar hoje?`
     setIsGeneratingSupport(true);
     setSupportInteractionCount(prev => prev + 1);
 
+    const docId = supportSessionId || `support_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    if (!supportSessionId) {
+      setSupportSessionId(docId);
+    }
+
     try {
+      // Save suggestion/ticket snapshot to Firestore collection
+      const ticketData = {
+        id: docId,
+        userEmail: user?.email || 'anonimo@simplepsi.com.br',
+        userName: user?.displayName || 'Psicólogo',
+        messages: updatedMessages.map(m => ({ role: m.role, content: m.content })),
+        updatedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        status: 'Nova Sugestão'
+      };
+      await setDoc(doc(db, 'support_tickets', docId), ticketData, { merge: true });
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
       if (!apiKey) {
         setSupportMessages(prev => [...prev, {
@@ -630,7 +647,14 @@ Como posso te ajudar hoje?`
       });
 
       const modelReply = response.text || "Desculpe, não consegui processar a resposta agora. Pode tentar novamente?";
-      setSupportMessages(prev => [...prev, { role: 'model', content: modelReply }]);
+      const finalMessages = [...updatedMessages, { role: 'model' as const, content: modelReply }];
+      setSupportMessages(finalMessages);
+
+      // Update support ticket conversation history in Firestore with AI reply
+      await setDoc(doc(db, 'support_tickets', docId), {
+        messages: finalMessages.map(m => ({ role: m.role, content: m.content })),
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
 
     } catch (err) {
       console.error("Erro no chat de suporte de IA:", err);
@@ -5972,6 +5996,25 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
 
 function ProfileSettingsModal({ initialData, onClose, onSave, googleAccessToken, onConnectGoogleCalendar }: any) {
   const [formData, setFormData] = useState(initialData);
+  const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
+  const [adminTickets, setAdminTickets] = useState<any[]>([]);
+  const [selectedTicket, setSelectedTicket] = useState<any | null>(null);
+
+  useEffect(() => {
+    if (isAdminPanelOpen && auth.currentUser?.email === 'wellcoutinho99@gmail.com') {
+      const q = query(collection(db, 'support_tickets'), orderBy('updatedAt', 'desc'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const tickets: any[] = [];
+        snapshot.forEach((doc) => {
+          tickets.push({ id: doc.id, ...doc.data() });
+        });
+        setAdminTickets(tickets);
+      }, (err) => {
+        console.error("Erro ao escutar tickets de suporte:", err);
+      });
+      return unsubscribe;
+    }
+  }, [isAdminPanelOpen]);
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -6100,6 +6143,18 @@ function ProfileSettingsModal({ initialData, onClose, onSave, googleAccessToken,
               </>
             )}
           </div>
+          
+          {auth.currentUser?.email === 'wellcoutinho99@gmail.com' && (
+            <div className="pt-4 border-t border-white/5 mt-4">
+              <button
+                type="button"
+                onClick={() => setIsAdminPanelOpen(true)}
+                className="w-full py-3.5 bg-accent/10 hover:bg-accent/20 text-accent border border-accent/20 rounded-2xl text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 font-mono"
+              >
+                💡 Painel de Sugestões SimplePsi
+              </button>
+            </div>
+          )}
         </div>
 
         <button 
@@ -6109,6 +6164,177 @@ function ProfileSettingsModal({ initialData, onClose, onSave, googleAccessToken,
           Salvar Configurações
         </button>
       </motion.div>
+
+      {/* Secret Suggestions Admin Modal */}
+      <AnimatePresence>
+        {isAdminPanelOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-background/90 backdrop-blur-md"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="glass-card w-full max-w-2xl max-h-[85vh] rounded-[32px] overflow-hidden shadow-2xl p-8 flex flex-col"
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between mb-6 pb-4 border-b border-white/5">
+                <div className="text-left">
+                  <h3 className="text-lg font-bold text-text-main flex items-center gap-2">
+                    <span>💡</span> Central de Sugestões & Feedback
+                  </h3>
+                  <p className="text-[10px] text-text-muted mt-0.5 uppercase tracking-wider">
+                    Tickets de suporte dos usuários em tempo real
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsAdminPanelOpen(false)}
+                  className="p-2 rounded-xl hover:bg-surface-muted transition-colors"
+                >
+                  <Plus className="rotate-45" size={20} />
+                </button>
+              </div>
+
+              {/* Tickets List */}
+              <div className="flex-1 overflow-y-auto pr-2 space-y-4">
+                {adminTickets.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-center text-text-muted space-y-2">
+                    <span className="text-2xl">🌱</span>
+                    <p className="text-xs font-bold uppercase tracking-wider">Nenhuma sugestão ainda</p>
+                    <p className="text-[10px] leading-relaxed max-w-xs">
+                      Quando os psicólogos começarem a conversar com a IA de suporte, as conversas aparecerão aqui de forma instantânea.
+                    </p>
+                  </div>
+                ) : (
+                  adminTickets.map((ticket) => (
+                    <div
+                      key={ticket.id}
+                      className="bg-surface-muted border border-border-ui rounded-2xl p-5 hover:border-primary/30 transition-all space-y-3 relative group text-left"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <h4 className="text-xs font-bold text-text-main flex items-center gap-1.5">
+                            👤 {ticket.userName || 'Psicólogo'}
+                          </h4>
+                          <p className="text-[10px] text-text-muted font-mono">{ticket.userEmail}</p>
+                        </div>
+                        <span className="text-[9px] text-text-muted font-mono whitespace-nowrap bg-white/5 px-2.5 py-1 rounded-lg">
+                          {new Date(ticket.updatedAt).toLocaleString('pt-BR')}
+                        </span>
+                      </div>
+
+                      {ticket.messages && ticket.messages.length > 0 && (
+                        <p className="text-[10px] text-text-muted leading-relaxed line-clamp-2 bg-background/30 p-2.5 rounded-xl border border-white/5">
+                          <span className="font-bold text-text-main uppercase text-[8px] tracking-widest block mb-0.5">Última Mensagem:</span>
+                          {ticket.messages[ticket.messages.length - 1].content}
+                        </p>
+                      )}
+
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTicket(ticket)}
+                          className="flex-1 py-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all"
+                        >
+                          📖 Ver Conversa Completa
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (confirm('Tem certeza que deseja apagar esta sugestão de forma permanente?')) {
+                              try {
+                                await deleteDoc(doc(db, 'support_tickets', ticket.id));
+                              } catch (err) {
+                                console.error(err);
+                                alert('Erro ao apagar ticket.');
+                              }
+                            }
+                          }}
+                          className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all"
+                          title="Apagar Ticket"
+                        >
+                          Excluir
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Secret Ticket Conversation Detail overlay */}
+      <AnimatePresence>
+        {selectedTicket && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-background/95 backdrop-blur-md"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="glass-card w-full max-w-lg max-h-[80vh] rounded-[32px] overflow-hidden shadow-2xl p-8 flex flex-col"
+            >
+              <div className="flex items-center justify-between mb-6 pb-4 border-b border-white/5">
+                <div className="text-left">
+                  <h4 className="text-sm font-bold text-text-main">
+                    Conversa com {selectedTicket.userName}
+                  </h4>
+                  <p className="text-[9px] text-text-muted font-mono">{selectedTicket.userEmail}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTicket(null)}
+                  className="p-2 rounded-xl hover:bg-surface-muted transition-colors"
+                >
+                  <Plus className="rotate-45" size={20} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto space-y-4 pr-2 mb-4">
+                {selectedTicket.messages && selectedTicket.messages.map((m: any, idx: number) => (
+                  <div
+                    key={idx}
+                    className={`flex flex-col max-w-[85%] ${
+                      m.role === 'user' ? 'ml-auto items-end' : 'mr-auto items-start'
+                    }`}
+                  >
+                    <span className="text-[8px] text-text-muted uppercase tracking-wider font-mono mb-1 px-1">
+                      {m.role === 'user' ? 'Psicólogo' : 'IA Assistente'}
+                    </span>
+                    <div
+                      className={`p-3.5 rounded-2xl text-xs leading-relaxed text-left ${
+                        m.role === 'user'
+                          ? 'bg-primary text-white rounded-tr-none'
+                          : 'bg-[#5F7D5C]/10 text-text-main border border-[#5F7D5C]/20 rounded-tl-none'
+                      }`}
+                    >
+                      {m.content}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedTicket(null)}
+                className="w-full bg-primary text-white py-3.5 rounded-2xl font-bold hover:opacity-90 transition-opacity font-mono uppercase text-xs"
+              >
+                Voltar para a Lista
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
