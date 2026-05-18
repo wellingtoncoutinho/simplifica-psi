@@ -68,7 +68,8 @@ import {
   Sparkles,
   Menu,
   UserCircle,
-  HelpCircle
+  HelpCircle,
+  Send
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency } from './lib/utils';
@@ -175,8 +176,22 @@ export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSupportOpen, setIsSupportOpen] = useState(false);
-  const [supportType, setSupportType] = useState('Melhoria');
-  const [supportMessage, setSupportMessage] = useState('');
+  const [supportMessages, setSupportMessages] = useState<Array<{ role: 'user' | 'model', content: string }>>([
+    {
+      role: 'model',
+      content: `Olá! Eu sou o assistente do SimplePsi. Conheço todo o funcionamento da plataforma para te ajudar no que for preciso! 🌿
+
+Você pode me perguntar coisas como:
+- *Como sincronizar minha agenda com o Google Calendar?*
+- *Como funciona a lixeira de pacientes?*
+- *Como gerar Smart Notes a partir de áudios das sessões?*
+
+Como posso te ajudar hoje?`
+    }
+  ]);
+  const [isGeneratingSupport, setIsGeneratingSupport] = useState(false);
+  const [supportMessageInput, setSupportMessageInput] = useState('');
+  const [supportInteractionCount, setSupportInteractionCount] = useState(0);
   const [runTour, setRunTour] = useState(false);
   const [profileSettings, setProfileSettings] = useState({
     name: localStorage.getItem('prof_name') || '',
@@ -216,6 +231,13 @@ export default function App() {
       setIsMobileMenuOpen(true); // Swipe right from edge
     }
   };
+
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [supportMessages, isGeneratingSupport, isSupportOpen]);
 
   // Auth Observer
   useEffect(() => {
@@ -530,26 +552,95 @@ export default function App() {
     }
   };
 
-  const handleSendSupport = () => {
-    if (!supportMessage.trim()) return;
+  const shouldShowWhatsAppSupport = () => {
+    if (supportInteractionCount >= 2) return true;
+    const lower = supportMessages.map(m => m.content.toLowerCase()).join(' ');
+    return lower.includes('whatsapp') || lower.includes('humano') || lower.includes('wellington') || lower.includes('pessoa') || lower.includes('contato') || lower.includes('falar com alguém') || lower.includes('atendimento');
+  };
 
-    const email = "simplepsi.app@gmail.com";
-    const subject = encodeURIComponent(`SimplePsi - ${supportType === 'Melhoria' ? 'Ideia de Melhoria' : 'Relato de Erro'}`);
-    const body = encodeURIComponent(
-      `Olá Equipe SimplePsi,\n\n` +
-      `Estou entrando em contato a partir da plataforma.\n\n` +
-      `- Usuário: ${user?.displayName || 'Sem nome'}\n` +
-      `- E-mail: ${user?.email || 'Sem email'}\n` +
-      `- Tipo de Feedback: ${supportType === 'Melhoria' ? 'Sugestão de Melhoria' : 'Relato de Erro'}\n\n` +
-      `Mensagem:\n` +
-      `${supportMessage}\n\n` +
-      `Atenciosamente,\n` +
-      `${user?.displayName || 'Doutor(a)'}`
-    );
+  const handleSendSupport = async () => {
+    if (!supportMessageInput.trim()) return;
 
-    window.open(`mailto:${email}?subject=${subject}&body=${body}`, '_blank');
-    setIsSupportOpen(false);
-    setSupportMessage('');
+    const userMessage = supportMessageInput.trim();
+    const updatedMessages = [...supportMessages, { role: 'user' as const, content: userMessage }];
+    setSupportMessages(updatedMessages);
+    setSupportMessageInput('');
+    setIsGeneratingSupport(true);
+    setSupportInteractionCount(prev => prev + 1);
+
+    try {
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      if (!apiKey) {
+        setSupportMessages(prev => [...prev, {
+          role: 'model',
+          content: "Desculpe, a chave da API do Gemini não está configurada neste ambiente. Por favor, configure a variável `VITE_GEMINI_API_KEY`."
+        }]);
+        setIsGeneratingSupport(false);
+        return;
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
+
+      // Compile conversation history for the model context
+      const contents = updatedMessages.map(msg => ({
+        role: msg.role,
+        parts: [{ text: msg.content }]
+      }));
+
+      // Inject the strict humanized instructions and platform knowledge as system instruction/prefix
+      const systemInstruction = `
+        Você é a IA de Suporte Oficial da plataforma **SimplePsi**, um sistema de gestão clínica premium e acolhedor para psicólogos.
+        Sua principal missão é ajudar os psicólogos que usam a plataforma com empatia, calor humano e clareza.
+        
+        REGRAS DE OURO DA SUA PERSONALIDADE:
+        - Nunca admita que é um modelo de linguagem ou que foi desenvolvido pela Google/OpenAI. Fale sempre como o "Assistente de Suporte do SimplePsi".
+        - Seu tom deve ser extremamente acolhedor, profissional e natural, em português brasileiro. Evite jargões corporativos robóticos e frases genéricas de atendimento.
+        - Seja conciso e vá direto ao ponto, ensinando o passo a passo de forma simples.
+
+        MAPA DE FUNCIONALIDADES DO SIMPLEPSI:
+        1. **Painel Inicial (Dashboard)**:
+           - Exibe resumos como: "Sessões Hoje", "Pacientes Ativos" e "Receita Mensal Prevista" (calculada dinamicamente).
+           - Tabela de atendimentos do dia com links rápidos de chamada online.
+        2. **Pacientes**:
+           - Permite cadastros rápidos ("Triage/Lite" - agenda por nome e depois efetiva) ou cadastros completos (CPF, Nascimento, Profissão, WhatsApp).
+           - **Lixeira ("Inativos")**: Os pacientes excluídos vão para a aba de "Inativos", evitando a perda definitiva de prontuários. Podem ser restaurados ou deletados para sempre a qualquer momento.
+           - **Payment Notes**: Bloco de notas financeiro personalizado dentro de cada paciente para registrar pendências ou combinados de pagamento.
+        3. **Agenda**:
+           - Agenda semanal interativa. Suporta sessões recorrentes, remarcações (mover sessões) e cancelamentos.
+           - **Google Calendar**: Sincronização em tempo real das consultas com a conta do Google Calendar. O link de atendimento cadastrado no perfil do paciente é inserido automaticamente no local/descrição do evento no Google Calendar, facilitando o acesso.
+        4. **Prontuários & Anamnese**:
+           - **Anamnese**: Dividida em Queixa Principal, Histórico Familiar, História de Vida e Medicamentos.
+           - **Evolução de Sessão**: Suporta notas digitadas ou gravação de áudio de sessão.
+           - **Smart Notes (IA)**: Transcrição automática de áudios e geração automática inteligente de Notas Clínicas (Padrões comportamentais, Progresso do paciente e Sugestões terapêuticas divididas em tópicos).
+        5. **Financeiro**:
+           - Registro de receitas e despesas com categorização e relatórios dinâmicos.
+        6. **Configurações do Perfil**:
+           - Configuração de Nome e CRP que assinam automaticamente o rodapé de todos os prontuários e relatórios gerados em PDF de forma dinâmica.
+           - Integração das credenciais do Google Agenda.
+
+        Se o usuário demonstrar frustração intensa ou se esta for a 3ª interação ou mais, informe amigavelmente que ele também pode nos chamar no suporte direto do WhatsApp clicando no botão que acabamos de disponibilizar logo abaixo na janela de chat.
+      `;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [
+          { role: "user", parts: [{ text: systemInstruction }] },
+          ...contents
+        ],
+      });
+
+      const modelReply = response.text || "Desculpe, não consegui processar a resposta agora. Pode tentar novamente?";
+      setSupportMessages(prev => [...prev, { role: 'model', content: modelReply }]);
+
+    } catch (err) {
+      console.error("Erro no chat de suporte de IA:", err);
+      setSupportMessages(prev => [...prev, {
+        role: 'model',
+        content: "Ops, ocorreu um erro de conexão ao processar seu suporte de IA. Se o erro persistir, você pode me chamar no WhatsApp de Suporte Humano abaixo!"
+      }]);
+    } finally {
+      setIsGeneratingSupport(false);
+    }
   };
 
   // Google Calendar Authentication & Sync Helpers
@@ -1628,88 +1719,117 @@ export default function App() {
                 initial={{ opacity: 0, scale: 0.95, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                className="bg-card border border-border-ui w-full max-w-md rounded-[32px] p-8 space-y-6 shadow-2xl relative overflow-hidden text-left"
+                className="bg-card border border-border-ui w-full max-w-lg rounded-[32px] p-6 space-y-4 shadow-2xl relative overflow-hidden text-left flex flex-col max-h-[90vh]"
               >
                 <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-primary via-accent to-pink-500" />
                 
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-primary">
-                    <HelpCircle size={24} />
-                    <h3 className="text-xl font-bold text-text-main">Suporte & Sugestões</h3>
+                {/* Header */}
+                <div className="flex items-center justify-between border-b border-border-ui pb-3">
+                  <div className="flex items-center gap-2.5 text-primary">
+                    <div className="p-2 bg-primary/10 rounded-xl">
+                      <HelpCircle size={20} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-text-main">Guia de IA & Suporte</h3>
+                      <p className="text-[10px] text-text-muted">Assistente técnico inteligente do SimplePsi</p>
+                    </div>
                   </div>
                   <button 
                     onClick={() => {
                       setIsSupportOpen(false);
-                      setSupportMessage('');
+                      setSupportMessageInput('');
                     }}
-                    className="text-text-muted hover:text-text-main text-xs uppercase tracking-widest font-bold"
+                    className="text-text-muted hover:text-text-main text-[10px] uppercase tracking-widest font-bold bg-surface-muted hover:bg-border-ui px-3 py-1.5 rounded-xl transition-all"
                   >
                     Fechar
                   </button>
                 </div>
 
-                <div className="space-y-4">
-                  <p className="text-xs text-text-muted leading-relaxed">
-                    Percebeu algum erro na plataforma ou tem uma ideia incrível de melhoria? Envie-nos uma mensagem! Seu feedback vai direto para nossa equipe.
-                  </p>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Tipo de Mensagem</label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setSupportType('Melhoria')}
-                        className={cn(
-                          "py-3 rounded-2xl text-xs font-bold uppercase tracking-wider border transition-all",
-                          supportType === 'Melhoria'
-                            ? "bg-primary text-white border-primary shadow-lg shadow-primary/10"
-                            : "bg-surface-muted text-text-muted border-border-ui hover:bg-primary/5 hover:text-primary"
-                        )}
-                      >
-                        💡 Sugerir Melhoria
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSupportType('Erro')}
-                        className={cn(
-                          "py-3 rounded-2xl text-xs font-bold uppercase tracking-wider border transition-all",
-                          supportType === 'Erro'
-                            ? "bg-red-500 text-white border-red-500 shadow-lg shadow-red-500/10"
-                            : "bg-surface-muted text-text-muted border-border-ui hover:bg-red-500/5 hover:text-red-500"
-                        )}
-                      >
-                        ⚠️ Relatar Erro
-                      </button>
+                {/* Chat Message Window */}
+                <div className="flex-1 overflow-y-auto space-y-4 pr-1 min-h-[250px] max-h-[380px] flex flex-col">
+                  {supportMessages.map((msg, idx) => (
+                    <div
+                      key={idx}
+                      className={cn(
+                        "rounded-2xl px-4 py-3 text-xs leading-relaxed max-w-[85%] whitespace-pre-wrap shadow-sm transition-all",
+                        msg.role === 'user'
+                          ? "bg-primary text-white self-end rounded-tr-none text-left"
+                          : "bg-surface-muted border border-border-ui text-text-main self-start rounded-tl-none text-left font-normal"
+                      )}
+                    >
+                      {msg.content}
                     </div>
-                  </div>
+                  ))}
 
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Sua Mensagem</label>
-                    <textarea
-                      rows={5}
-                      value={supportMessage}
-                      onChange={(e) => setSupportMessage(e.target.value)}
-                      placeholder={supportType === 'Melhoria' 
-                        ? "Descreva sua ideia de melhoria ou funcionalidade que gostaria de ver no SimplePsi..." 
-                        : "Descreva o erro ou comportamento inesperado que você percebeu..."
-                      }
-                      className="w-full bg-surface-muted border border-border-ui rounded-2xl p-4 text-xs text-text-main focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/40 placeholder:text-text-muted/40 resize-none leading-relaxed transition-all"
-                    />
-                  </div>
+                  {/* Typing Indicator */}
+                  {isGeneratingSupport && (
+                    <div className="flex items-center gap-1.5 bg-surface-muted border border-border-ui rounded-2xl rounded-tl-none px-4 py-3 max-w-[80%] self-start text-xs text-text-muted shadow-sm">
+                      <span>Assistente está escrevendo</span>
+                      <span className="flex gap-0.5 ml-1 items-center">
+                        <span className="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <span className="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <span className="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                      </span>
+                    </div>
+                  )}
+
+                  <div ref={chatEndRef} />
                 </div>
 
-                <button
-                  onClick={handleSendSupport}
-                  disabled={!supportMessage.trim()}
-                  className={cn(
-                    "w-full py-4 rounded-2xl text-xs font-bold uppercase tracking-widest text-white shadow-lg transition-all flex items-center justify-center gap-2",
-                    supportMessage.trim()
-                      ? (supportType === 'Melhoria' ? "bg-primary hover:opacity-90 shadow-primary/15 hover:scale-[1.01]" : "bg-red-500 hover:opacity-90 shadow-red-500/15 hover:scale-[1.01]")
-                      : "bg-text-muted/20 text-text-muted cursor-not-allowed shadow-none"
-                  )}
+                {/* WhatsApp Escalation Card */}
+                {shouldShowWhatsAppSupport() && (
+                  <div className="bg-primary/5 border border-primary/25 rounded-2xl p-4 text-left space-y-2.5 shadow-sm">
+                    <div className="flex items-start gap-2.5">
+                      <span className="text-base">🌿</span>
+                      <div>
+                        <h4 className="text-xs font-bold text-primary font-outfit">Precisa de suporte humano?</h4>
+                        <p className="text-[10px] text-text-muted leading-relaxed mt-0.5">
+                          O Wellington está online no WhatsApp pronto para resolver o seu problema com todo o histórico deste chat já compartilhado.
+                        </p>
+                      </div>
+                    </div>
+                    <a
+                      href={`https://wa.me/5562983208784?text=${encodeURIComponent(
+                        `Olá Wellington! Estou usando o SimplePsi e preciso de uma ajudinha com a plataforma. Aqui está o histórico da minha conversa com a IA de Suporte:\n\n${supportMessages.map(m => `${m.role === 'user' ? 'Paciente/Psicólogo' : 'IA Assistente'}: ${m.content}`).join('\n\n')}`
+                      )}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center gap-2 w-full py-3 bg-[#25D366] hover:bg-[#20BA5A] text-white text-xs font-bold uppercase tracking-wider rounded-xl transition-all shadow-md shadow-green-500/10 hover:scale-[1.01]"
+                    >
+                      💬 Chamar Wellington no WhatsApp
+                    </a>
+                  </div>
+                )}
+
+                {/* Input Bar */}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleSendSupport();
+                  }}
+                  className="flex items-center gap-2 pt-2 border-t border-border-ui"
                 >
-                  {supportType === 'Melhoria' ? 'Enviar Sugestão 💡' : 'Enviar Relato ⚠️'}
-                </button>
+                  <input
+                    type="text"
+                    value={supportMessageInput}
+                    onChange={(e) => setSupportMessageInput(e.target.value)}
+                    placeholder="Pergunte sobre Google Agenda, Smart Notes, lixeira..."
+                    disabled={isGeneratingSupport}
+                    className="flex-1 bg-surface-muted border border-border-ui rounded-2xl px-4 py-3.5 text-xs text-text-main focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/40 placeholder:text-text-muted/40 transition-all disabled:opacity-50"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isGeneratingSupport || !supportMessageInput.trim()}
+                    className={cn(
+                      "p-3.5 rounded-2xl text-white shadow-lg transition-all flex items-center justify-center",
+                      supportMessageInput.trim() && !isGeneratingSupport
+                        ? "bg-primary hover:opacity-90 shadow-primary/15 hover:scale-[1.03]"
+                        : "bg-text-muted/20 text-text-muted cursor-not-allowed shadow-none"
+                    )}
+                  >
+                    <Send size={16} />
+                  </button>
+                </form>
               </motion.div>
             </motion.div>
           )}
