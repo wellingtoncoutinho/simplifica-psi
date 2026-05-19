@@ -154,11 +154,11 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
         
         {/* Rotating and Floating Platform Logos (Ψ badge) */}
         {/* Spinning logo on the left */}
-        <div className="absolute top-12 left-2 lg:left-8 w-16 h-16 rounded-full overflow-hidden shadow-2xl shadow-[#5F7D5C]/25 animate-spin-slow border border-[#5F7D5C]/25 select-none hover:scale-110 transition-all duration-300 flex items-center justify-center bg-white">
+        <div className="hidden md:flex absolute top-12 left-2 lg:left-8 w-16 h-16 rounded-full overflow-hidden shadow-2xl shadow-[#5F7D5C]/25 animate-spin-slow border border-[#5F7D5C]/25 select-none hover:scale-110 transition-all duration-300 items-center justify-center bg-white">
           <img src="/apple-touch-icon.png" alt="SimplePsi Spinning Logo" className="w-full h-full object-cover" />
         </div>
         {/* Static elegant floating logo on the right */}
-        <div className="absolute top-28 right-2 lg:right-8 w-12 h-12 rounded-full overflow-hidden shadow-xl shadow-[#5F7D5C]/15 border border-[#5F7D5C]/20 animate-bounce select-none hover:scale-110 transition-all duration-300 flex items-center justify-center bg-white">
+        <div className="hidden md:flex absolute top-28 right-2 lg:right-8 w-12 h-12 rounded-full overflow-hidden shadow-xl shadow-[#5F7D5C]/15 border border-[#5F7D5C]/20 animate-bounce select-none hover:scale-110 transition-all duration-300 items-center justify-center bg-white">
           <img src="/apple-touch-icon.png" alt="SimplePsi Bouncing Logo" className="w-full h-full object-cover" />
         </div>
         
@@ -170,7 +170,7 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
 
         {/* Headlines */}
         <div className="space-y-6 max-w-4xl mx-auto">
-          <h1 className="text-4xl sm:text-5xl md:text-6xl font-serif font-black tracking-tight text-[#2E3C2B] leading-[1.08] text-pretty">
+          <h1 className="text-[32px] sm:text-5xl md:text-6xl font-serif font-black tracking-tight text-[#2E3C2B] leading-[1.08] text-pretty">
             Organize sua clínica para sempre pagando <span className="text-[#5F7D5C]">apenas uma vez</span>
           </h1>
           <p className="text-sm sm:text-base md:text-lg text-[#2E3C2B]/70 max-w-2xl mx-auto font-medium leading-relaxed">
@@ -444,13 +444,13 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
           </div>
 
           {/* Timeline Cards Container */}
-          <div className="relative min-h-[340px] overflow-hidden">
+          <div className="relative overflow-hidden">
             
             {/* Rotina Tradicional View */}
-            <div className={`transition-all duration-500 space-y-4 absolute inset-0 ${
+            <div className={`transition-all duration-500 space-y-4 ${
               routineMode === 'current'
-                ? 'opacity-100 translate-y-0 pointer-events-auto'
-                : 'opacity-0 translate-y-4 pointer-events-none'
+                ? 'opacity-100 translate-y-0 pointer-events-auto relative block w-full'
+                : 'opacity-0 translate-y-4 pointer-events-none absolute inset-x-0 top-0 h-0 overflow-hidden'
             }`}>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="p-5 bg-red-500/[0.02] border border-red-500/10 rounded-2xl space-y-2">
@@ -480,10 +480,10 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
             </div>
 
             {/* Rotina SimplePsi View */}
-            <div className={`transition-all duration-500 space-y-4 absolute inset-0 ${
+            <div className={`transition-all duration-500 space-y-4 ${
               routineMode === 'simple'
-                ? 'opacity-100 translate-y-0 pointer-events-auto'
-                : 'opacity-0 translate-y-4 pointer-events-none'
+                ? 'opacity-100 translate-y-0 pointer-events-auto relative block w-full'
+                : 'opacity-0 translate-y-4 pointer-events-none absolute inset-x-0 top-0 h-0 overflow-hidden'
             }`}>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="p-5 bg-[#5F7D5C]/[0.02] border border-[#5F7D5C]/15 rounded-2xl space-y-2">
