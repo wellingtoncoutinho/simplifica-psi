@@ -69,17 +69,20 @@ import {
   Menu,
   UserCircle,
   HelpCircle,
-  Send
+  Send,
+  AlertCircle,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency } from './lib/utils';
+import LandingPage from './components/LandingPage';
 import { 
   Patient, 
   Session, 
   Transaction,
   AppNotification 
 } from './types';
-import { auth, db, signInWithGoogle } from './lib/firebase';
+import { auth, db, signInWithGoogle, signInWithGoogleCalendar } from './lib/firebase';
 import { 
   collection, 
   query, 
@@ -91,7 +94,8 @@ import {
   doc, 
   setDoc,
   serverTimestamp,
-  orderBy
+  orderBy,
+  getDoc
 } from 'firebase/firestore';
 import { onAuthStateChanged, User, GoogleAuthProvider } from 'firebase/auth';
 import { Joyride, EventData, STATUS, Step, TooltipRenderProps } from 'react-joyride';
@@ -104,6 +108,97 @@ enum OperationType {
   GET = 'get',
   WRITE = 'write',
 }
+
+const CLINICAL_APPROACHES: Record<string, { name: string; rules: string; pdfTopics: string[]; evolutionPrompt: string }> = {
+  tcc: {
+    name: "Terapia Cognitivo-Comportamental",
+    rules: "Siga a linha de raciocínio da TCC (identificando pensamentos, comportamentos, regulação emocional ou plano de ação) de forma orgânica e sutil. Evite forçar termos técnicos excessivos de uma só vez; use-os apenas se fizerem sentido prático na sessão.",
+    pdfTopics: [
+      "1. Demanda / Queixa do Dia",
+      "2. Distorções Cognitivas & Crenças Identificadas",
+      "3. Técnicas & Intervenções de TCC Aplicadas",
+      "4. Plano de Ação / Tarefas Comportamentais"
+    ],
+    evolutionPrompt: "Analise a evolução clínica sob a ótica da Terapia Cognitivo-Comportamental. Identifique padrões de distorções cognitivas, crenças nucleares ativadas, o progresso na regulação emocional e adesão às tarefas terapêuticas de forma sóbria e equilibrada."
+  },
+  psicanalise: {
+    name: "Psicanálise",
+    rules: "Siga a escuta analítica (focando no material trazido, defesas sutis ou dinâmica subjetiva) de forma natural, leve e fluida. Evite forçar termos acadêmicos pesados; trate o processo com a sobriedade de um analista em sua rotina diária. NUNCA fale em 'tarefas de casa', 'reestruturação' ou 'metas'.",
+    pdfTopics: [
+      "1. Material Clínico Trazido (Livre Associação)",
+      "2. Dinâmica Inconsciente & Defesas Observadas",
+      "3. Manejo Clínico & Intervenções da Escuta Analítica",
+      "4. Direcionamento e Apontamentos para Sessões Futuras"
+    ],
+    evolutionPrompt: "Analise o caso sob a ótica da Psicanálise de forma sóbria. Identifique padrões repetitivos de defesas do Ego, manifestações latentes do inconsciente na fala do paciente e dinâmicas de transferência estruturadas ao longo do tempo."
+  },
+  gestalt: {
+    name: "Gestalt-Terapia",
+    rules: "Siga a perspectiva fenomenológica (awareness, contato ou a queixa no aqui-e-agora) de forma orgânica e sutil. Evite carregar o relato com jargões técnicos desnecessários; mantenha o texto focado na vivência do cliente de forma fluida. NUNCA fale em 'tarefas' ou 'esquemas cognitivos'.",
+    pdfTopics: [
+      "1. Experiência Imediata / Queixa no Aqui-e-Agora",
+      "2. Dinâmica da Fronteira de Contato & Bloqueios Observados",
+      "3. Experimentos Gestálticos & Intervenções do Terapeuta",
+      "4. Nível de Awareness & Integração da Sessão"
+    ],
+    evolutionPrompt: "Analise o caso clínico sob a ótica da Gestalt-Terapia de forma leve. Identifique o nível de awareness (consciência corporal/emocional) do cliente, bloqueios no ciclo de contato com o meio, e a passagem para o auto-suporte."
+  },
+  humanista: {
+    name: "Psicologia Humanista / Existencial / ACP",
+    rules: "Siga a escuta empática e existencial de forma sutil, focando no self e na vivência do cliente. Evite qualquer tipo de rotulação diagnóstica ou excesso de jargões técnicos; escreva com naturalidade, acolhimento e leveza.",
+    pdfTopics: [
+      "1. Vivência Experiencial / Queixa Existencial Trazida",
+      "2. Facilitação, Alinhamento Empático & Aceitação Incondicional",
+      "3. Movimentos de Autoatualização & Bloqueios do Self",
+      "4. Direcionamento da Escuta e Insights Centrados no Cliente"
+    ],
+    evolutionPrompt: "Analise a evolução clínica sob a ótica Humanista / Existencial de forma empática e natural. Foque no processo de autoatualização, na congruência interna e no fortalecimento do self do paciente."
+  },
+  behaviorismo: {
+    name: "Análise do Comportamento (Behaviorismo)",
+    rules: "Descreva as contingências e dinâmicas comportamentais de forma natural, objetiva e sutil. Evite sobrecarregar o texto com excesso de terminologias técnicas acadêmicas; mantenha a escrita limpa, precisa e fluida.",
+    pdfTopics: [
+      "1. Contexto Antecedente / Queixa Comportamental",
+      "2. Análise Funcional (Tríplice Contingência)",
+      "3. Procedimentos Aplicados & Mudanças Contingenciais",
+      "4. Reforçamentos Programados & Orientações Práticas"
+    ],
+    evolutionPrompt: "Analise a evolução clínica sob a ótica da Análise do Comportamento de forma objetiva. Identifique a estabilidade ou mudança na tríplice contingência e a eficácia dos reforçadores manejados de forma natural."
+  },
+  junguiana: {
+    name: "Psicologia Analítica (Junguiana)",
+    rules: "Trate as dinâmicas inconscientes e simbólicas de forma sutil, natural e equilibrada. Evite forçar termos arquetípicos pesados de forma artificial ou caricata; relate a vivência do paciente com fluidez e sobriedade.",
+    pdfTopics: [
+      "1. Material Simbólico / Demanda Trazida à Tona",
+      "2. Dinâmica de Complexos Ativados & Projeções Identificadas",
+      "3. Amplificação de Símbolos & Intervenções Junguianas",
+      "4. Movimentos Rumo à Individuação & Integração da Sombra"
+    ],
+    evolutionPrompt: "Analise a evolução clínica sob a ótica da Psicologia Analítica Junguiana. Identifique as manifestações do inconsciente pessoal e coletivo e a ativação de complexos de forma sutil."
+  },
+  act: {
+    name: "ACT (Terapia de Aceitação e Compromisso)",
+    rules: "Siga a lógica da flexibilidade e aceitação de forma sutil e humana (desfusão de pensamentos, contato com valores ou ação comprometida). Evite forçar termos do Hexaflex de forma artificial ou excessiva; escreva de forma orgânica e natural.",
+    pdfTopics: [
+      "1. Experiência Presente / Fusões Cognitivas Evidenciadas",
+      "2. Processos de Aceitação & Desfusão Desenvolvidos",
+      "3. Valores Pessoais Explorados & Barreiras Identificadas",
+      "4. Ações Comprometidas Pactuadas para a Semana"
+    ],
+    evolutionPrompt: "Analise o caso clínico sob a ótica da ACT de forma humana. Identifique os níveis de flexibilidade ou rigidez psicológica do cliente nos eixos do Hexaflex de maneira sutil e natural."
+  },
+  dbt: {
+    name: "DBT (Terapia Dialética Comportamental)",
+    rules: "Siga a dinâmica dialética (manejo de limites, validação emocional, regulação ou habilidades) de forma natural e sutil. Evite carregar o texto com terminologias de manual; relate a sessão com leveza, humanidade e fluidez.",
+    pdfTopics: [
+      "1. Comportamentos-Alvo Analisados (Análise em Cadeia)",
+      "2. Equilíbrio Dialético (Manejo de Validação vs. Mudança)",
+      "3. Treino de Habilidades DBT Exploradas na Sessão",
+      "4. Plano de Segurança / Acordos Inter-sessões"
+    ],
+    evolutionPrompt: "Analise a evolução clínica sob a ótica da DBT de forma equilibrada. Identifique a redução de comportamentos-alvo desadaptativos e a aplicação prática das habilidades de regulação de forma sóbria."
+  }
+};
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errInfo = {
@@ -171,6 +266,7 @@ const calculateIncomePrediction = (start: Date, end: Date, sessions: any[], pati
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [selectedPatient, setSelectedPatient] = useState<string | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -198,7 +294,8 @@ Como posso te ajudar hoje?`
     name: localStorage.getItem('prof_name') || '',
     crp: localStorage.getItem('prof_crp') || '',
     logo: localStorage.getItem('prof_logo') || '',
-    isGoogleCalendarEnabled: localStorage.getItem('prof_gcal_enabled') === 'true'
+    isGoogleCalendarEnabled: localStorage.getItem('prof_gcal_enabled') === 'true',
+    clinicalApproach: localStorage.getItem('prof_approach') || 'tcc'
   });
   const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(localStorage.getItem('google_calendar_access_token'));
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -242,8 +339,62 @@ Como posso te ajudar hoje?`
 
   // Auth Observer
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        // Pre-authorized master emails
+        const masterEmails = [
+          'juniorcoutinho58@gmail.com',
+          'wellingtoncoutinho58@gmail.com',
+          'acessoriavitrinni@gmail.com'
+        ];
+        const userEmail = user.email ? user.email.toLowerCase().trim() : '';
+
+        if (masterEmails.includes(userEmail)) {
+          setUser(user);
+          setAuthError(null);
+          setLoading(false);
+          return;
+        }
+
+        try {
+          // 1. Check if user already has an existing clinical profile
+          const profileRef = doc(db, 'profiles', user.uid);
+          const profileSnap = await getDoc(profileRef);
+
+          if (profileSnap.exists()) {
+            // Existing registered user! Let them log in immediately.
+            setUser(user);
+            setAuthError(null);
+            setLoading(false);
+            return;
+          }
+
+          // 2. Check if email document exists in Firestore 'authorized_emails'
+          const docRef = doc(db, 'authorized_emails', userEmail);
+          const docSnap = await getDoc(docRef);
+
+          if (docSnap.exists() && docSnap.data().active !== false) {
+            setUser(user);
+            setAuthError(null);
+          } else {
+            // Not authorized! Sign out immediately
+            await auth.signOut();
+            setUser(null);
+            setAuthError(
+              "Este e-mail não possui uma licença vitalícia ativa do SimplePsi. Se você acabou de comprar, aguarde 2 minutinhos para a liberação automática ou fale com o nosso suporte."
+            );
+          }
+        } catch (err) {
+          console.error("Erro ao verificar e-mail autorizado:", err);
+          await auth.signOut();
+          setUser(null);
+          setAuthError(
+            "Verificação de licença indisponível no momento. Por favor, tente novamente em instantes ou chame o suporte."
+          );
+        }
+      } else {
+        setUser(null);
+      }
       setLoading(false);
     });
     return unsubscribe;
@@ -266,13 +417,15 @@ Como posso te ajudar hoje?`
           name: data.name || '',
           crp: data.crp || '',
           logo: data.logo || '',
-          isGoogleCalendarEnabled: data.isGoogleCalendarEnabled || false
+          isGoogleCalendarEnabled: data.isGoogleCalendarEnabled || false,
+          clinicalApproach: data.clinicalApproach || 'tcc'
         });
         // Also update localStorage as backup/cache
         localStorage.setItem('prof_name', data.name || '');
         localStorage.setItem('prof_crp', data.crp || '');
         localStorage.setItem('prof_logo', data.logo || '');
         localStorage.setItem('prof_gcal_enabled', data.isGoogleCalendarEnabled ? 'true' : 'false');
+        localStorage.setItem('prof_approach', data.clinicalApproach || 'tcc');
       }
     });
 
@@ -758,23 +911,25 @@ Como posso te ajudar hoje?`
       // 1. Get all future agenda slots for the next 30 days
       const futureSlots = getFutureAgendaSlots(30);
 
-      // Filter slots that don't have a Google Event ID yet
+      // Count pending vs existing
       const pendingSlots = futureSlots.filter(s => !s.googleEventId);
+      const existingSlots = futureSlots.filter(s => !!s.googleEventId);
 
       // Diagnostic Alert
       alert(`SimplePsi - Diagnóstico de Sincronização:\n\n` +
             `- Total de Pacientes: ${totalPatients}\n` +
             `- Pacientes com dia/hora fixos: ${activePatientsWithSchedule}\n` +
             `- Consultas detectadas nos próximos 30 dias: ${futureSlots.length}\n` +
-            `- Consultas pendentes de envio ao Google: ${pendingSlots.length}\n\n` +
-            `Ao clicar em OK, iniciaremos a sincronização destas consultas.`);
+            `- Consultas novas (não enviadas ao Google): ${pendingSlots.length}\n` +
+            `- Consultas já vinculadas (serão atualizadas): ${existingSlots.length}\n\n` +
+            `Ao clicar em OK, iniciaremos a sincronização e reconciliação de todas as consultas no seu Google Agenda.`);
 
-      if (pendingSlots.length === 0) {
+      if (futureSlots.length === 0) {
         console.log("Nenhuma consulta futura pendente de sincronização.");
         return;
       }
 
-      console.log(`Iniciando sincronização em lote de ${pendingSlots.length} consultas futuras...`);
+      console.log(`Iniciando reconciliação em lote de ${futureSlots.length} consultas futuras...`);
       
       // Temporary override to ensure local token is active
       localStorage.setItem('google_calendar_access_token', accessToken);
@@ -783,33 +938,40 @@ Como posso te ajudar hoje?`
       let failCount = 0;
       let lastErrorMessage = '';
 
-      for (const slot of pendingSlots) {
+      for (const slot of futureSlots) {
         try {
-          if (slot.id.startsWith('virtual-')) {
-            // Materialize virtual session as a real session document in Firestore
-            const sessionData = {
-              patientId: slot.patientId,
-              date: slot.date,
-              time: slot.time,
-              duration: slot.duration || '50min',
-              type: slot.type || 'Presencial',
-              status: 'Agendada',
-              amount: parseFloat(slot.sessionValue) || 0,
-              cost: 0,
-              paid: false,
-              nfIssued: false,
-              ownerId: user.uid,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            };
+          if (!slot.googleEventId) {
+            if (slot.id.startsWith('virtual-')) {
+              // Materialize virtual session as a real session document in Firestore
+              const sessionData = {
+                patientId: slot.patientId,
+                date: slot.date,
+                time: slot.time,
+                duration: slot.duration || '50min',
+                type: slot.type || 'Presencial',
+                status: 'Agendada',
+                amount: parseFloat(slot.sessionValue) || 0,
+                cost: 0,
+                paid: false,
+                nfIssued: false,
+                ownerId: user.uid,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+              };
 
-            const docRef = await addDoc(collection(db, 'sessions'), sessionData);
-            const success = await syncSessionToGoogleCalendar(sessionData, docRef.id, true);
-            if (success) successCount++;
-            else failCount++;
+              const docRef = await addDoc(collection(db, 'sessions'), sessionData);
+              const success = await syncSessionToGoogleCalendar(sessionData, docRef.id, true);
+              if (success) successCount++;
+              else failCount++;
+            } else {
+              // Already a recorded session, sync it directly
+              const success = await syncSessionToGoogleCalendar(slot, slot.id, true);
+              if (success) successCount++;
+              else failCount++;
+            }
           } else {
-            // Already a recorded session, sync it directly
-            const success = await syncSessionToGoogleCalendar(slot, slot.id, true);
+            // Already has googleEventId, perform update/reconciliation
+            const success = await updateSessionInGoogleCalendar(slot, true);
             if (success) successCount++;
             else failCount++;
           }
@@ -820,8 +982,8 @@ Como posso te ajudar hoje?`
         }
       }
 
-      alert(`Resultado da Sincronização:\n\n` +
-            `- Consultas enviadas com sucesso: ${successCount}\n` +
+      alert(`Resultado da Sincronização & Reconciliação:\n\n` +
+            `- Consultas sincronizadas/atualizadas com sucesso: ${successCount}\n` +
             `- Consultas com falha: ${failCount}` +
             (failCount > 0 ? `\n- Último erro relatado: ${lastErrorMessage}` : ''));
 
@@ -833,7 +995,19 @@ Como posso te ajudar hoje?`
 
   const handleConnectGoogleCalendar = async () => {
     try {
-      const result = await signInWithGoogle();
+      const userConfirmed = window.confirm(
+        "🔒 Segurança e Integração da Google Agenda\n\n" +
+        "Para sincronizar as consultas do SimplePsi com a sua Google Agenda em tempo real, o Google solicitará permissão para gerenciar eventos de calendário.\n\n" +
+        "Como a nossa plataforma é exclusiva e utiliza sua conta pessoal direta, a Google poderá exibir um aviso de 'App não verificado' ou 'Site suspeito'. Isso é normal para apps privados que ainda não concluíram a verificação empresarial completa da Google.\n\n" +
+        "Para prosseguir com segurança:\n" +
+        "1. Clique em 'Avançado' (no canto inferior esquerdo da tela de consentimento da Google).\n" +
+        "2. Clique no link 'Acessar SimplePsi (não seguro)'.\n\n" +
+        "Garantimos 100% de sigilo ético e que nenhuma outra informação da sua conta Google será lida. Deseja iniciar a conexão manual agora?"
+      );
+      
+      if (!userConfirmed) return;
+
+      const result = await signInWithGoogleCalendar();
       const credential = GoogleAuthProvider.credentialFromResult(result);
       if (credential && credential.accessToken) {
         localStorage.setItem('google_calendar_access_token', credential.accessToken);
@@ -963,10 +1137,11 @@ Como posso te ajudar hoje?`
     }
   };
 
-  const updateSessionInGoogleCalendar = async (sessionData: any) => {
-    if (!profileSettings.isGoogleCalendarEnabled || !sessionData.googleEventId) return;
+  const updateSessionInGoogleCalendar = async (sessionData: any, bypassEnabledCheck = false): Promise<boolean> => {
+    if (!profileSettings.isGoogleCalendarEnabled && !bypassEnabledCheck) return false;
+    if (!sessionData.googleEventId) return false;
     const headers = getCalendarAuthHeaders();
-    if (!headers) return;
+    if (!headers) return false;
 
     try {
       const p = patients.find(pat => pat.id === sessionData.patientId);
@@ -997,9 +1172,12 @@ Como posso te ajudar hoje?`
 
       if (response.status === 401) {
         console.warn("Token da Google Agenda expirou.");
+        return false;
       }
+      return response.ok;
     } catch (err) {
       console.error("Erro ao atualizar evento na Google Agenda:", err);
+      return false;
     }
   };
 
@@ -1384,42 +1562,50 @@ Como posso te ajudar hoje?`
 
   if (!user) {
     return (
-      <div className="flex items-center justify-center h-screen bg-background text-text-main p-4 overflow-hidden relative">
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-primary/20 blur-[120px] -z-10 rounded-full" />
-        <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-accent/20 blur-[120px] -z-10 rounded-full" />
+      <>
+        <LandingPage onLogin={handleGoogleLogin} />
         
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="glass-card w-full max-w-md rounded-[32px] p-8 space-y-8 shadow-2xl text-center relative overflow-hidden"
-        >
-          <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-primary via-accent to-pink-500" />
-          
-          <div className="space-y-4">
-            <img src="/logo.png" alt="Simple Psi" className="w-32 h-32 object-contain mx-auto rounded-3xl shadow-xl border border-white/10" />
-            <p className="text-text-muted text-sm px-4">Seu consultório inteligente, seguro e para sempre.</p>
+        {/* Auth Error Premium Modal */}
+        {authError && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+            <div className="bg-[#FAF9F6] border border-[#2E3C2B]/10 max-w-md w-full rounded-3xl p-8 space-y-6 shadow-2xl relative animate-in fade-in zoom-in duration-300 text-[#2E3C2B]">
+              <button 
+                onClick={() => setAuthError(null)} 
+                className="absolute top-4 right-4 text-[#2E3C2B]/40 hover:text-[#2E3C2B]/80 transition-colors p-2"
+              >
+                <X size={20} />
+              </button>
+              
+              <div className="flex flex-col items-center text-center space-y-4">
+                <div className="w-16 h-16 rounded-full bg-red-50 flex items-center justify-center text-red-600 border border-red-100">
+                  <AlertCircle size={32} />
+                </div>
+                <h3 className="text-xl font-serif font-black text-[#2E3C2B]">Acesso Não Autorizado</h3>
+                <p className="text-sm text-[#2E3C2B]/70 leading-relaxed font-sans">
+                  {authError}
+                </p>
+              </div>
+              
+              <div className="space-y-3 pt-2">
+                <a 
+                  href="https://wa.me/5562983208784" // Wellington's Whatsapp!
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="w-full py-3 bg-[#5F7D5C] hover:bg-[#4E674C] text-white font-bold rounded-xl transition-all shadow-md shadow-[#5F7D5C]/10 flex items-center justify-center gap-2 text-xs uppercase tracking-wider font-sans"
+                >
+                  Falar com o Suporte
+                </a>
+                <button 
+                  onClick={() => setAuthError(null)}
+                  className="w-full py-3 bg-transparent hover:bg-[#2E3C2B]/5 text-[#2E3C2B]/80 font-bold rounded-xl transition-all flex items-center justify-center text-xs uppercase tracking-wider font-sans"
+                >
+                  Entendi
+                </button>
+              </div>
+            </div>
           </div>
-
-          <div className="space-y-4 pt-4">
-             <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Acesse sua conta</p>
-             <button 
-              onClick={handleGoogleLogin}
-              className="w-full h-14 rounded-2xl bg-white text-black flex items-center justify-center gap-4 font-bold transition-all hover:scale-[1.02] active:scale-95 shadow-xl shadow-black/10 group"
-             >
-                <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5 group-hover:animate-bounce" />
-                Entrar com Google
-             </button>
-             <p className="text-[10px] text-text-muted/50 leading-relaxed max-w-[240px] mx-auto">
-                Ao entrar você concorda com nossos termos e garante a segurança dos dados de seus pacientes.
-             </p>
-          </div>
-
-          <div className="pt-8 border-t border-white/5 opacity-50 flex items-center justify-center gap-6">
-            <div className="flex items-center gap-1.5"><Save size={12} /> <span className="text-[8px] font-bold uppercase">Sincronizado</span></div>
-            <div className="flex items-center gap-1.5"><FileText size={12} /> <span className="text-[8px] font-bold uppercase">Criptografado</span></div>
-          </div>
-        </motion.div>
-      </div>
+        )}
+      </>
     );
   }
 
@@ -1722,6 +1908,7 @@ Como posso te ajudar hoje?`
                   localStorage.setItem('prof_name', data.name);
                   localStorage.setItem('prof_crp', data.crp);
                   localStorage.setItem('prof_logo', data.logo);
+                  localStorage.setItem('prof_approach', data.clinicalApproach || 'tcc');
                   setProfileSettings(data);
                   setIsSettingsOpen(false);
                 }
@@ -3040,22 +3227,31 @@ function PatientDetailsView({
 
     setIsGeneratingEvolution(true);
     try {
+      const approachKey = profileSettings.clinicalApproach || 'tcc';
+      const approachInfo = CLINICAL_APPROACHES[approachKey] || CLINICAL_APPROACHES.tcc;
+
       const ai = new GoogleGenAI({ apiKey });
-      const prompt = `Atue como um psicólogo clínico experiente. Transforme a seguinte transcrição bruta de um áudio em um relato de sessão clínica organizado em texto corrido e parágrafos, escrito de forma profissional, mas com um tom pessoal (estilo relato de caso).
+      const prompt = `Atue como um psicólogo clínico experiente cuja abordagem teórica principal de atendimento é a ${approachInfo.name}.
+      Transforme a seguinte transcrição bruta de um áudio em um relato de sessão clínica organizado em texto corrido e parágrafos, escrito de forma profissional, mas com um tom pessoal (estilo relato de caso) adequado à sua linha teórica de atendimento.
       
-REGRA IMPORTANTÍSSIMA 1: NUNCA invente, presuma ou adicione informações que não estejam na transcrição bruta. Se a transcrição for curta e contiver apenas o básico, devolva um relato curto e básico. O tamanho e a quantidade de detalhes do seu relato devem ser estritamente proporcionais à transcrição fornecida.
-
-REGRA IMPORTANTÍSSIMA 2: Substitua TODOS os nomes próprios de pessoas (pacientes, parceiros, parentes, etc) mencionados na transcrição APENAS pela letra inicial do nome seguida de ponto (exemplo: Gabi -> G., Alana -> A., Carol -> C.). 
-
-Mantenha o fluxo de narrativa em primeira pessoa do terapeuta (ex: "A paciente relatou...", "Questionei se...", "Trabalhei com ela..."). Não adicione saudações, devolva apenas o texto final do relato.
-
-Exemplo de estilo de relato desejado:
-"A sessão com a G. foi uma boa sessão. Ela começou contando que no dia anterior havia sentido uma dor no estômago diferente de tudo que já havia sentido antes, como se fosse uma mordida. Foi ao hospital, mas não se sentiu segura com a primeira médica, então foi a um segundo médico. 
-Sobre a semana, ela disse que foi tranquila de forma geral, mas que ficou um pouco ansiosa porque uma ex-noiva dela, a A., entrou em contato. O estômago dela ficou ruim depois que recebeu a mensagem. Questionei se o que ela estava sentindo era culpa, e ela confirmou que sim.
-Trabalhei com ela a diferença entre colocar um limite e sustentá-lo: que ela tem o direito de estabelecer o que é inegociável para ela, e que a reação do outro não muda esse direito. Falei também sobre assertividade e combinamos que na próxima sessão vamos aprofundar esse tema."
-
-Transcrição bruta a ser convertida:
-"${transcriptionText}"
+      DIRETRIZES DA SUA ABORDAGEM CLÍNICA (${approachInfo.name}):
+      ${approachInfo.rules}
+      
+      REGRA DE ESTILO CRÍTICA: Escreva de forma extremamente natural, humana, equilibrada e fluida. Utilize os conceitos teóricos da sua abordagem de maneira SUTIL e ORGÂNICA, apenas onde fizer sentido prático na fala do cliente. NUNCA force termos técnicos desnecessários de forma artificial e evite encher o relato com excesso de jargões acadêmicos. O texto deve soar como as anotações sóbrias e elegantes de um terapeuta humano real em seu cotidiano, sem parecer um artigo científico caricato.
+      
+      REGRA IMPORTANTÍSSIMA 1: NUNCA invente, presuma ou adicione informações que não estejam na transcrição bruta. Se a transcrição for curta e contiver apenas o básico, devolva um relato curto e básico. O tamanho e a quantidade de detalhes do seu relato devem ser estritamente proporcionais à transcrição fornecida.
+      
+      REGRA IMPORTANTÍSSIMA 2: Substitua TODOS os nomes próprios de pessoas (pacientes, parceiros, parentes, etc) mencionados na transcrição APENAS pela letra inicial do nome seguida de ponto (exemplo: Gabi -> G., Alana -> A., Carol -> C.). 
+      
+      Mantenha o fluxo de narrativa em primeira pessoa do terapeuta (ex: "A paciente relatou...", "Questionei se...", "Trabalhei com ela..."). Não adicione saudações, devolva apenas o texto final do relato.
+      
+      Exemplo de estilo de relato de referência (exemplo genérico para compreender o tom desejado):
+      "A sessão com a G. foi uma boa sessão. Ela começou contando que no dia anterior havia sentido uma dor no estômago diferente de tudo que já havia sentido antes, como se fosse uma mordida. Foi ao hospital, mas não se sentiu segura com a primeira médica, então foi a um segundo médico. 
+      Sobre a semana, ela disse que foi tranquila de forma geral, mas que ficou um pouco ansiosa porque uma ex-noiva dela, a A., entrou em contato. O estômago dela ficou ruim depois que recebeu a mensagem. Questionei se o que ela estava sentindo era culpa, e ela confirmou que sim.
+      Trabalhei com ela a diferença entre colocar um limite e sustentá-lo: que ela tem o direito de estabelecer o que é inegociável para ela, e que a reação do outro não muda esse direito. Falei também sobre assertividade e combinamos que na próxima sessão vamos aprofundar esse tema."
+      
+      Transcrição bruta a ser convertida:
+      "${transcriptionText}"
       `;
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
@@ -3105,17 +3301,20 @@ Transcrição bruta a ser convertida:
       return;
     }
 
+    const approachKey = profileSettings.clinicalApproach || 'tcc';
+    const approachInfo = CLINICAL_APPROACHES[approachKey] || CLINICAL_APPROACHES.tcc;
+
     setGeneratingPdfId(evo.id);
     try {
       const ai = new GoogleGenAI({ apiKey });
-      const prompt = `Atue como um psicólogo clínico extraindo informações de um relato de evolução para um prontuário formal.
+      const prompt = `Atue como um psicólogo clínico da abordagem ${approachInfo.name} extraindo informações de um relato de evolução para um prontuário formal.
 Leia o seguinte relato de sessão e extraia as informações dividindo-as nestes 4 tópicos:
-1. Demanda/Queixa do Dia (Breve resumo do que o paciente trouxe para a sessão).
-2. Intervenções/Técnicas Utilizadas (Ex: Diálogo socrático, Escuta ativa, Questionamento, etc).
-3. Evolução e Resposta do Paciente (Como o paciente reagiu e qual o progresso observado).
-4. Tarefa de Casa (Se houve alguma combinação para a próxima semana. Se não, escreva "Nenhuma").
+1. ${approachInfo.pdfTopics[0]} (Breve resumo do que o paciente trouxe para a sessão).
+2. ${approachInfo.pdfTopics[1]} (Intervenções e técnicas específicas utilizadas na sessão).
+3. ${approachInfo.pdfTopics[2]} (Como o paciente reagiu e qual o progresso observado).
+4. ${approachInfo.pdfTopics[3]} (Acordos ou orientações inter-sessões).
 
-Seja muito sucinto, formal e direto. Não adicione saudações, asteriscos ou introduções, retorne APENAS um objeto JSON válido com as seguintes chaves exatas (tudo minúsculo, sem acentos): "demanda", "intervencoes", "evolucao", "tarefa".
+Seja muito sucinto, formal, ético e direto de acordo com as diretrizes da sua abordagem. Não adicione saudações, asteriscos ou introduções, retorne APENAS um objeto JSON válido com as seguintes chaves exatas (tudo minúsculo, sem acentos): "demanda", "intervencoes", "evolucao", "tarefa".
 
 Relato:
 "${evo.note}"`;
@@ -3209,10 +3408,10 @@ Relato:
         startY: finalY2 + 20,
         theme: 'grid',
         body: [
-          ['Demanda/Queixa do Dia', data.demanda || ''],
-          ['Intervenções/Técnicas Utilizadas', data.intervencoes || ''],
-          ['Evolução e Resposta do Paciente', data.evolucao || ''],
-          ['Tarefa de Casa (RPD)', data.tarefa || '']
+          [approachInfo.pdfTopics[0], data.demanda || ''],
+          [approachInfo.pdfTopics[1], data.intervencoes || ''],
+          [approachInfo.pdfTopics[2], data.evolucao || ''],
+          [approachInfo.pdfTopics[3], data.tarefa || '']
         ],
         columnStyles: {
           0: { cellWidth: 70, fontStyle: 'bold' },
@@ -3373,11 +3572,18 @@ Relato:
       return;
     }
 
+      const approachKey = profileSettings.clinicalApproach || 'tcc';
+      const approachInfo = CLINICAL_APPROACHES[approachKey] || CLINICAL_APPROACHES.tcc;
+
       const ai = new GoogleGenAI({ apiKey });
       
       const prompt = `
-        Aja como um assistente de psicólogo especializado em análise clínica.
-        Analise os dados do paciente ${patient.name} e gere resumos.
+        Aja como um assistente de psicólogo altamente experiente e especializado em análise clínica sob a ótica da abordagem ${approachInfo.name}.
+        Analise os dados do paciente ${patient.name} e gere os resumos solicitados estruturados sob a sua ótica teórica.
+        
+        DIRETRIZES DA ANÁLISE CLÍNICA (${approachInfo.name}):
+        ${approachInfo.evolutionPrompt}
+        Certifique-se de que a linguagem teórica, os insights psicológicos e a terminologia utilizada correspondam estritamente a essa abordagem clínica.
 
         ANAMNESE: 
         Queixa Principal: ${clinicalData.anamnese.mainComplaint}
@@ -6001,7 +6207,8 @@ function ProfileSettingsModal({ initialData, onClose, onSave, googleAccessToken,
   const [selectedTicket, setSelectedTicket] = useState<any | null>(null);
 
   useEffect(() => {
-    if (isAdminPanelOpen && auth.currentUser?.email === 'wellcoutinho99@gmail.com') {
+    const isAuthorized = auth.currentUser?.email === 'wellcoutinho99@gmail.com' || auth.currentUser?.email === 'juniorcoutinho58@gmail.com';
+    if (isAdminPanelOpen && isAuthorized) {
       const q = query(collection(db, 'support_tickets'), orderBy('updatedAt', 'desc'));
       const unsubscribe = onSnapshot(q, (snapshot) => {
         const tickets: any[] = [];
@@ -6064,6 +6271,30 @@ function ProfileSettingsModal({ initialData, onClose, onSave, googleAccessToken,
               placeholder="Ex: CRP 06/12345"
               className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
             />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Abordagem Clínica Principal</label>
+            <select
+              value={formData.clinicalApproach || 'tcc'}
+              onChange={e => setFormData({...formData, clinicalApproach: e.target.value})}
+              className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary cursor-pointer appearance-none"
+              style={{
+                backgroundImage: `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%23888' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E")`,
+                backgroundPosition: 'right 1rem center',
+                backgroundSize: '1.25rem',
+                backgroundRepeat: 'no-repeat',
+                paddingRight: '2.5rem'
+              }}
+            >
+              <option value="tcc" className="bg-background-dark">TCC (Terapia Cognitivo-Comportamental)</option>
+              <option value="psicanalise" className="bg-background-dark">Psicanálise</option>
+              <option value="gestalt" className="bg-background-dark">Gestalt-Terapia</option>
+              <option value="humanista" className="bg-background-dark">Existencial / ACP (Centrada na Pessoa)</option>
+              <option value="behaviorismo" className="bg-background-dark">Análise do Comportamento (Behaviorismo)</option>
+              <option value="junguiana" className="bg-background-dark">Psicologia Analítica (Junguiana)</option>
+              <option value="act" className="bg-background-dark">ACT (Terapia de Aceitação e Compromisso)</option>
+              <option value="dbt" className="bg-background-dark">DBT (Terapia Dialética Comportamental)</option>
+            </select>
           </div>
           <div className="space-y-2">
             <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Logo da Clínica (Opcional)</label>
@@ -6144,8 +6375,8 @@ function ProfileSettingsModal({ initialData, onClose, onSave, googleAccessToken,
             )}
           </div>
           
-          {auth.currentUser?.email === 'wellcoutinho99@gmail.com' && (
-            <div className="pt-4 border-t border-white/5 mt-4">
+          {(auth.currentUser?.email === 'wellcoutinho99@gmail.com' || auth.currentUser?.email === 'juniorcoutinho58@gmail.com') && (
+            <div className="pt-4 border-t border-white/5 mt-4 space-y-2">
               <button
                 type="button"
                 onClick={() => setIsAdminPanelOpen(true)}

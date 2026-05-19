@@ -92,5 +92,10 @@ service cloud.firestore {
         && incoming().ownerId == existing().ownerId;
       allow delete: if isOwner(existing()) || isAdmin();
     }
+
+    match /authorized_emails/{email} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
   }
 }
