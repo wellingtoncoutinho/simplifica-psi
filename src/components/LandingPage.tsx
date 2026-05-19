@@ -121,12 +121,12 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
       <div className="absolute top-[800px] right-[-10%] w-[45%] h-[600px] bg-gradient-to-bl from-[#8AA682]/5 to-transparent rounded-full filter blur-[120px] pointer-events-none -z-10" />
 
       {/* Elegant Floating Nav */}
-      <nav className="max-w-6xl mx-auto px-6 py-6 flex items-center justify-between relative z-40">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl overflow-hidden shadow-md shadow-[#5F7D5C]/15 border border-[#2E3C2B]/5 flex items-center justify-center bg-white">
+      <nav className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex items-center justify-between relative z-40">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl overflow-hidden shadow-md shadow-[#5F7D5C]/15 border border-[#2E3C2B]/5 flex items-center justify-center bg-white">
             <img src="/apple-touch-icon.png" alt="SimplePsi Logo" className="w-full h-full object-cover" />
           </div>
-          <span className="font-serif font-black text-lg tracking-tight text-[#2E3C2B]">
+          <span className="font-serif font-black text-base sm:text-lg tracking-tight text-[#2E3C2B]">
             Simple<span className="text-[#5F7D5C]">Psi</span>
           </span>
         </div>
@@ -140,10 +140,10 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
 
         <button 
           onClick={onLogin}
-          className="px-6 py-2.5 bg-[#5F7D5C] hover:bg-[#4E674C] text-[#FAF9F6] text-xs font-bold uppercase tracking-wider rounded-xl transition-all shadow-md shadow-[#5F7D5C]/10 flex items-center gap-2 hover:scale-[1.03]"
+          className="px-3 sm:px-6 py-2 sm:py-2.5 bg-[#5F7D5C] hover:bg-[#4E674C] text-[#FAF9F6] text-[10px] sm:text-xs font-bold uppercase tracking-wider rounded-xl transition-all shadow-md shadow-[#5F7D5C]/10 flex items-center gap-1.5 sm:gap-2 hover:scale-[1.03]"
         >
           Entrar no Sistema
-          <ArrowRight size={14} />
+          <ArrowRight size={12} className="hidden sm:inline-block" />
         </button>
       </nav>
 
