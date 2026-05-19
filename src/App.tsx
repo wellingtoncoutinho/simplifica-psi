@@ -6339,39 +6339,21 @@ function ProfileSettingsModal({ initialData, onClose, onSave, googleAccessToken,
             </div>
 
             {formData.isGoogleCalendarEnabled && (
-              <>
-                <div className="glass-card p-3.5 rounded-xl border border-white/5 bg-white/5 flex items-center justify-between gap-4 mt-2">
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${googleAccessToken ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
-                    <span className="text-[10px] font-bold text-text-main uppercase tracking-wider">
-                      {googleAccessToken ? 'CONECTADO' : 'NÃO CONECTADO'}
-                    </span>
-                  </div>
-                  <button
-                    onClick={onConnectGoogleCalendar}
-                    type="button"
-                    className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all"
-                  >
-                    {googleAccessToken ? 'Reconectar' : 'Conectar Google'}
-                  </button>
+              <div className="glass-card p-3.5 rounded-xl border border-white/5 bg-white/5 flex items-center justify-between gap-4 mt-2">
+                <div className="flex items-center gap-2">
+                  <div className={`w-2 h-2 rounded-full ${googleAccessToken ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
+                  <span className="text-[10px] font-bold text-text-main uppercase tracking-wider">
+                    {googleAccessToken ? 'CONECTADO' : 'NÃO CONECTADO'}
+                  </span>
                 </div>
-
-                {!googleAccessToken && (
-                  <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-2xl p-3.5 mt-2 space-y-2">
-                    <p className="text-[10px] font-bold text-yellow-500 uppercase tracking-wider flex items-center gap-1.5">
-                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-500" />
-                      Instruções de Segurança e Conexão
-                    </p>
-                    <p className="text-[9px] text-text-muted leading-relaxed">
-                      Como o SimplePsi é uma plataforma privada de gestão clínica dedicada, o Google pode exibir uma tela com o aviso <strong className="text-text-main">"O Google não verificou este app"</strong>. Isso é absolutamente seguro e esperado para ferramentas customizadas.
-                    </p>
-                    <div className="text-[9px] text-text-muted leading-relaxed pl-2 border-l border-white/5 space-y-1">
-                      <p>1. Na tela de aviso, clique em <strong className="text-text-main">"Avançado"</strong> (no canto inferior esquerdo).</p>
-                      <p>2. Depois, clique em <strong className="text-text-main">"Acessar simplepsi (não seguro)"</strong> para autorizar a sincronização segura da sua agenda.</p>
-                    </div>
-                  </div>
-                )}
-              </>
+                <button
+                  onClick={onConnectGoogleCalendar}
+                  type="button"
+                  className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all"
+                >
+                  {googleAccessToken ? 'Reconectar' : 'Conectar Google'}
+                </button>
+              </div>
             )}
           </div>
           
