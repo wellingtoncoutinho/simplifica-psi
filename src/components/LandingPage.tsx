@@ -108,17 +108,103 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
   ];
 
   return (
-    <div className="min-h-screen bg-[#FAF9F6] text-[#2E3C2B] font-sans antialiased overflow-x-hidden selection:bg-[#5F7D5C]/20 relative">
+    <div className="min-h-screen text-[#2E3C2B] font-sans antialiased overflow-x-hidden selection:bg-[#5F7D5C]/20 relative">
       
+      {/* Premium Fixed Ambient Background at -z-20 */}
+      <div className="fixed inset-0 bg-premium-gradient -z-20 pointer-events-none" />
+
       {/* 0. Elegant Warning Banner */}
       <div className="w-full bg-[#5F7D5C] text-white py-3 px-4 text-center text-[10px] sm:text-xs font-bold uppercase tracking-[0.2em] flex items-center justify-center gap-2 relative z-50">
         <Clock size={14} className="animate-pulse text-[#FAF9F6]" />
         <span>ÚLTIMAS HORAS: DE <span className="line-through opacity-75">R$ 597</span> POR APENAS R$ 297 COM ACESSO VITALÍCIO</span>
       </div>
 
-      {/* Decorative Hypnotic Elements */}
-      <div className="absolute top-28 left-[-10%] w-[50%] h-[600px] bg-gradient-to-tr from-[#5F7D5C]/5 to-transparent rounded-full filter blur-[120px] pointer-events-none -z-10" />
-      <div className="absolute top-[800px] right-[-10%] w-[45%] h-[600px] bg-gradient-to-bl from-[#8AA682]/5 to-transparent rounded-full filter blur-[120px] pointer-events-none -z-10" />
+      {/* Premium Ambient Background (Floating Glowing Orbs) at -z-10 */}
+      <div className="absolute inset-y-0 left-[-20%] right-[-20%] pointer-events-none -z-10">
+        {/* Top Left Orb - Sage Green */}
+        <motion.div 
+          animate={{
+            x: [0, 50, -30, 0],
+            y: [0, -60, 40, 0],
+          }}
+          transition={{
+            duration: 22,
+            repeat: Infinity,
+            ease: "easeInOut"
+          }}
+          className="absolute top-28 left-[-10%] w-[350px] h-[350px] sm:w-[500px] sm:h-[500px] rounded-full bg-[radial-gradient(circle,rgba(95,125,92,0.42)_0%,transparent_70%)] will-change-transform" 
+        />
+        
+        {/* Mid Right Orb - Clay/Terracotta */}
+        <motion.div 
+          animate={{
+            x: [0, -50, 30, 0],
+            y: [0, 60, -40, 0],
+          }}
+          transition={{
+            duration: 26,
+            repeat: Infinity,
+            ease: "easeInOut"
+          }}
+          className="absolute top-[600px] right-[-10%] w-[300px] h-[300px] sm:w-[450px] sm:h-[450px] rounded-full bg-[radial-gradient(circle,rgba(179,109,83,0.35)_0%,transparent_70%)] will-change-transform" 
+        />
+        
+        {/* Mid Left Orb - Eucalyptus/Sage */}
+        <motion.div 
+          animate={{
+            x: [0, 40, -40, 0],
+            y: [0, 50, -30, 0],
+          }}
+          transition={{
+            duration: 24,
+            repeat: Infinity,
+            ease: "easeInOut"
+          }}
+          className="absolute top-[1600px] left-[-8%] w-[280px] h-[280px] sm:w-[400px] sm:h-[400px] rounded-full bg-[radial-gradient(circle,rgba(138,166,130,0.35)_0%,transparent_70%)] will-change-transform" 
+        />
+        
+        {/* Lower Right Orb - Clay/Terracotta */}
+        <motion.div 
+          animate={{
+            x: [0, -60, 40, 0],
+            y: [0, -50, 50, 0],
+          }}
+          transition={{
+            duration: 28,
+            repeat: Infinity,
+            ease: "easeInOut"
+          }}
+          className="absolute top-[2600px] right-[-8%] w-[320px] h-[320px] sm:w-[480px] sm:h-[480px] rounded-full bg-[radial-gradient(circle,rgba(197,137,113,0.38)_0%,transparent_70%)] will-change-transform" 
+        />
+        
+        {/* Near Bottom Orb - Sage Green */}
+        <motion.div 
+          animate={{
+            x: [0, 40, -30, 0],
+            y: [0, -60, 30, 0],
+          }}
+          transition={{
+            duration: 30,
+            repeat: Infinity,
+            ease: "easeInOut"
+          }}
+          className="absolute bottom-[800px] left-[-10%] w-[300px] h-[300px] sm:w-[450px] sm:h-[450px] rounded-full bg-[radial-gradient(circle,rgba(95,125,92,0.40)_0%,transparent_70%)] will-change-transform" 
+        />
+        
+        {/* Footer Orb - Clay */}
+        <motion.div 
+          animate={{
+            x: [0, -30, 30, 0],
+            y: [0, 40, -20, 0],
+          }}
+          transition={{
+            duration: 20,
+            repeat: Infinity,
+            ease: "easeInOut"
+          }}
+          className="absolute bottom-[-100px] right-[-10%] w-[280px] h-[280px] sm:w-[400px] sm:h-[400px] rounded-full bg-[radial-gradient(circle,rgba(179,109,83,0.28)_0%,transparent_70%)] will-change-transform" 
+        />
+      </div>
 
       {/* Elegant Floating Nav */}
       <nav className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex items-center justify-between relative z-40">
