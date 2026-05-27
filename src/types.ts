@@ -28,6 +28,7 @@ export interface Patient {
   sessionDay?: string;
   sessionTime?: string;
   sessionAmount?: number;
+  amount?: number;
   recurrence?: 'Semanal' | 'Quinzenal' | 'Mensal' | 'Nenhuma';
   modality?: 'Online' | 'Presencial';
   meetingLink?: string;

@@ -307,6 +307,7 @@ Como posso te ajudar hoje?`
   const [triageInitialName, setTriageInitialName] = useState('');
   const [triageInitialDay, setTriageInitialDay] = useState('');
   const [triageInitialTime, setTriageInitialTime] = useState('');
+  const [triageInitialSessionId, setTriageInitialSessionId] = useState('');
   const [lastAction, setLastAction] = useState<any>(null);
   const [showUndoToast, setShowUndoToast] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -648,8 +649,39 @@ Como posso te ajudar hoje?`
       const patientRef = await addDoc(collection(db, 'patients'), patientData);
       const newPatientId = patientRef.id;
 
-      // 2. Adicionar Sessão inicial se dia for informado
-      if (data.sessionDay) {
+      // 2. Adicionar/Atualizar Sessão inicial
+      if (triageInitialSessionId) {
+        const triageSessionRef = doc(db, 'sessions', triageInitialSessionId);
+        await updateDoc(triageSessionRef, {
+          patientId: newPatientId,
+          isTriage: false,
+          triageName: '',
+          date: data.firstSessionDate || new Date().toISOString().split('T')[0],
+          time: data.nextSessionTime || '09:00',
+          type: data.modality || 'Online',
+          status: 'Agendada',
+          amount: parseFloat(data.amount) || 0,
+          updatedAt: new Date().toISOString()
+        });
+
+        // Google Agenda Sync
+        const updatedTriageSession = {
+          id: triageInitialSessionId,
+          patientId: newPatientId,
+          date: data.firstSessionDate || new Date().toISOString().split('T')[0],
+          time: data.nextSessionTime || '09:00',
+          duration: '50min',
+          type: data.modality || 'Online',
+          status: 'Agendada',
+          amount: parseFloat(data.amount) || 0,
+          cost: 0,
+          paid: false,
+          nfIssued: false
+        };
+        await syncSessionToGoogleCalendar(updatedTriageSession, triageInitialSessionId);
+
+        setTriageInitialSessionId(''); // Reset state
+      } else if (data.sessionDay) {
         const days = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
         const targetDay = days.indexOf(data.sessionDay);
         if (targetDay !== -1) {
@@ -873,6 +905,7 @@ Como posso te ajudar hoje?`
           if (hasRecorded || hasCancelled) return;
 
           const pCreatedAt = new Date((p as any).createdAt || p.birthDate || '2024-01-01');
+          if (startOfDay(day) < startOfDay(pCreatedAt)) return;
           const weeksDiff = Math.abs(differenceInWeeks(startOfDay(day), startOfDay(pCreatedAt)));
           
           let shouldRender = false;
@@ -891,7 +924,7 @@ Como posso te ajudar hoje?`
               duration: '50min',
               status: 'Recorrente',
               isTriage: false,
-              sessionValue: p.sessionAmount || 0
+              sessionValue: p.amount || 0
             });
           }
         }
@@ -1848,10 +1881,11 @@ Como posso te ajudar hoje?`
                 isGoogleCalendarEnabled={profileSettings.isGoogleCalendarEnabled}
                 googleAccessToken={googleAccessToken}
                 onOpenSettings={() => setIsSettingsOpen(true)}
-                onTriageToPatient={(name, day, time) => {
+                onTriageToPatient={(name, day, time, sessionId) => {
                   setTriageInitialName(name);
                   setTriageInitialDay(day);
                   setTriageInitialTime(time);
+                  setTriageInitialSessionId(sessionId || '');
                   setIsAddingPatient(true);
                 }}
               />
@@ -2450,7 +2484,7 @@ function AddPatientModal({ onClose, onSave, initialName = '', initialDay = 'Segu
                   
                   {!formData.isNewPatient && (
                     <div className="space-y-2">
-                        <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Sessões Realizadas</label>
+                        <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Sessões realizadas antes do cadastro no sistema</label>
                         <input type="number" min="0" placeholder="Ex: 10" value={formData.sessions} onChange={(e) => setFormData({...formData, sessions: e.target.value === '' ? '' : parseInt(e.target.value) || 0})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
                     </div>
                   )}
@@ -2951,6 +2985,8 @@ function PatientDetailsView({
   const [evolutionSessionNumber, setEvolutionSessionNumber] = useState(patient.clinicalData?.evoluções?.length ? patient.clinicalData.evoluções.length + 1 : 1);
   const [transcriptionText, setTranscriptionText] = useState("");
   const [isGeneratingEvolution, setIsGeneratingEvolution] = useState(false);
+  const [aiDetailLevel, setAiDetailLevel] = useState<'proportional' | 'detailed' | 'summarized'>('proportional');
+  const [aiTextFormat, setAiTextFormat] = useState<'paragraphs' | 'topics'>('paragraphs');
   
   const [editingEvolutionId, setEditingEvolutionId] = useState<number | null>(null);
   const [editingEvolutionNote, setEditingEvolutionNote] = useState("");
@@ -3232,23 +3268,30 @@ function PatientDetailsView({
 
       const ai = new GoogleGenAI({ apiKey });
       const prompt = `Atue como um psicólogo clínico experiente cuja abordagem teórica principal de atendimento é a ${approachInfo.name}.
-      Transforme a seguinte transcrição bruta de um áudio em um relato de sessão clínica organizado em texto corrido e parágrafos, escrito de forma profissional, mas com um tom pessoal (estilo relato de caso) adequado à sua linha teórica de atendimento.
+      Transforme a seguinte transcrição bruta de um áudio em um relato de sessão clínica escrito de forma profissional, mas com um tom pessoal (estilo relato de caso) adequado à sua linha teórica de atendimento.
       
       DIRETRIZES DA SUA ABORDAGEM CLÍNICA (${approachInfo.name}):
       ${approachInfo.rules}
       
       REGRA DE ESTILO CRÍTICA: Escreva de forma extremamente natural, humana, equilibrada e fluida. Utilize os conceitos teóricos da sua abordagem de maneira SUTIL e ORGÂNICA, apenas onde fizer sentido prático na fala do cliente. NUNCA force termos técnicos desnecessários de forma artificial e evite encher o relato com excesso de jargões acadêmicos. O texto deve soar como as anotações sóbrias e elegantes de um terapeuta humano real em seu cotidiano, sem parecer um artigo científico caricato.
       
-      REGRA IMPORTANTÍSSIMA 1: NUNCA invente, presuma ou adicione informações que não estejam na transcrição bruta. Se a transcrição for curta e contiver apenas o básico, devolva um relato curto e básico. O tamanho e a quantidade de detalhes do seu relato devem ser estritamente proporcionais à transcrição fornecida.
+      REGRA DE FORMATO DE TEXTO:
+      ${aiTextFormat === 'topics' 
+        ? 'O relato DEVE ser totalmente estruturado em TÓPICOS E BULLET POINTS claros e legíveis, organizados por temas ou momentos da sessão.' 
+        : 'O relato DEVE ser organizado em TEXTO CORRIDO E PARÁGRAFOS bem articulados e fluidos.'}
+      
+      REGRA DE NÍVEL DE DETALHAMENTO:
+      ${aiDetailLevel === 'proportional' 
+        ? 'Proporcional: O tamanho e a quantidade de detalhes do seu relato devem ser estritamente proporcionais ao tamanho e riqueza da transcrição fornecida. Se a transcrição for curta e contiver apenas o básico, devolva um relato curto e básico. Se a transcrição for longa, rica e detalhada, devolva um relato extremamente detalhado e rico correspondendo a toda a complexidade trazida.' 
+        : aiDetailLevel === 'detailed'
+        ? 'Muito Detalhado: Escreva um relato extremamente detalhado, profundo e minucioso. Explore ao máximo cada ponto, sentimento e comportamento mencionado na transcrição, garantindo que nada de relevante seja omitido, e aprofunde o máximo possível na contextualização clínica, mesmo que o texto original precise ser muito expandido.'
+        : 'Super Resumido: Escreva um relato super conciso, direto ao ponto e focado apenas nos principais tópicos e insights. Evite rodeios e sintetize as informações com máxima objetividade.'}
+      
+      REGRA IMPORTANTÍSSIMA 1: NUNCA invente, presuma ou adicione informações falsas ou não factuais que contradigam o sentido da transcrição bruta.
       
       REGRA IMPORTANTÍSSIMA 2: Substitua TODOS os nomes próprios de pessoas (pacientes, parceiros, parentes, etc) mencionados na transcrição APENAS pela letra inicial do nome seguida de ponto (exemplo: Gabi -> G., Alana -> A., Carol -> C.). 
       
       Mantenha o fluxo de narrativa em primeira pessoa do terapeuta (ex: "A paciente relatou...", "Questionei se...", "Trabalhei com ela..."). Não adicione saudações, devolva apenas o texto final do relato.
-      
-      Exemplo de estilo de relato de referência (exemplo genérico para compreender o tom desejado):
-      "A sessão com a G. foi uma boa sessão. Ela começou contando que no dia anterior havia sentido uma dor no estômago diferente de tudo que já havia sentido antes, como se fosse uma mordida. Foi ao hospital, mas não se sentiu segura com a primeira médica, então foi a um segundo médico. 
-      Sobre a semana, ela disse que foi tranquila de forma geral, mas que ficou um pouco ansiosa porque uma ex-noiva dela, a A., entrou em contato. O estômago dela ficou ruim depois que recebeu a mensagem. Questionei se o que ela estava sentindo era culpa, e ela confirmou que sim.
-      Trabalhei com ela a diferença entre colocar um limite e sustentá-lo: que ela tem o direito de estabelecer o que é inegociável para ela, e que a reação do outro não muda esse direito. Falei também sobre assertividade e combinamos que na próxima sessão vamos aprofundar esse tema."
       
       Transcrição bruta a ser convertida:
       "${transcriptionText}"
@@ -3987,7 +4030,7 @@ Relato:
                           )}
                         </div>
                         <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
-                          <span className="text-xs text-text-muted">Sessões Realizadas (Histórico)</span>
+                          <span className="text-xs text-text-muted">Sessões realizadas antes do cadastro no sistema</span>
                           {isEditing ? (
                             <input 
                               type="number"
@@ -4254,6 +4297,62 @@ Relato:
                               placeholder="Fale no gravador acima ou cole a transcrição bruta do áudio aqui..."
                               className="w-full bg-surface-muted border border-border-ui rounded-xl p-4 text-sm text-text-main outline-none focus:border-primary min-h-[120px] resize-none"
                             />
+
+                            <div className="p-4 rounded-2xl border border-white/5 bg-white/5 space-y-4">
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                  <label className="text-[9px] font-bold text-text-muted uppercase tracking-widest pl-1 block">Nível de Detalhe da IA</label>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {[
+                                      { id: 'proportional', label: 'Proporcional', desc: 'Conforme áudio/texto' },
+                                      { id: 'detailed', label: 'Muito Detalhado', desc: 'Expandido e minucioso' },
+                                      { id: 'summarized', label: 'Super Resumido', desc: 'Direto e conciso' }
+                                    ].map(opt => (
+                                      <button
+                                        key={opt.id}
+                                        type="button"
+                                        onClick={() => setAiDetailLevel(opt.id as any)}
+                                        className={cn(
+                                          "flex-1 px-3 py-2 rounded-xl text-left border transition-all hover:scale-[1.01]",
+                                          aiDetailLevel === opt.id
+                                            ? "bg-primary text-white border-primary shadow-sm"
+                                            : "bg-surface-muted/50 text-text-muted border-border-ui hover:border-primary/20 hover:text-text-main"
+                                        )}
+                                      >
+                                        <p className="text-[10px] font-bold uppercase tracking-wider">{opt.label}</p>
+                                        <p className="text-[8px] opacity-75 mt-0.5 leading-tight">{opt.desc}</p>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                  <label className="text-[9px] font-bold text-text-muted uppercase tracking-widest pl-1 block">Formato do Relato</label>
+                                  <div className="flex gap-1.5">
+                                    {[
+                                      { id: 'paragraphs', label: 'Em Parágrafos', desc: 'Texto clínico corrido' },
+                                      { id: 'topics', label: 'Em Tópicos', desc: 'Tópicos & bullet points' }
+                                    ].map(opt => (
+                                      <button
+                                        key={opt.id}
+                                        type="button"
+                                        onClick={() => setAiTextFormat(opt.id as any)}
+                                        className={cn(
+                                          "flex-1 px-3 py-2 rounded-xl text-left border transition-all hover:scale-[1.01]",
+                                          aiTextFormat === opt.id
+                                            ? "bg-primary text-white border-primary shadow-sm"
+                                            : "bg-surface-muted/50 text-text-muted border-border-ui hover:border-primary/20 hover:text-text-main"
+                                        )}
+                                      >
+                                        <p className="text-[10px] font-bold uppercase tracking-wider">{opt.label}</p>
+                                        <p className="text-[8px] opacity-75 mt-0.5 leading-tight">{opt.desc}</p>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
                             <button 
                               onClick={handleGenerateEvolution}
                               disabled={isGeneratingEvolution || !transcriptionText.trim()}
@@ -5467,7 +5566,7 @@ function CalendarView({
   patients: any[], 
   onAddSession: (data: any) => void,
   onDeleteSession: (id: string) => void,
-  onTriageToPatient: (name: string, day: string, time: string) => void,
+  onTriageToPatient: (name: string, day: string, time: string, sessionId?: string) => void,
   onUndo?: () => void,
   lastAction?: any,
   isGoogleCalendarEnabled?: boolean,
@@ -5521,13 +5620,13 @@ function CalendarView({
         if (hasRecorded || hasCancelled) return;
 
         const pCreatedAt = new Date(p.createdAt || p.birthDate || '2024-01-01');
+        if (startOfDay(day) < startOfDay(pCreatedAt)) return;
         const weeksDiff = Math.abs(differenceInWeeks(startOfDay(day), startOfDay(pCreatedAt)));
         
         let shouldRender = false;
         if (!p.recurrence || p.recurrence === 'Semanal') shouldRender = true;
         else if (p.recurrence === 'Quinzenal') shouldRender = weeksDiff % 2 === 0;
         else if (p.recurrence === 'Mensal') shouldRender = weeksDiff % 4 === 0;
-
         if (shouldRender) {
           daySessions.push({
             id: `virtual-${p.id}-${dateStr}`,
@@ -5538,7 +5637,9 @@ function CalendarView({
             status: 'Recorrente',
             isTriage: false,
             dayName: capitalizedDayName,
-            sessionNumber: calculateSessionNumber(p, day)
+            sessionNumber: calculateSessionNumber(p, day),
+            amount: p.amount || 0,
+            sessionValue: p.amount || 0
           });
         }
       }
@@ -5740,7 +5841,7 @@ function CalendarView({
                         <div className="flex gap-1">
                           {session.isTriage && session.status !== 'Cancelada' && (
                             <button 
-                              onClick={(e) => { e.stopPropagation(); onTriageToPatient(session.patientName, session.dayName, session.time); }}
+                              onClick={(e) => { e.stopPropagation(); onTriageToPatient(session.patientName, session.dayName, session.time, session.id); }}
                               className="flex-[2] bg-primary/20 text-primary py-1 rounded-md text-[7px] font-bold hover:bg-primary hover:text-white transition-all border border-primary/20 uppercase"
                             >Efetivar</button>
                           )}
@@ -5882,7 +5983,7 @@ function CalendarView({
                       <div className="flex flex-wrap gap-2">
                         {session.isTriage && session.status !== 'Cancelada' && (
                           <button 
-                            onClick={() => { setSelectedMobileDay(null); onTriageToPatient(session.patientName, session.dayName, session.time); }}
+                            onClick={() => { setSelectedMobileDay(null); onTriageToPatient(session.patientName, session.dayName, session.time, session.id); }}
                             className="flex-1 bg-primary/20 text-primary py-2 rounded-xl text-xs font-bold hover:bg-primary hover:text-white transition-all border border-primary/20 uppercase"
                           >Efetivar</button>
                         )}
@@ -5994,11 +6095,13 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
   });
 
   useEffect(() => {
-    if (formData.patientId && !initialData) {
+    if (formData.patientId) {
       const p = patients.find(p => p.id === formData.patientId);
-      if (p?.amount) setFormData(prev => ({ ...prev, amount: p.amount }));
+      if (p?.amount && (!formData.amount || formData.amount === '0' || formData.amount === 0 || formData.amount === '')) {
+        setFormData(prev => ({ ...prev, amount: p.amount }));
+      }
     }
-  }, [formData.patientId, initialData, patients]);
+  }, [formData.patientId, patients]);
 
   return (
     <motion.div 
