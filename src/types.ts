@@ -32,6 +32,17 @@ export interface Patient {
   recurrence?: 'Semanal' | 'Quinzenal' | 'Mensal' | 'Nenhuma';
   modality?: 'Online' | 'Presencial';
   meetingLink?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  clinicalData?: {
+    evoluções?: Array<{
+      id: string;
+      date: string;
+      time: string;
+      sessionNumber: number;
+      note: string;
+    }>;
+  };
 }
 
 export interface Session {

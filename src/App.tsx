@@ -71,6 +71,10 @@ import {
   HelpCircle,
   Send,
   AlertCircle,
+  Video,
+  Chrome,
+  Copy,
+  Check,
   X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -115,8 +119,8 @@ const CLINICAL_APPROACHES: Record<string, { name: string; rules: string; pdfTopi
     rules: "Siga a linha de raciocínio da TCC (identificando pensamentos, comportamentos, regulação emocional ou plano de ação) de forma orgânica e sutil. Evite forçar termos técnicos excessivos de uma só vez; use-os apenas se fizerem sentido prático na sessão.",
     pdfTopics: [
       "1. Demanda / Queixa do Dia",
-      "2. Distorções Cognitivas & Crenças Identificadas",
-      "3. Técnicas & Intervenções de TCC Aplicadas",
+      "2. Técnicas & Intervenções de TCC Aplicadas",
+      "3. Distorções Cognitivas & Crenças Identificadas",
       "4. Plano de Ação / Tarefas Comportamentais"
     ],
     evolutionPrompt: "Analise a evolução clínica sob a ótica da Terapia Cognitivo-Comportamental. Identifique padrões de distorções cognitivas, crenças nucleares ativadas, o progresso na regulação emocional e adesão às tarefas terapêuticas de forma sóbria e equilibrada."
@@ -126,8 +130,8 @@ const CLINICAL_APPROACHES: Record<string, { name: string; rules: string; pdfTopi
     rules: "Siga a escuta analítica (focando no material trazido, defesas sutis ou dinâmica subjetiva) de forma natural, leve e fluida. Evite forçar termos acadêmicos pesados; trate o processo com a sobriedade de um analista em sua rotina diária. NUNCA fale em 'tarefas de casa', 'reestruturação' ou 'metas'.",
     pdfTopics: [
       "1. Material Clínico Trazido (Livre Associação)",
-      "2. Dinâmica Inconsciente & Defesas Observadas",
-      "3. Manejo Clínico & Intervenções da Escuta Analítica",
+      "2. Manejo Clínico & Intervenções da Escuta Analítica",
+      "3. Dinâmica Inconsciente & Defesas Observadas",
       "4. Direcionamento e Apontamentos para Sessões Futuras"
     ],
     evolutionPrompt: "Analise o caso sob a ótica da Psicanálise de forma sóbria. Identifique padrões repetitivos de defesas do Ego, manifestações latentes do inconsciente na fala do paciente e dinâmicas de transferência estruturadas ao longo do tempo."
@@ -137,8 +141,8 @@ const CLINICAL_APPROACHES: Record<string, { name: string; rules: string; pdfTopi
     rules: "Siga a perspectiva fenomenológica (awareness, contato ou a queixa no aqui-e-agora) de forma orgânica e sutil. Evite carregar o relato com jargões técnicos desnecessários; mantenha o texto focado na vivência do cliente de forma fluida. NUNCA fale em 'tarefas' ou 'esquemas cognitivos'.",
     pdfTopics: [
       "1. Experiência Imediata / Queixa no Aqui-e-Agora",
-      "2. Dinâmica da Fronteira de Contato & Bloqueios Observados",
-      "3. Experimentos Gestálticos & Intervenções do Terapeuta",
+      "2. Experimentos Gestálticos & Intervenções do Terapeuta",
+      "3. Dinâmica da Fronteira de Contato & Bloqueios Observados",
       "4. Nível de Awareness & Integração da Sessão"
     ],
     evolutionPrompt: "Analise o caso clínico sob a ótica da Gestalt-Terapia de forma leve. Identifique o nível de awareness (consciência corporal/emocional) do cliente, bloqueios no ciclo de contato com o meio, e a passagem para o auto-suporte."
@@ -159,8 +163,8 @@ const CLINICAL_APPROACHES: Record<string, { name: string; rules: string; pdfTopi
     rules: "Descreva as contingências e dinâmicas comportamentais de forma natural, objetiva e sutil. Evite sobrecarregar o texto com excesso de terminologias técnicas acadêmicas; mantenha a escrita limpa, precisa e fluida.",
     pdfTopics: [
       "1. Contexto Antecedente / Queixa Comportamental",
-      "2. Análise Funcional (Tríplice Contingência)",
-      "3. Procedimentos Aplicados & Mudanças Contingenciais",
+      "2. Procedimentos Aplicados & Mudanças Contingenciais",
+      "3. Análise Funcional (Tríplice Contingência)",
       "4. Reforçamentos Programados & Orientações Práticas"
     ],
     evolutionPrompt: "Analise a evolução clínica sob a ótica da Análise do Comportamento de forma objetiva. Identifique a estabilidade ou mudança na tríplice contingência e a eficácia dos reforçadores manejados de forma natural."
@@ -170,8 +174,8 @@ const CLINICAL_APPROACHES: Record<string, { name: string; rules: string; pdfTopi
     rules: "Trate as dinâmicas inconscientes e simbólicas de forma sutil, natural e equilibrada. Evite forçar termos arquetípicos pesados de forma artificial ou caricata; relate a vivência do paciente com fluidez e sobriedade.",
     pdfTopics: [
       "1. Material Simbólico / Demanda Trazida à Tona",
-      "2. Dinâmica de Complexos Ativados & Projeções Identificadas",
-      "3. Amplificação de Símbolos & Intervenções Junguianas",
+      "2. Amplificação de Símbolos & Intervenções Junguianas",
+      "3. Dinâmica de Complexos Ativados & Projeções Identificadas",
       "4. Movimentos Rumo à Individuação & Integração da Sombra"
     ],
     evolutionPrompt: "Analise a evolução clínica sob a ótica da Psicologia Analítica Junguiana. Identifique as manifestações do inconsciente pessoal e coletivo e a ativação de complexos de forma sutil."
@@ -185,7 +189,7 @@ const CLINICAL_APPROACHES: Record<string, { name: string; rules: string; pdfTopi
       "3. Valores Pessoais Explorados & Barreiras Identificadas",
       "4. Ações Comprometidas Pactuadas para a Semana"
     ],
-    evolutionPrompt: "Analise o caso clínico sob a ótica da ACT de forma humana. Identifique os níveis de flexibilidade ou rigidez psicológica do cliente nos eixos do Hexaflex de maneira sutil e natural."
+    evolutionPrompt: "Analise o caso clínico sob a ótica da ACT de forma humana. Identifique os níveis de flexibilidade ou rigidez psicológica do client nos eixos do Hexaflex de maneira sutil e natural."
   },
   dbt: {
     name: "DBT (Terapia Dialética Comportamental)",
@@ -193,7 +197,7 @@ const CLINICAL_APPROACHES: Record<string, { name: string; rules: string; pdfTopi
     pdfTopics: [
       "1. Comportamentos-Alvo Analisados (Análise em Cadeia)",
       "2. Equilíbrio Dialético (Manejo de Validação vs. Mudança)",
-      "3. Treino de Habilidades DBT Exploradas na Sessão",
+      "3. Habilidades DBT & Evolução Comportamental Observada",
       "4. Plano de Segurança / Acordos Inter-sessões"
     ],
     evolutionPrompt: "Analise a evolução clínica sob a ótica da DBT de forma equilibrada. Identifique a redução de comportamentos-alvo desadaptativos e a aplicação prática das habilidades de regulação de forma sóbria."
@@ -268,6 +272,19 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('dashboard');
+
+  // Listen for the special /import-transcript route
+  useEffect(() => {
+    if (window.location.pathname.includes('/import-transcript')) {
+      if (user && user.email === 'wellcoutinho99@gmail.com') {
+        setActiveTab('import-transcript');
+      } else if (user) {
+        setActiveTab('dashboard');
+        window.history.replaceState({}, '', '/');
+      }
+    }
+  }, [user]);
+
   const [selectedPatient, setSelectedPatient] = useState<string | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -1280,6 +1297,43 @@ Como posso te ajudar hoje?`
                  sessionTime: data.time,
                  updatedAt: new Date().toISOString()
                });
+
+               // Update all future scheduled sessions for this patient to the new day of the week & time
+               const todayStr = new Date().toISOString().split('T')[0];
+               const patientSessionsToUpdate = sessions.filter(s => 
+                 s.patientId === p.id && 
+                 s.status === 'Agendada' && 
+                 s.date >= todayStr
+               );
+               
+               const daysOfWeek = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+               const newDayIndex = daysOfWeek.indexOf(capitalized);
+               
+               if (newDayIndex !== -1) {
+                 for (const s of patientSessionsToUpdate) {
+                   const currentDate = new Date(s.date + 'T12:00:00');
+                   const currentDayIndex = currentDate.getDay();
+                   const diffDays = newDayIndex - currentDayIndex;
+                   
+                   const newDate = new Date(currentDate);
+                   newDate.setDate(currentDate.getDate() + diffDays);
+                   const newDateStr = newDate.toISOString().split('T')[0];
+                   
+                   await updateDoc(doc(db, 'sessions', s.id), {
+                     date: newDateStr,
+                     time: data.time,
+                     updatedAt: new Date().toISOString()
+                   });
+                   
+                   if (s.googleEventId) {
+                     await updateSessionInGoogleCalendar({
+                       ...s,
+                       date: newDateStr,
+                       time: data.time
+                     });
+                   }
+                 }
+               }
                return; // Updated pattern, no new specific session needed
             }
          } else {
@@ -1418,10 +1472,54 @@ Como posso te ajudar hoje?`
     try {
       const { id, ...data } = updatedPatient;
       const patientRef = doc(db, 'patients', id);
+      
+      const oldPatient = patients.find(p => p.id === id);
+      const isDayChanged = oldPatient && oldPatient.sessionDay !== data.sessionDay;
+      const isTimeChanged = oldPatient && oldPatient.sessionTime !== data.sessionTime;
+
       await updateDoc(patientRef, {
         ...data,
         updatedAt: new Date().toISOString()
       });
+
+      // If default schedule day/time changed, update future scheduled sessions
+      if ((isDayChanged || isTimeChanged) && data.sessionDay) {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const patientSessionsToUpdate = sessions.filter(s => 
+          s.patientId === id && 
+          s.status === 'Agendada' && 
+          s.date >= todayStr
+        );
+        
+        const daysOfWeek = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+        const newDayIndex = daysOfWeek.indexOf(data.sessionDay);
+        
+        if (newDayIndex !== -1) {
+          for (const s of patientSessionsToUpdate) {
+            const currentDate = new Date(s.date + 'T12:00:00');
+            const currentDayIndex = currentDate.getDay();
+            const diffDays = newDayIndex - currentDayIndex;
+            
+            const newDate = new Date(currentDate);
+            newDate.setDate(currentDate.getDate() + diffDays);
+            const newDateStr = newDate.toISOString().split('T')[0];
+            
+            await updateDoc(doc(db, 'sessions', s.id), {
+              date: newDateStr,
+              time: data.sessionTime || s.time,
+              updatedAt: new Date().toISOString()
+            });
+            
+            if (s.googleEventId) {
+              await updateSessionInGoogleCalendar({
+                ...s,
+                date: newDateStr,
+                time: data.sessionTime || s.time
+              });
+            }
+          }
+        }
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `patients/${updatedPatient.id}`);
     }
@@ -1824,6 +1922,7 @@ Como posso te ajudar hoje?`
                 key="patient-detail" 
                 patientId={selectedPatient} 
                 patients={patients} 
+                currentUserEmail={user?.email || ''}
                 documents={patientDocuments[selectedPatient] || []}
                 onUpload={(file, category) => handleUploadDocument(selectedPatient, file, category)}
                 onDeleteDocument={(docId) => handleDeleteDocument(selectedPatient, docId)}
@@ -1846,6 +1945,7 @@ Como posso te ajudar hoje?`
                 key="patient-record" 
                 patientId={selectedPatient} 
                 patients={patients} 
+                currentUserEmail={user?.email || ''}
                 defaultSubTab="biblioteca"
                 documents={patientDocuments[selectedPatient] || []}
                 onUpload={(file, category) => handleUploadDocument(selectedPatient, file, category)}
@@ -1887,6 +1987,66 @@ Como posso te ajudar hoje?`
                   setTriageInitialTime(time);
                   setTriageInitialSessionId(sessionId || '');
                   setIsAddingPatient(true);
+                }}
+              />
+            )}
+            
+            {activeTab === 'import-transcript' && (
+              <ImportTranscriptView 
+                key="import-transcript" 
+                patients={patients}
+                clinicalApproach={profileSettings.clinicalApproach || 'tcc'}
+                onSaveSession={async (patientId, date, time, duration, amount, type, note) => {
+                  try {
+                    const sessionData: any = {
+                      patientId,
+                      date,
+                      time,
+                      duration,
+                      type,
+                      status: 'Realizada',
+                      ownerId: user.uid,
+                      createdAt: new Date().toISOString(),
+                      updatedAt: new Date().toISOString(),
+                      amount: parseFloat(amount) || 0,
+                      cost: 0,
+                      paid: false,
+                      nfIssued: false
+                    };
+                    const sessionRef = await addDoc(collection(db, 'sessions'), sessionData);
+                    
+                    const p = patients.find(pat => pat.id === patientId);
+                    if (p) {
+                      const evolucoes = p.clinicalData?.evoluções || [];
+                      const nextSessionNum = (evolucoes.length > 0 ? Math.max(...evolucoes.map(e => e.sessionNumber || 0)) : 0) + 1;
+                      
+                      const newEvo = {
+                        id: sessionRef.id,
+                        date: date.split('-').reverse().join('/'),
+                        time,
+                        sessionNumber: nextSessionNum,
+                        note: note
+                      };
+                      
+                      const updatedEvolucoes = [newEvo, ...evolucoes];
+                      
+                      await updateDoc(doc(db, 'patients', p.id), {
+                        sessions: (parseInt(p.sessions as any) || 0) + 1,
+                        lastSession: `Toda ${p.sessionDay || ''}`,
+                        "clinicalData.evoluções": updatedEvolucoes,
+                        updatedAt: new Date().toISOString()
+                      });
+                    }
+                    
+                    setSelectedPatient(patientId);
+                    setActiveTab('pacientes');
+                    alert("Transcrição importada e sessão registrada com sucesso!");
+                  } catch (err: any) {
+                    alert("Erro ao salvar a sessão: " + err.message);
+                  }
+                }}
+                onCancel={() => {
+                  setActiveTab('dashboard');
                 }}
               />
             )}
@@ -2956,6 +3116,7 @@ function PatientDetailsView({
   onUpdatePatient, 
   onDeletePatient, 
   profileSettings,
+  currentUserEmail = '',
   defaultSubTab = 'perfil' 
 }: { 
   patientId: string, 
@@ -2967,6 +3128,7 @@ function PatientDetailsView({
   onUpdatePatient: (patient: any) => void,
   onDeletePatient: (id: string) => void,
   profileSettings?: any,
+  currentUserEmail?: string,
   defaultSubTab?: 'perfil' | 'prontuario' | 'anamnese' | 'smartnotes' | 'biblioteca'
 }) {
   const patient = patients.find(p => p.id === patientId);
@@ -2978,6 +3140,11 @@ function PatientDetailsView({
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+
+  const [showExtensionModal, setShowExtensionModal] = useState(false);
+  const [hasAcceptedExtensionTerms, setHasAcceptedExtensionTerms] = useState(() => localStorage.getItem("simplepsi_meet_extension_consent") === "true");
+  const [tempCheckedTerms, setTempCheckedTerms] = useState(false);
+  const [copiedTcle, setCopiedTcle] = useState(false);
 
   // Novos estados para a evolução aprimorada
   const [evolutionDate, setEvolutionDate] = useState(new Date().toISOString().split('T')[0]);
@@ -2994,6 +3161,7 @@ function PatientDetailsView({
   
   const [expandedEvolutions, setExpandedEvolutions] = useState<Set<number>>(new Set());
   const [generatingPdfId, setGeneratingPdfId] = useState<number | null>(null);
+  const [generatingAllPdfsProgress, setGeneratingAllPdfsProgress] = useState<string | null>(null);
   const [isGeneratingAllPdf, setIsGeneratingAllPdf] = useState(false);
   const [isSavingEvolution, setIsSavingEvolution] = useState(false);
 
@@ -3490,6 +3658,180 @@ Relato:
     }
   };
 
+  const handleGenerateAllIndividualPDFs = async () => {
+    if (!clinicalData.evoluções || clinicalData.evoluções.length === 0) {
+      alert("Não há relatos salvos para gerar prontuários.");
+      return;
+    }
+
+    if (!window.confirm(`Deseja gerar os prontuários individuais de todos os ${clinicalData.evoluções.length} relatos salvos? Isso processará cada relato e os adicionará automaticamente à Biblioteca de Documentos.`)) {
+      return;
+    }
+
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) {
+      alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
+      return;
+    }
+
+    const approachKey = profileSettings.clinicalApproach || 'tcc';
+    const approachInfo = CLINICAL_APPROACHES[approachKey] || CLINICAL_APPROACHES.tcc;
+
+    setGeneratingAllPdfsProgress("Iniciando...");
+
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      const sortedEvolutions = [...clinicalData.evoluções].sort((a, b) => {
+        const dateA = a.date.split('/').reverse().join('-');
+        const dateB = b.date.split('/').reverse().join('-');
+        return dateA.localeCompare(dateB);
+      });
+
+      for (let i = 0; i < sortedEvolutions.length; i++) {
+        const evo = sortedEvolutions[i];
+        setGeneratingAllPdfsProgress(`Gerando ${i + 1} de ${sortedEvolutions.length}...`);
+
+        try {
+          const prompt = `Atue como um psicólogo clínico da abordagem ${approachInfo.name} extraindo informações de um relato de evolução para um prontuário formal.
+Leia o seguinte relato de sessão e extraia as informações dividindo-as nestes 4 tópicos:
+1. ${approachInfo.pdfTopics[0]} (Breve resumo do que o paciente trouxe para a sessão).
+2. ${approachInfo.pdfTopics[1]} (Intervenções e técnicas específicas utilizadas na sessão).
+3. ${approachInfo.pdfTopics[2]} (Como o paciente reagiu e qual o progresso observado).
+4. ${approachInfo.pdfTopics[3]} (Acordos ou orientações inter-sessões).
+
+Seja muito sucinto, formal, ético e direto de acordo com as diretrizes da sua abordagem. Não adicione saudações, asteriscos ou introduções, retorne APENAS um objeto JSON válido com as seguintes chaves exatas (tudo minúsculo, sem acentos): "demanda", "intervencoes", "evolucao", "tarefa".
+
+Relato:
+"${evo.note}"`;
+
+          const response = await ai.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: prompt,
+            config: {
+              responseMimeType: "application/json",
+            }
+          });
+
+          const data = JSON.parse(response.text || '{}');
+
+          const doc = new jsPDF();
+          let startY = 20;
+
+          if (profileSettings?.logo) {
+            try {
+              doc.addImage(profileSettings.logo, 'JPEG', 14, 10, 30, 30);
+              startY = 50;
+            } catch (e) {
+              console.error("Erro ao adicionar logo:", e);
+            }
+          }
+
+          if (profileSettings?.name || profileSettings?.crp) {
+            doc.setFontSize(10);
+            doc.setFont("helvetica", "normal");
+            const rightX = 196;
+            if (profileSettings.name) {
+              doc.text(`Psicólogo(a): ${profileSettings.name}`, rightX, 15, { align: 'right' });
+            }
+            if (profileSettings.crp) {
+              doc.text(`CRP: ${profileSettings.crp}`, rightX, 20, { align: 'right' });
+            }
+          }
+
+          doc.setFontSize(16);
+          doc.setFont("helvetica", "bold");
+          doc.text("Prontuário Psicológico", 14, startY);
+
+          doc.setFontSize(12);
+          doc.setFont("helvetica", "bold");
+          doc.text("1. Identificação do Paciente", 14, startY + 15);
+          
+          autoTable(doc, {
+            startY: startY + 20,
+            theme: 'grid',
+            headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' },
+            body: [
+              ['Nome Completo', patient.name || ''],
+              ['Data de Nascimento', patient.birthDate || ''],
+              ['CPF/RG', patient.cpf || patient.document || ''],
+              ['Contatos (Telefone/E-mail)', `${patient.phone || ''} / ${patient.email || ''}`],
+              ['Responsável Legal (se menor)', '']
+            ],
+            columnStyles: {
+              0: { cellWidth: 70, fontStyle: 'bold' },
+              1: { cellWidth: 'auto' }
+            }
+          });
+
+          const finalY1 = (doc as any).lastAutoTable.finalY || 40;
+          doc.text("2. Dados do Atendimento", 14, finalY1 + 15);
+          
+          autoTable(doc, {
+            startY: finalY1 + 20,
+            theme: 'grid',
+            body: [
+              ['Data', evo.date || ''],
+              ['Horário', evo.time || ''],
+              ['Número da Sessão', evo.sessionNumber ? String(evo.sessionNumber) : ''],
+              ['Modalidade', 'Presencial ( ) Online (X)']
+            ],
+            columnStyles: {
+              0: { cellWidth: 70, fontStyle: 'bold' },
+              1: { cellWidth: 'auto' }
+            }
+          });
+
+          const finalY2 = (doc as any).lastAutoTable.finalY || finalY1;
+          doc.text("3. Registro de Evolução", 14, finalY2 + 15);
+          
+          autoTable(doc, {
+            startY: finalY2 + 20,
+            theme: 'grid',
+            body: [
+              [approachInfo.pdfTopics[0], data.demanda || ''],
+              [approachInfo.pdfTopics[1], data.intervencoes || ''],
+              [approachInfo.pdfTopics[2], data.evolucao || ''],
+              [approachInfo.pdfTopics[3], data.tarefa || '']
+            ],
+            columnStyles: {
+              0: { cellWidth: 70, fontStyle: 'bold' },
+              1: { cellWidth: 'auto' }
+            }
+          });
+
+          const finalY3 = (doc as any).lastAutoTable.finalY || finalY2;
+          doc.setFontSize(10);
+          doc.setFont("helvetica", "normal");
+          const profName = profileSettings.name || "Profissional não cadastrado";
+          const profCRP = profileSettings.crp ? `CRP ${profileSettings.crp}` : "CRP não cadastrado";
+          doc.text(`${profName}\nPsicólogo Clínico | ${profCRP}`, 140, finalY3 + 30, { align: "center" });
+
+          const pdfBlob = doc.output('blob');
+          const safeDate = (evo.date || 'data').replace(/[\/\\]/g, '-');
+          const fileName = `Prontuario_Sessao_${evo.sessionNumber || evo.id}_${safeDate}.pdf`;
+          const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+          
+          onUpload(file, 'prontuario');
+
+          if (i < sortedEvolutions.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 800));
+          }
+
+        } catch (err: any) {
+          console.error(`Erro ao gerar PDF da evolução ${evo.id}:`, err);
+        }
+      }
+
+      alert("Todos os prontuários individuais foram gerados e salvos na Biblioteca de Documentos com sucesso!");
+
+    } catch (err: any) {
+      console.error(err);
+      alert("Erro ao processar a geração em lote.");
+    } finally {
+      setGeneratingAllPdfsProgress(null);
+    }
+  };
+
   const handleGenerateAllPDFRecords = async () => {
     if (!clinicalData.evoluções || clinicalData.evoluções.length === 0) {
       alert("Não há evoluções registradas para gerar o prontuário.");
@@ -3699,9 +4041,24 @@ Relato:
           <ChevronRight className="rotate-180" size={24} />
         </button>
         <div>
+          {currentUserEmail === 'wellcoutinho99@gmail.com' && (
+            <div id="simplepsi-active-patient" data-id={patient.id} data-name={patient.name} style={{ display: 'none' }} />
+          )}
           <h2 className="text-2xl font-bold uppercase text-text-main">{patient.name}</h2>
           <div className="flex gap-4 mt-1">
-            <span className="text-xs text-text-muted flex items-center gap-1"><Users size={14} /> Ativo desde Jan 2024</span>
+            <span className="text-xs text-text-muted flex items-center gap-1">
+              <Users size={14} /> {(() => {
+                if (!patient.createdAt) return 'Ativo';
+                try {
+                  const date = new Date(patient.createdAt);
+                  if (isNaN(date.getTime())) return 'Ativo';
+                  const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+                  return `Ativo desde ${months[date.getMonth()]} de ${date.getFullYear()}`;
+                } catch {
+                  return 'Ativo';
+                }
+              })()}
+            </span>
             {patient.sessionDay ? (
               <span className="text-xs text-text-muted flex items-center gap-1">
                 <CalendarIcon size={14} /> Sessão Padrão: Toda {patient.sessionDay} {patient.sessionTime ? `às ${patient.sessionTime}` : ''}
@@ -3721,9 +4078,9 @@ Relato:
           <div className="flex flex-row overflow-x-auto pb-4 lg:flex-col lg:overflow-visible gap-2 no-scrollbar">
             {[
               { id: 'perfil', label: 'Perfil', icon: Users },
-              { id: 'prontuario', label: 'Prontuário', icon: FileText, badge: 'NOVO' },
+              { id: 'prontuario', label: 'Evoluções', icon: FileText, badge: 'NOVO' },
               { id: 'anamnese', label: 'Anamnese', icon: FileText },
-              { id: 'biblioteca', label: 'Biblioteca', icon: FolderOpen },
+              { id: 'biblioteca', label: 'Biblioteca / Prontuários', icon: FolderOpen },
               { id: 'smartnotes', label: 'Resumo', icon: BarChart3 },
             ].map(item => (
              <button
@@ -3998,7 +4355,17 @@ Relato:
                           ) : (
                             patient.meetingLink ? (
                               <a 
-                                href={patient.meetingLink} 
+                                href={(() => {
+                                  if (!patient.meetingLink) return '';
+                                  if (!patient.meetingLink.includes('meet.google.com')) return patient.meetingLink;
+                                  try {
+                                    const url = new URL(patient.meetingLink);
+                                    url.hash = `patientId=${encodeURIComponent(patient.id)}&patientName=${encodeURIComponent(patient.name)}`;
+                                    return url.toString();
+                                  } catch {
+                                    return `${patient.meetingLink}#patientId=${encodeURIComponent(patient.id)}&patientName=${encodeURIComponent(patient.name)}`;
+                                  }
+                                })()}
                                 target="_blank" 
                                 rel="noopener noreferrer" 
                                 className="text-xs font-bold text-primary hover:underline flex items-center gap-1 mt-0.5 break-all"
@@ -4149,12 +4516,33 @@ Relato:
                         <h3 className="text-xl font-bold text-text-main">Evoluções Clínicas</h3>
                       </div>
                       {!isAddingEvolution && (
-                        <button 
-                          onClick={() => setIsAddingEvolution(true)}
-                          className="bg-primary text-white px-4 py-2 rounded-xl text-sm font-medium hover:opacity-90 shadow-sm transition-all flex items-center gap-2"
-                        >
-                          <Plus size={16} /> Nova Evolução
-                        </button>
+                        <div className="flex items-center gap-3">
+                          {clinicalData.evoluções.length > 0 && (
+                            <button 
+                              onClick={handleGenerateAllIndividualPDFs}
+                              disabled={generatingAllPdfsProgress !== null}
+                              className="bg-blue-500/10 text-blue-500 border border-blue-500/20 px-4 py-2 rounded-xl text-sm font-medium hover:bg-blue-500 hover:text-white disabled:opacity-50 transition-all flex items-center gap-2 shadow-sm"
+                            >
+                              {generatingAllPdfsProgress ? (
+                                <>
+                                  <div className="w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                                  <span>{generatingAllPdfsProgress}</span>
+                                </>
+                              ) : (
+                                <>
+                                  <FileDown size={16} />
+                                  <span>Gerar Todos os Prontuários</span>
+                                </>
+                              )}
+                            </button>
+                          )}
+                          <button 
+                            onClick={() => setIsAddingEvolution(true)}
+                            className="bg-primary text-white px-4 py-2 rounded-xl text-sm font-medium hover:opacity-90 shadow-sm transition-all flex items-center gap-2"
+                          >
+                            <Plus size={16} /> Nova Evolução
+                          </button>
+                        </div>
                       )}
                     </div>
 
@@ -4290,8 +4678,35 @@ Relato:
                                 </div>
                               )}
                             </div>
+                            
+                            {/* Banner Extensão do Google Meet (Exclusivo para wellcoutinho99@gmail.com para fase de testes) */}
+                            {auth.currentUser?.email?.toLowerCase().trim() === 'wellcoutinho99@gmail.com' && (
+                              <div className="p-4 rounded-2xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all">
+                                <div className="flex items-center gap-3 text-left">
+                                  <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
+                                    <Video size={20} />
+                                  </div>
+                                  <div>
+                                    <h5 className="text-xs font-bold text-text-main">Atende pelo Google Meet?</h5>
+                                    <p className="text-[10px] text-text-muted">Instale nossa extensão para transcrever e enviar a sessão em 1 clique.</p>
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTempCheckedTerms(hasAcceptedExtensionTerms);
+                                    setShowExtensionModal(true);
+                                  }}
+                                  className="w-full sm:w-auto bg-primary text-white hover:opacity-90 px-4 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all shadow-md shadow-primary/10 flex items-center justify-center gap-2"
+                                >
+                                  <Chrome size={14} />
+                                  {hasAcceptedExtensionTerms ? "Ver Extensão" : "Ativar Extensão"}
+                                </button>
+                              </div>
+                            )}
 
                             <textarea 
+                              id="transcription-textarea"
                               value={transcriptionText}
                               onChange={(e) => setTranscriptionText(e.target.value)}
                               placeholder="Fale no gravador acima ou cole a transcrição bruta do áudio aqui..."
@@ -4715,32 +5130,18 @@ Relato:
                         </div>
                         
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          {/* System Evolution Records */}
-                          {patient.clinicalData?.evoluções?.map((ev: any, idx: number) => (
-                            <div key={`ev-${idx}`} className="p-4 rounded-2xl bg-primary/5 border border-primary/10 hover:border-primary/30 transition-all group space-y-3 relative">
-                              <div className="w-full aspect-[4/3] bg-card rounded-xl flex items-center justify-center text-primary/40 group-hover:text-primary transition-colors">
-                                <FileText size={32} />
-                              </div>
-                              <div>
-                                <p className="text-[10px] font-bold text-text-main uppercase truncate">Relato Sessão #{ev.sessionNumber || idx + 1}</p>
-                                <p className="text-[8px] text-text-muted uppercase mt-0.5">{ev.date} • {ev.time}</p>
-                              </div>
-                            </div>
-                          ))}
-
-                          {/* Uploaded Prontuários */}
+                          {/* Uploaded/Generated Prontuários */}
                           {documents.filter(d => d.category === 'prontuario').map((doc) => (
                             <DocCard key={doc.id} doc={doc} onDelete={onDeleteDocument} />
                           ))}
 
-                          {(patient.clinicalData?.evoluções?.length === 0 && documents.filter(d => d.category === 'prontuario').length === 0) && (
+                          {documents.filter(d => d.category === 'prontuario').length === 0 && (
                             <div className="col-span-2 py-10 text-center text-[10px] text-text-muted uppercase tracking-widest border border-dashed border-border-ui rounded-2xl opacity-50">
                               Nenhum prontuário registrado
                             </div>
                           )}
                         </div>
                       </div>
-
                       {/* Section 2: Outros Documentos / Anexos */}
                       <div className="space-y-6">
                         <div className="flex items-center gap-2 pb-2 border-b border-white/5">
@@ -4767,6 +5168,158 @@ Relato:
            </section>
         </div>
       </div>
+
+      {/* Modal da Extensão do Google Meet & Consentimento */}
+      <AnimatePresence>
+        {showExtensionModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="glass-card w-full max-w-2xl bg-card border border-primary/20 rounded-3xl p-6 md:p-8 space-y-6 shadow-2xl relative my-8"
+            >
+              {/* Fechar */}
+              <button
+                type="button"
+                onClick={() => setShowExtensionModal(false)}
+                className="absolute top-4 right-4 p-2 text-text-muted hover:text-text-main rounded-xl hover:bg-surface-muted transition-colors"
+              >
+                <X size={20} />
+              </button>
+
+              {/* Cabeçalho */}
+              <div className="flex items-center gap-3 border-b border-white/5 pb-4">
+                <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center">
+                  <Chrome size={28} />
+                </div>
+                <div className="text-left">
+                  <h3 className="text-base font-bold text-text-main">Extensão do Google Meet</h3>
+                  <p className="text-xs text-text-muted">Escreva relatos clínicos automaticamente em tempo real.</p>
+                </div>
+              </div>
+
+              {/* Como Funciona & Privacidade */}
+              <div className="space-y-4 text-left text-xs leading-relaxed text-text-main">
+                <div className="bg-surface-muted border border-border-ui rounded-2xl p-4 space-y-2">
+                  <h4 className="font-bold text-primary flex items-center gap-1.5">
+                    🔒 Processamento 100% Local e Seguro (LGPD)
+                  </h4>
+                  <p className="text-text-muted text-[11px]">
+                    Nossa extensão lê as **legendas em tempo real** do seu Google Meet e as envia de forma criptografada apenas para o seu navegador de forma local. Nenhuma conversa é salva em nossos servidores externos, respeitando 100% o sigilo profissional.
+                  </p>
+                </div>
+
+                {/* ALERTA LEGAL IMPORTANTE */}
+                <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 space-y-2">
+                  <h4 className="font-bold text-red-400 flex items-center gap-1.5">
+                    ⚠️ Atenção: Obrigatoriedade Ética e Legal do Consentimento
+                  </h4>
+                  <p className="text-red-300 text-[11px]">
+                    De acordo com as normas da **LGPD (Lei Geral de Proteção de Dados)** e do **Código de Ética do CFP (Conselho Federal de Psicologia)**, é expressamente obrigatório que o profissional de psicologia obtenha o **consentimento prévio e expresso do paciente** antes de iniciar qualquer tipo de registro, gravação ou transcrição de sessões.
+                  </p>
+                  <p className="text-red-300 text-[11px] font-bold">
+                    O Simple Psi fornece apenas a ferramenta de automatização local. Nós nos eximimos integralmente de qualquer responsabilidade ética, jurídica ou civil decorrente do uso desta tecnologia sem a devida e documentada autorização do seu paciente.
+                  </p>
+                </div>
+
+                {/* Modelo de TCLE para Cópia */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Modelo de Consentimento Clínico (TCLE)</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const tcleText = `TERMO DE CONSENTIMENTO PARA TRANSCRIÇÃO DE SESSÃO\n\nEu autorizo o(a) psicólogo(a) a realizar a transcrição automatizada em tempo real dos diálogos ocorridos em nossas sessões online. Compreendo que esta transcrição é de uso estritamente terapêutico e confidencial, servindo unicamente de base para a elaboração de prontuários clínicos protegidos por criptografia na plataforma Simple Psi, em conformidade com o Código de Ética do CFP e com a Lei Geral de Proteção de Dados (LGPD). A transcrição bruta será processada localmente no computador do profissional e deletada imediatamente após a geração do prontuário resumido pela IA.`;
+                        navigator.clipboard.writeText(tcleText);
+                        setCopiedTcle(true);
+                        setTimeout(() => setCopiedTcle(false), 2000);
+                      }}
+                      className="flex items-center gap-1 text-[10px] text-primary hover:underline font-bold"
+                    >
+                      {copiedTcle ? <CheckCircle2 size={12} className="text-green-400" /> : <Copy size={12} />}
+                      {copiedTcle ? "Copiado!" : "Copiar Modelo de Termo"}
+                    </button>
+                  </div>
+                  <div className="bg-surface-muted/50 border border-border-ui rounded-xl p-3 text-[10.5px] text-text-muted select-all font-mono leading-relaxed max-h-[100px] overflow-y-auto">
+                    "Eu autorizo o(a) psicólogo(a) a realizar a transcrição automatizada em tempo real dos diálogos ocorridos em nossas sessões online. Compreendo que esta transcrição é de uso estritamente terapêutico e confidencial, servindo unicamente de base para a elaboração de prontuários clínicos protegidos por criptografia na plataforma Simple Psi, em conformidade com o Código de Ética do CFP e com a Lei Geral de Proteção de Dados (LGPD)..."
+                  </div>
+                </div>
+
+                {/* Checkbox de Aceite */}
+                <label className="flex items-start gap-3 p-3 bg-primary/5 border border-primary/10 rounded-2xl cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={tempCheckedTerms}
+                    onChange={(e) => setTempCheckedTerms(e.target.checked)}
+                    className="mt-0.5 rounded border-border-ui text-primary focus:ring-primary bg-surface-muted h-4 w-4"
+                  />
+                  <div className="text-left space-y-0.5">
+                    <span className="font-bold text-[11px] text-text-main block">Declaro-me Ciente e Responsável</span>
+                    <span className="text-[10px] text-text-muted block">
+                      Declaro que obtive/obterei o consentimento prévio do paciente para a realização de transcrições e que o Simple Psi atua estritamente como operador da tecnologia, eximindo-se de responsabilidade pela ausência deste aceite.
+                    </span>
+                  </div>
+                </label>
+              </div>
+
+              {/* Botões de Ação */}
+              <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-white/5">
+                <button
+                  type="button"
+                  onClick={() => setShowExtensionModal(false)}
+                  className="flex-1 bg-surface-muted text-text-muted hover:text-text-main py-3 rounded-2xl text-xs font-bold uppercase tracking-widest transition-all"
+                >
+                  Voltar
+                </button>
+                <button
+                  type="button"
+                  disabled={!tempCheckedTerms}
+                  onClick={() => {
+                    localStorage.setItem("simplepsi_meet_extension_consent", "true");
+                    setHasAcceptedExtensionTerms(true);
+                    alert("Termo de responsabilidade aceito com sucesso!\n\nAgora você está pronto para instalar a extensão. Siga o passo a passo na tela para carregá-la no seu Google Chrome.");
+                  }}
+                  className={`flex-1 py-3 rounded-2xl text-xs font-bold uppercase tracking-widest transition-all ${
+                    tempCheckedTerms
+                      ? "bg-primary text-white shadow-lg shadow-primary/20 hover:opacity-90 animate-pulse"
+                      : "bg-surface-muted text-text-muted cursor-not-allowed opacity-50"
+                  }`}
+                >
+                  Confirmar e Ativar
+                </button>
+              </div>
+
+              {/* Passo a Passo de Instalação (Exibido apenas após aceitar os termos) */}
+              {hasAcceptedExtensionTerms && (
+                <div className="border-t border-dashed border-white/10 pt-6 space-y-4 text-left">
+                  <h4 className="text-xs font-bold text-primary uppercase tracking-widest flex items-center gap-1.5">
+                    ⚙️ Como instalar a extensão no seu Chrome (1 minuto)
+                  </h4>
+                  <ol className="list-decimal pl-4 space-y-2 text-[11px] text-text-muted leading-relaxed">
+                    <li>
+                      Abra uma nova guia no seu navegador Chrome e acesse o endereço:{" "}
+                      <code className="bg-surface-muted border border-border-ui px-1.5 py-0.5 rounded text-primary font-bold">chrome://extensions</code>
+                    </li>
+                    <li>
+                      Ative a chave do **"Modo do desenvolvedor"** no canto superior direito da tela.
+                    </li>
+                    <li>
+                      No canto superior esquerdo, clique no botão **"Carregar sem compactação"** (Load unpacked).
+                    </li>
+                    <li>
+                      Navegue no seu computador e selecione a pasta <strong className="text-text-main">`extension`</strong> que foi criada dentro da pasta do projeto <strong className="text-text-main">`prontupsi---gestao-psicologica`</strong>.
+                    </li>
+                    <li>
+                      **Pronto!** O ícone do Simple Psi estará ativo. Ao entrar no Google Meet, certifique-se de ativar o **Closed Captions (CC) em Português** para que a transcrição funcione.
+                    </li>
+                  </ol>
+                </div>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
@@ -4886,7 +5439,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
           const pCreatedAt = new Date(p.createdAt || p.birthDate || '2024-01-01');
           if (startOfDay(d) < startOfDay(pCreatedAt)) return;
 
-          const weeksDiff = Math.abs(differenceInWeeks(d, pCreatedAt));
+          const weeksDiff = Math.abs(differenceInWeeks(startOfDay(d), startOfDay(pCreatedAt)));
           let isRecurrenceDay = false;
           if (p.recurrence === 'Semanal') isRecurrenceDay = true;
           else if (p.recurrence === 'Quinzenal') isRecurrenceDay = weeksDiff % 2 === 0;
@@ -5835,7 +6388,6 @@ function CalendarView({
                       <div className="hidden group-hover/session:block mt-1 pt-1 border-t border-white/5 animate-in fade-in slide-in-from-top-1 duration-200">
                         <div className="flex justify-between items-center text-[7px] text-white/60 uppercase tracking-widest font-bold mb-1.5">
                           <span>{session.status === 'Cancelada' ? 'Cancelada' : session.type}</span>
-                          {!session.isTriage && <span>#{session.sessionNumber}</span>}
                         </div>
                         
                         <div className="flex gap-1">
@@ -5977,7 +6529,7 @@ function CalendarView({
                       
                       <div className="flex justify-between items-center text-[10px] uppercase tracking-widest font-bold mb-4 opacity-80">
                         <span>{session.status === 'Cancelada' ? 'Cancelada' : session.type}</span>
-                        {!session.isTriage && session.status !== 'Cancelada' && <span>#{session.sessionNumber}</span>}
+                        
                       </div>
 
                       <div className="flex flex-wrap gap-2">
@@ -6740,5 +7292,603 @@ function CustomTooltip({
         </button>
       </div>
     </div>
+  );
+}
+
+function ImportTranscriptView({ 
+  patients, 
+  clinicalApproach,
+  onSaveSession, 
+  onCancel 
+}: { 
+  patients: any[], 
+  clinicalApproach: string,
+  onSaveSession: (patientId: string, date: string, time: string, duration: string, amount: string, type: 'Presencial' | 'Online', note: string) => void,
+  onCancel: () => void 
+}) {
+  const [transcriptText, setTranscriptText] = useState('');
+  const [selectedPatientId, setSelectedPatientId] = useState('');
+  const [sessionDate, setSessionDate] = useState(new Date().toISOString().split('T')[0]);
+  const [sessionTime, setSessionTime] = useState(new Date().toTimeString().split(' ')[0].substring(0, 5));
+  const [sessionDuration, setSessionDuration] = useState('50min');
+  const [sessionType, setSessionType] = useState<'Presencial' | 'Online'>('Online');
+  const [sessionAmount, setSessionAmount] = useState('180');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // AI Copilot States
+  const [activeLeftTab, setActiveLeftTab] = useState<'transcript' | 'ai'>('transcript');
+  const approachKey = clinicalApproach || 'tcc';
+  const approachInfo = CLINICAL_APPROACHES[approachKey] || CLINICAL_APPROACHES.tcc;
+
+  const [aiMessages, setAiMessages] = useState<Array<{ role: 'user' | 'model', content: string }>>([
+    {
+      role: 'model',
+      content: `Olá! Sou o seu Copiloto de IA oficial. 🧠\n\nPosso ajudar você a trabalhar e refinar a transcrição desta sessão.\nUtilize as ações rápidas acima para gerar uma evolução formal estruturada para a abordagem ${approachInfo.name}, formatar a conversa ou extrair planos de ação. Você também pode me fazer qualquer pergunta personalizada no chat abaixo!`
+    }
+  ]);
+  const [aiInput, setAiInput] = useState('');
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [interactionCount, setInteractionCount] = useState(0);
+
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll chat on new message
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [aiMessages, isAiLoading]);
+
+  // Handle trigger from Chrome extension
+  const handleImportTriggered = () => {
+    const inputText = document.getElementById('simplepsi-pending-transcript-input') as HTMLInputElement;
+    const inputPatientId = document.getElementById('simplepsi-pending-patient-id-input') as HTMLInputElement;
+    
+    if (inputText && inputText.value) {
+      setTranscriptText(inputText.value);
+    }
+    if (inputPatientId && inputPatientId.value) {
+      setSelectedPatientId(inputPatientId.value);
+    }
+  };
+
+  const selectedPatient = patients.find(p => p.id === selectedPatientId);
+  const evolucoes = selectedPatient?.clinicalData?.evoluções || [];
+  const nextSessionNum = (evolucoes.length > 0 ? Math.max(...evolucoes.map((e: any) => e.sessionNumber || 0)) : 0) + 1;
+
+  useEffect(() => {
+    if (selectedPatient) {
+      setSessionAmount(selectedPatient.amount || '180');
+      setSessionType(selectedPatient.modality || 'Online');
+    }
+  }, [selectedPatientId]);
+
+  const filteredList = patients.filter(p => 
+    p.status !== 'Inativo' && 
+    p.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  let dynamicAnalysisLabel = "Análise Clínica";
+  if (approachKey === 'tcc') {
+    dynamicAnalysisLabel = "Análise TCC";
+  } else if (approachKey === 'psicanalise') {
+    dynamicAnalysisLabel = "Análise Analítica";
+  } else if (approachKey === 'gestalt') {
+    dynamicAnalysisLabel = "Análise Gestáltica";
+  } else if (approachKey === 'behaviorismo') {
+    dynamicAnalysisLabel = "Análise Behaviorista";
+  } else if (approachKey === 'junguiana') {
+    dynamicAnalysisLabel = "Análise Junguiana";
+  } else if (approachKey === 'humanista') {
+    dynamicAnalysisLabel = "Análise Humanista";
+  }
+
+  const handleAiAction = async (actionType: string) => {
+    if (!transcriptText.trim()) {
+      alert("A transcrição está vazia. Capture ou digite algo primeiro!");
+      return;
+    }
+    if (interactionCount >= 4) {
+      alert("Limite de 4 interações de IA atingido.");
+      return;
+    }
+
+    setIsAiLoading(true);
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) {
+      setAiMessages(prev => [...prev, 
+        { role: 'user', content: `Executar: ${actionType === 'sintetizar' ? 'Sintetizar Prontuário' : actionType === 'formatar' ? 'Formatar Diálogo' : actionType === 'analise' ? dynamicAnalysisLabel : 'Plano de Ação'}` },
+        { role: 'model', content: "Erro: A chave de API do Gemini não está configurada (VITE_GEMINI_API_KEY no .env.local)." }
+      ]);
+      setIsAiLoading(false);
+      return;
+    }
+
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      let prompt = "";
+
+      if (actionType === 'sintetizar') {
+        prompt = `Você é um psicólogo clínico experiente cuja abordagem principal é a ${approachInfo.name}. Analise a transcrição de atendimento clínico a seguir e gere uma evolução clínica técnica detalhada e estruturada para compor o prontuário.
+        Escreva no formato de narrativa em primeira pessoa do terapeuta (ex: "O paciente relatou...", "Questionei a respeito...", "Trabalhei com o paciente...").
+        Identifique e estruture a demanda principal, intervenções terapêuticas realizadas e progresso observado de forma objetiva.
+        REGRA ÉTICA DE SIGILO: Substitua TODOS os nomes próprios de pessoas mencionadas na transcrição APENAS pela letra inicial (ex: Mariana -> M., João -> J.).
+        Não inclua saudações, observações ou introduções. Devolva apenas o texto limpo da evolução.
+
+        Transcrição:
+        "${transcriptText}"`;
+      } else if (actionType === 'formatar') {
+        prompt = `Organize a transcrição a seguir de forma legível dividida em diálogos marcados claramente como "Terapeuta:" e "Paciente:".
+        Remova ruídos de fala típicos da oralidade (como "tipo", "né", "eh", "gagueiras") de modo a tornar a leitura fluida e profissional, mas preservando 100% do sentido original e do conteúdo das falas.
+        
+        Transcrição:
+        "${transcriptText}"`;
+      } else if (actionType === 'analise') {
+        prompt = `Aja como um assistente de psicólogo clínico altamente experiente e especializado na abordagem ${approachInfo.name}.
+        Analise a seguinte transcrição de atendimento e faça uma análise clínica aprofundada baseando-se especificamente nas seguintes diretrizes:
+        
+        DIRETRIZES DA ABORDAGEM (${approachInfo.name}):
+        ${approachInfo.evolutionPrompt}
+
+        Identifique padrões inconscientes, distorções, awareness, ou contingências (dependendo do que rege a abordagem) de forma estruturada.
+        Estruture a resposta em tópicos profissionais e claros.
+
+        Transcrição:
+        "${transcriptText}"`;
+      } else if (actionType === 'plano') {
+        prompt = `Analise a transcrição de atendimento clínico abaixo e extraia com clareza:
+        1. Metas e objetivos delineados durante a conversa.
+        2. Combinados, tarefas de casa ou orientações inter-sessões acordadas entre terapeuta e paciente.
+        3. Focos ou direcionamentos recomendados para a próxima sessão.
+        
+        Se a abordagem do terapeuta for Psicanálise, adapte a linguagem para "Associações e Apontamentos para Sessões Futuras" em vez de "tarefas de casa" ou "metas".
+
+        Transcrição:
+        "${transcriptText}"`;
+      }
+
+      const label = actionType === 'sintetizar' 
+        ? 'Sintetizar Prontuário' 
+        : actionType === 'formatar' 
+          ? 'Formatar Diálogo' 
+          : actionType === 'analise' 
+            ? dynamicAnalysisLabel 
+            : 'Plano de Ação';
+
+      setAiMessages(prev => [...prev, { role: 'user', content: `Executar: ${label}` }]);
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+      });
+
+      const responseText = response.text || "Não foi possível gerar uma resposta.";
+      setAiMessages(prev => [...prev, { role: 'model', content: responseText }]);
+      setInteractionCount(prev => prev + 1);
+    } catch (err: any) {
+      console.error(err);
+      setAiMessages(prev => [...prev, { role: 'model', content: `Erro ao gerar resposta da IA: ${err.message}` }]);
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
+  const handleSendCustomMessage = async () => {
+    if (!aiInput.trim()) return;
+    if (!transcriptText.trim()) {
+      alert("A transcrição está vazia. Capture ou digite algo primeiro!");
+      return;
+    }
+    if (interactionCount >= 4) {
+      alert("Limite de 4 interações de IA atingido.");
+      return;
+    }
+
+    const userMessage = aiInput;
+    setAiInput('');
+    setAiMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setIsAiLoading(true);
+
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) {
+      setAiMessages(prev => [...prev, { role: 'model', content: "Erro: A chave de API do Gemini não está configurada (VITE_GEMINI_API_KEY)." }]);
+      setIsAiLoading(false);
+      return;
+    }
+
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      
+      const conversationHistory = aiMessages
+        .slice(1) // Exclui a mensagem de boas-vindas inicial para otimizar contexto
+        .map(msg => `${msg.role === 'user' ? 'Terapeuta' : 'Copiloto de IA'}: ${msg.content}`)
+        .join("\n\n");
+      
+      const prompt = `Você é o Copiloto de IA do psicólogo na plataforma SimplePsi.
+      Você tem acesso à seguinte transcrição de atendimento clínico:
+      ---
+      "${transcriptText}"
+      ---
+
+      Abordagem teórica ativa do psicólogo: ${approachInfo.name}
+
+      Histórico de perguntas e análises feitas anteriormente nesta tela:
+      ${conversationHistory}
+
+      Pergunta/Instrução atual do terapeuta:
+      "${userMessage}"
+
+      Responda de forma ética, empática, profissional e focada nas melhores práticas da psicologia clínica. Nunca presuma dados de identificação do paciente. Seja objetivo e conciso.`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+      });
+
+      const responseText = response.text || "Não foi possível gerar uma resposta.";
+      setAiMessages(prev => [...prev, { role: 'model', content: responseText }]);
+      setInteractionCount(prev => prev + 1);
+    } catch (err: any) {
+      console.error(err);
+      setAiMessages(prev => [...prev, { role: 'model', content: `Erro ao gerar resposta da IA: ${err.message}` }]);
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    alert("Copiado para a área de transferência!");
+  };
+
+  const applyAsEvolution = (text: string) => {
+    setTranscriptText(text);
+    setActiveLeftTab('transcript');
+    alert("Texto aplicado diretamente no prontuário!");
+  };
+
+  const mergeToEvolution = (text: string) => {
+    setTranscriptText(prev => prev ? `${prev}\n\n---\nAdicionado via Copiloto de IA:\n${text}` : text);
+    setActiveLeftTab('transcript');
+    alert("Texto mesclado ao final do prontuário!");
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="space-y-6 animate-in fade-in-50 duration-300"
+    >
+      {/* Inputs ocultos para ponte com a Extensão Chrome */}
+      <input type="hidden" id="simplepsi-pending-transcript-input" value="" />
+      <input type="hidden" id="simplepsi-pending-patient-id-input" value="" />
+      <button id="simplepsi-trigger-import" style={{ display: 'none' }} onClick={handleImportTriggered} />
+
+      <div className="flex items-center gap-4">
+        <button onClick={onCancel} className="p-2 rounded-xl bg-surface-muted hover:opacity-80 text-text-muted transition-all">
+          <ChevronRight className="rotate-180" size={24} />
+        </button>
+        <div>
+          <h2 className="text-2xl font-bold uppercase text-text-main">📥 Importar Transcrição do Google Meet</h2>
+          <p className="text-xs text-text-muted mt-0.5">Vincule a chamada capturada ao prontuário de um paciente</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        {/* Lado Esquerdo: Editor / Copiloto de IA */}
+        <div className="lg:col-span-7 flex flex-col gap-4">
+          <div className="glass-card rounded-[32px] border border-white/5 bg-white/5 p-6 flex flex-col flex-1 min-h-[500px]">
+            
+            {/* Seletor de Abas Esquerdo */}
+            <div className="flex border-b border-white/5 mb-4">
+              <button
+                onClick={() => setActiveLeftTab('transcript')}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all border-b-2",
+                  activeLeftTab === 'transcript'
+                    ? "border-primary text-primary"
+                    : "border-transparent text-text-muted hover:text-text-main"
+                )}
+              >
+                <FileText size={14} /> Transcrição Bruta
+              </button>
+              <button
+                onClick={() => setActiveLeftTab('ai')}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all border-b-2",
+                  activeLeftTab === 'ai'
+                    ? "border-primary text-primary"
+                    : "border-transparent text-text-muted hover:text-text-main"
+                )}
+              >
+                <Sparkles size={14} /> Copiloto de IA
+                <span className={cn(
+                  "text-[9px] px-1.5 py-0.5 rounded-full lowercase tracking-normal font-bold",
+                  interactionCount >= 4 ? "bg-red-500/20 text-red-500" : "bg-primary/20 text-primary"
+                )}>
+                  {interactionCount}/4
+                </span>
+              </button>
+            </div>
+
+            {/* ABA 1: Editor de Texto */}
+            {activeLeftTab === 'transcript' && (
+              <div className="flex-1 flex flex-col">
+                <h4 className="text-xs font-bold text-primary uppercase tracking-widest mb-3">Falas Capturadas na Sessão</h4>
+                {transcriptText ? (
+                  <textarea
+                    value={transcriptText}
+                    onChange={(e) => setTranscriptText(e.target.value)}
+                    className="w-full flex-1 bg-surface-muted/50 border border-border-ui rounded-2xl p-4 text-xs leading-relaxed text-text-main font-mono outline-none resize-none focus:border-primary/50 transition-all focus:ring-1 focus:ring-primary/20 min-h-[300px]"
+                    placeholder="Edite a transcrição se necessário..."
+                  />
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-surface-muted/30 border border-dashed border-border-ui rounded-2xl min-h-[300px]">
+                    <Loader2 size={32} className="animate-spin text-primary/50 mb-3" />
+                    <p className="text-sm font-bold text-text-main">Aguardando extensão...</p>
+                    <p className="text-xs text-text-muted mt-1 max-w-sm">
+                      Se você acabou de fechar o Google Meet ou clicou em enviar, a extensão está carregando o histórico de falas para esta tela.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ABA 2: Copiloto de IA */}
+            {activeLeftTab === 'ai' && (
+              <div className="flex-1 flex flex-col min-h-[450px]">
+                
+                {/* Badge de interações */}
+                <div className={cn(
+                  "p-3 rounded-2xl mb-4 text-xs font-medium flex items-center justify-between transition-all duration-300",
+                  interactionCount >= 4 
+                    ? "bg-red-500/10 border border-red-500/25 text-red-500"
+                    : "bg-primary/5 border border-primary/20 text-primary"
+                )}>
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={14} className={cn(interactionCount >= 4 ? "" : "animate-pulse")} />
+                    <span>
+                      {interactionCount >= 4 
+                        ? "Limite de 4 interações de IA atingido para esta sessão."
+                        : `Uso do Copiloto: ${interactionCount} de 4 interações utilizadas`}
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-bold uppercase">{4 - interactionCount} restantes</span>
+                </div>
+
+                {/* Ações Rápidas */}
+                <div className="grid grid-cols-2 gap-3 mb-5">
+                  <button
+                    onClick={() => handleAiAction('sintetizar')}
+                    disabled={isAiLoading || interactionCount >= 4 || !transcriptText.trim()}
+                    className="flex items-center gap-2 justify-center px-3 py-2.5 rounded-xl border border-white/5 bg-white/5 text-[11px] font-bold text-text-main uppercase hover:bg-primary/10 hover:border-primary/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed group"
+                  >
+                    <span>✨ Sintetizar Prontuário</span>
+                  </button>
+                  <button
+                    onClick={() => handleAiAction('formatar')}
+                    disabled={isAiLoading || interactionCount >= 4 || !transcriptText.trim()}
+                    className="flex items-center gap-2 justify-center px-3 py-2.5 rounded-xl border border-white/5 bg-white/5 text-[11px] font-bold text-text-main uppercase hover:bg-primary/10 hover:border-primary/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <span>🧹 Formatar Diálogo</span>
+                  </button>
+                  <button
+                    onClick={() => handleAiAction('analise')}
+                    disabled={isAiLoading || interactionCount >= 4 || !transcriptText.trim()}
+                    className="flex items-center gap-2 justify-center px-3 py-2.5 rounded-xl border border-white/5 bg-white/5 text-[11px] font-bold text-text-main uppercase hover:bg-primary/10 hover:border-primary/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <span>{dynamicAnalysisLabel}</span>
+                  </button>
+                  <button
+                    onClick={() => handleAiAction('plano')}
+                    disabled={isAiLoading || interactionCount >= 4 || !transcriptText.trim()}
+                    className="flex items-center gap-2 justify-center px-3 py-2.5 rounded-xl border border-white/5 bg-white/5 text-[11px] font-bold text-text-main uppercase hover:bg-primary/10 hover:border-primary/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <span>🎯 Plano de Ação</span>
+                  </button>
+                </div>
+
+                {/* Histórico do Chat */}
+                <div className="flex-1 overflow-y-auto space-y-4 max-h-[300px] border border-white/5 bg-surface-muted/20 rounded-2xl p-4 flex flex-col mb-4">
+                  {aiMessages.map((msg, idx) => (
+                    <div
+                      key={idx}
+                      className={cn(
+                        "rounded-2xl px-4 py-3 text-xs leading-relaxed max-w-[85%] whitespace-pre-wrap shadow-sm transition-all flex flex-col gap-2.5",
+                        msg.role === 'user'
+                          ? "bg-primary text-white self-end rounded-tr-none text-left"
+                          : "bg-surface-muted border border-border-ui text-text-main self-start rounded-tl-none text-left"
+                      )}
+                    >
+                      <span>{msg.content}</span>
+                      
+                      {/* Controles para respostas da IA */}
+                      {msg.role === 'model' && idx > 0 && (
+                        <div className="flex items-center gap-3 pt-2 border-t border-border-ui/40 text-[9px] font-bold uppercase tracking-wider text-text-muted">
+                          <button 
+                            onClick={() => copyToClipboard(msg.content)} 
+                            className="flex items-center gap-1 hover:text-text-main transition-colors"
+                          >
+                            <Copy size={11} /> Copiar
+                          </button>
+                          <button 
+                            onClick={() => applyAsEvolution(msg.content)} 
+                            className="flex items-center gap-1 hover:text-primary transition-colors text-primary"
+                          >
+                            <Plus size={11} /> Usar no Prontuário
+                          </button>
+                          <button 
+                            onClick={() => mergeToEvolution(msg.content)} 
+                            className="flex items-center gap-1 hover:text-accent transition-colors"
+                          >
+                            <Plus size={11} /> Mesclar
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  {/* Indicador de carregamento */}
+                  {isAiLoading && (
+                    <div className="flex items-center gap-1.5 bg-surface-muted border border-border-ui rounded-2xl rounded-tl-none px-4 py-3 max-w-[80%] self-start text-xs text-text-muted shadow-sm">
+                      <span>IA está analisando a sessão</span>
+                      <span className="flex gap-0.5 ml-1 items-center">
+                        <span className="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <span className="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <span className="w-1.5 h-1.5 bg-text-muted rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                      </span>
+                    </div>
+                  )}
+                  <div ref={chatEndRef} />
+                </div>
+
+                {/* Input de Chat */}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={aiInput}
+                    onChange={(e) => setAiInput(e.target.value)}
+                    placeholder={interactionCount >= 4 ? "Limite atingido." : "Pergunte algo sobre a transcrição..."}
+                    disabled={isAiLoading || interactionCount >= 4 || !transcriptText.trim()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSendCustomMessage();
+                    }}
+                    className="flex-1 bg-surface-muted border border-border-ui rounded-2xl py-2.5 px-4 text-xs font-bold text-text-main outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 placeholder:text-text-muted/40 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  />
+                  <button
+                    onClick={handleSendCustomMessage}
+                    disabled={isAiLoading || interactionCount >= 4 || !aiInput.trim() || !transcriptText.trim()}
+                    className="p-2.5 rounded-2xl bg-primary text-white hover:opacity-90 transition-opacity disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center"
+                  >
+                    <Send size={15} />
+                  </button>
+                </div>
+
+              </div>
+            )}
+
+          </div>
+        </div>
+
+        {/* Lado Direito: Controles de Vínculo */}
+        <div className="lg:col-span-5 flex flex-col gap-6">
+          <div className="glass-card rounded-[32px] border border-white/5 bg-white/5 p-6 space-y-6">
+            <h4 className="text-xs font-bold text-primary uppercase tracking-widest">Informações do Registro</h4>
+
+            {selectedPatientId && (
+              <div className="flex items-center gap-2 p-3.5 rounded-2xl bg-primary/5 border border-primary/20 text-primary">
+                <span className="text-lg">📈</span>
+                <div className="flex flex-col text-left">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-primary/70">Próximo Registro</span>
+                  <span className="text-xs font-bold text-text-main">Sessão nº {nextSessionNum} ({approachInfo.name})</span>
+                </div>
+              </div>
+            )}
+
+            {/* 1. Selecionar Paciente */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Paciente Vinculado</label>
+              
+              {!selectedPatientId ? (
+                <div className="space-y-3">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-2.5 text-text-muted" size={16} />
+                    <input 
+                      type="text"
+                      placeholder="Pesquise o nome do paciente..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full bg-surface-muted/50 border border-border-ui rounded-2xl py-2 px-10 text-xs font-bold text-text-main outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 placeholder:text-text-muted/40 transition-all"
+                    />
+                  </div>
+                  <div className="max-h-[180px] overflow-y-auto border border-border-ui rounded-2xl divide-y divide-border-ui bg-surface-muted/20">
+                    {filteredList.length > 0 ? (
+                      filteredList.map(p => (
+                        <button
+                          key={p.id}
+                          onClick={() => setSelectedPatientId(p.id)}
+                          className="w-full text-left px-4 py-2.5 hover:bg-surface-muted text-xs font-bold text-text-main uppercase transition-all flex items-center justify-between"
+                        >
+                          <span>{p.name}</span>
+                          <span className="text-[9px] bg-primary/10 text-primary px-2 py-0.5 rounded-full uppercase tracking-tighter">Ativo</span>
+                        </button>
+                      ))
+                    ) : (
+                      <p className="p-4 text-xs text-text-muted italic text-center">Nenhum paciente ativo encontrado.</p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between p-4 bg-primary/5 border border-primary/25 rounded-2xl">
+                  <div>
+                    <p className="text-xs font-bold text-text-main uppercase">{selectedPatient?.name}</p>
+                    <p className="text-[10px] text-text-muted mt-0.5 uppercase tracking-tight">{selectedPatient?.modality} • {selectedPatient?.recurrence}</p>
+                  </div>
+                  <button 
+                    onClick={() => setSelectedPatientId('')}
+                    className="text-[10px] font-bold text-red-500 hover:underline uppercase"
+                  >
+                    Alterar
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 2. Detalhes de Agendamento */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1 p-3 rounded-2xl bg-surface-muted/50 border border-border-ui">
+                <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Data do Atendimento</span>
+                <input 
+                  type="date"
+                  value={sessionDate}
+                  onChange={(e) => setSessionDate(e.target.value)}
+                  className="text-xs font-bold text-text-main bg-transparent outline-none mt-1 cursor-pointer"
+                />
+              </div>
+              <div className="flex flex-col gap-1 p-3 rounded-2xl bg-surface-muted/50 border border-border-ui">
+                <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Horário da Sessão</span>
+                <input 
+                  type="time"
+                  value={sessionTime}
+                  onChange={(e) => setSessionTime(e.target.value)}
+                  className="text-xs font-bold text-text-main bg-transparent outline-none mt-1"
+                />
+              </div>
+            </div>
+
+            {/* Botões de Ação */}
+            <div className="pt-4 border-t border-white/5 space-y-3">
+              <button
+                onClick={() => {
+                  if (!selectedPatientId) {
+                    alert("Por favor, selecione um paciente para vincular.");
+                    return;
+                  }
+                  if (!transcriptText.trim()) {
+                    alert("A transcrição está vazia.");
+                    return;
+                  }
+                  const type = (selectedPatient?.modality === 'Presencial' ? 'Presencial' : 'Online');
+                  const amount = selectedPatient?.amount || selectedPatient?.sessionAmount || 180;
+                  onSaveSession(selectedPatientId, sessionDate, sessionTime, sessionDuration, String(amount), type, transcriptText);
+                }}
+                disabled={!selectedPatientId || !transcriptText.trim()}
+                className="w-full bg-primary text-white py-3 rounded-2xl text-xs font-bold uppercase tracking-widest transition-all shadow-lg shadow-primary/20 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                💾 Salvar Relato & Criar Evolução
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm("Deseja mesmo descartar esta transcrição?")) {
+                    onCancel();
+                  }
+                }}
+                className="w-full bg-surface-muted text-text-muted hover:text-red-500 py-3 rounded-2xl text-xs font-bold uppercase tracking-widest transition-colors"
+              >
+                Descartar Transcrição
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </motion.div>
   );
 }
