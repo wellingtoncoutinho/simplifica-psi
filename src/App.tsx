@@ -3375,7 +3375,7 @@ function PatientDetailsView({
         lifeHistory: '',
         problemList: '',
         diagnosisAndMeds: '',
-        isSplitByBelief: true,
+        isSplitByBelief: false,
         unifiedFormulation: {
           coreBelief: '',
           intermediateBelief: '',
@@ -3415,14 +3415,6 @@ function PatientDetailsView({
       });
     }
   }, [patient, lastPatientId]);
-
-  const beliefFormulations = localTccData?.beliefFormulations || [];
-
-  useEffect(() => {
-    if (localTccData?.isSplitByBelief && beliefFormulations.length > 0 && !activeBeliefId) {
-      setActiveBeliefId(beliefFormulations[0].id);
-    }
-  }, [localTccData?.isSplitByBelief, beliefFormulations, activeBeliefId]);
 
   const handleUpdateTccField = (field: string, value: any) => {
     if (!localTccData) return;
@@ -3479,187 +3471,22 @@ function PatientDetailsView({
 
   const updateLocalFormulationField = (field: string, value: string) => {
     if (!localTccData) return;
-    
-    let updatedTccData = { ...localTccData };
-    if (localTccData.isSplitByBelief && activeBeliefId) {
-      updatedTccData.beliefFormulations = (localTccData.beliefFormulations || []).map((bf: any) => {
-        if (bf.id === activeBeliefId) {
-          return {
-            ...bf,
-            title: field === 'coreBelief' ? (value || 'Nova Crença') : bf.title,
-            formulation: {
-              ...getSafeFormulation(bf.formulation),
-              [field]: value
-            }
-          };
-        }
-        return bf;
-      });
-    } else {
-      updatedTccData.unifiedFormulation = {
-        ...getSafeFormulation(localTccData.unifiedFormulation),
-        [field]: value
-      };
-    }
-    
-    setLocalTccData(updatedTccData);
-  };
-
-  const updateLocalSituationField = (situationIndex: number, field: string, value: string) => {
-    if (!localTccData) return;
-    
-    let updatedTccData = { ...localTccData };
-    
-    const applyToFormulation = (formulation: any) => {
-      const safeForm = getSafeFormulation(formulation);
-      const situations = [...safeForm.situations];
-      situations[situationIndex] = {
-        ...situations[situationIndex],
-        [field]: value
-      };
-      return {
-        ...safeForm,
-        situations
-      };
-    };
-
-    if (localTccData.isSplitByBelief && activeBeliefId) {
-      updatedTccData.beliefFormulations = (localTccData.beliefFormulations || []).map((bf: any) => {
-        if (bf.id === activeBeliefId) {
-          return {
-            ...bf,
-            formulation: applyToFormulation(bf.formulation)
-          };
-        }
-        return bf;
-      });
-    } else {
-      updatedTccData.unifiedFormulation = applyToFormulation(localTccData.unifiedFormulation);
-    }
-    
-    setLocalTccData(updatedTccData);
-  };
-
-  const handleToggleSplitByBelief = (val: boolean) => {
-    if (!localTccData) return;
-    
-    let updatedTccData = {
+    const currentForm = localTccData.unifiedFormulation || {};
+    setLocalTccData({
       ...localTccData,
-      isSplitByBelief: val
-    };
-
-    if (val && (!updatedTccData.beliefFormulations || updatedTccData.beliefFormulations.length === 0)) {
-      const newId = 'belief_' + Date.now();
-      updatedTccData.beliefFormulations = [{
-        id: newId,
-        title: 'Crença 1',
-        formulation: {
-          coreBelief: '',
-          intermediateBelief: '',
-          activatingSituations: '',
-          compensatoryStrategies: '',
-          goals: '',
-          strengths: '',
-          situations: [
-            { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' },
-            { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' },
-            { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' }
-          ]
-        }
-      }];
-      setActiveBeliefId(newId);
-    }
-
-    setLocalTccData(updatedTccData);
-    
-    onUpdatePatient({
-      ...patient,
-      clinicalData: {
-        ...patient.clinicalData,
-        tccData: updatedTccData
-      }
+      unifiedFormulation: { ...currentForm, [field]: value }
     });
   };
 
-  const handleAddBelief = () => {
+  const updateLocalSituationField = (idx: number, field: string, value: string) => {
     if (!localTccData) return;
-    const newId = 'belief_' + Date.now();
-    const newBelief = {
-      id: newId,
-      title: `Crença ${beliefFormulations.length + 1}`,
-      formulation: {
-        coreBelief: '',
-        intermediateBelief: '',
-        activatingSituations: '',
-        compensatoryStrategies: '',
-        goals: '',
-        strengths: '',
-        situations: [
-          { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' },
-          { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' },
-          { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' }
-        ]
-      }
-    };
-
-    const updatedTccData = {
+    const currentForm = localTccData.unifiedFormulation || {};
+    const sits = [...(currentForm.situations || [])];
+    sits[idx] = { ...sits[idx], [field]: value };
+    setLocalTccData({
       ...localTccData,
-      beliefFormulations: [...beliefFormulations, newBelief]
-    };
-
-    setLocalTccData(updatedTccData);
-    setActiveBeliefId(newId);
-
-    onUpdatePatient({
-      ...patient,
-      clinicalData: {
-        ...patient.clinicalData,
-        tccData: updatedTccData
-      }
+      unifiedFormulation: { ...currentForm, situations: sits }
     });
-  };
-
-  const handleDeleteBelief = (beliefId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!localTccData) return;
-    if (!confirm("Tem certeza que deseja excluir esta crença central e toda a sua conceitualização?")) {
-      return;
-    }
-    const updatedFormulations = beliefFormulations.filter((bf: any) => bf.id !== beliefId);
-    const updatedTccData = {
-      ...localTccData,
-      beliefFormulations: updatedFormulations
-    };
-
-    setLocalTccData(updatedTccData);
-
-    if (activeBeliefId === beliefId) {
-      if (updatedFormulations.length > 0) {
-        setActiveBeliefId(updatedFormulations[0].id);
-      } else {
-        setActiveBeliefId('');
-      }
-    }
-
-    onUpdatePatient({
-      ...patient,
-      clinicalData: {
-        ...patient.clinicalData,
-        tccData: updatedTccData
-      }
-    });
-  };
-
-  const checkTccAiLimit = () => {
-    return {
-      canGenerate: true,
-      recentUsage: [],
-      remainingCount: 9999
-    };
-  };
-
-  const getNextReleaseTime = () => {
-    return null;
   };
 
   const handleGenerateTccWithAi = async () => {
@@ -3701,30 +3528,6 @@ function PatientDetailsView({
     try {
       const ai = new GoogleGenAI({ apiKey });
       
-      const activeBelief = localTccData.isSplitByBelief && activeBeliefId
-        ? (localTccData.beliefFormulations || []).find((bf: any) => bf.id === activeBeliefId)
-        : null;
-
-      const otherBeliefs = localTccData.isSplitByBelief
-        ? (localTccData.beliefFormulations || []).filter((bf: any) => bf.id !== activeBeliefId)
-        : [];
-
-      const isMultiBeliefGlobal = localTccData?.isSplitByBelief && !activeBelief;
-
-      const activeBeliefContext = isMultiBeliefGlobal
-        ? `
-        MODO DE TRABALHO: Conceitualização Multi-Crenças. Identifique as principais crenças centrais (até 3) do paciente.
-        INSTRUÇÃO CRÍTICA PARA ESTE MODO: Para CADA crença central identificada, você deve gerar uma formulação separada e retornar um array 'beliefs'.`
-        : activeBelief
-          ? `
-        MODO DE TRABALHO: A conceitualização está separada/dividida por crenças.
-        CRENÇA CENTRAL DE TRABALHO NESTA GERAÇÃO: "${activeBelief.formulation?.coreBelief || activeBelief.title}"
-        OUTRAS CRENÇAS JÁ EXISTENTES NESTE PACIENTE:
-        ${otherBeliefs.map((ob: any, idx: number) => `- Crença ${idx+1}: ${ob.formulation?.coreBelief || ob.title}`).join('\n')}
-        
-        INSTRUÇÃO CRÍTICA PARA ESTE MODO: Formule a crença central (coreBelief), crença intermediária (intermediateBelief), situações ativadoras (activatingSituations), estratégias compensatórias (compensatoryStrategies), metas (goals) e loops cognitivos das 3 situações (situations) focando EXCLUSIVAMENTE nesta Crença Central Ativa Atual ("${activeBelief.formulation?.coreBelief || activeBelief.title}"). Se este título for temporário ou genérico (ex: "Crença 1", "Crença 2") ou se a crença central estiver em branco, você deve analisar o prontuário para determinar e propor uma crença central clínica relevante (como Desvalor, Desamor ou Desamparo), configurando-a no campo "coreBelief" e baseando toda a conceitualização nela.`
-          : `MODO DE TRABALHO: Conceitualização unificada (uma única crença central principal).`;
-
       const patientContext = `
         PACIENTE: ${patient.name}
         HISTÓRIA DE VIDA (ANAMNESE): ${localTccData?.lifeHistory || patient?.clinicalData?.anamnese?.lifeHistory || 'Não preenchido'}
@@ -3732,46 +3535,6 @@ function PatientDetailsView({
         DIAGNÓSTICO E MEDICAMENTOS: ${localTccData?.diagnosisAndMeds || patient?.clinicalData?.anamnese?.currentMedication || 'Não preenchido'}
         EVOLUÇÕES CLÍNICAS RECENTES:
         ${(patient?.clinicalData?.evoluções || []).slice(-5).map((e: any) => `${e.date}: ${e.note}`).join('\n')}
-        ${activeBeliefContext}
-      `;
-
-      const promptInstructions = isMultiBeliefGlobal ? `
-        INSTRUÇÕES — retorne SOMENTE o JSON, sem markdown, sem texto extra. O JSON deve ter EXATAMENTE esta estrutura na raiz:
-        {
-          "lifeHistory": "narrativa em 4-6 parágrafos densos (mín. 500 palavras) separados por \\n, cobrindo infância, dinâmica familiar, adolescência, vida afetiva, carreira e estressores atuais.",
-          "problemList": "mín. 8 problemas clínicos específicos separados por ;\\n",
-          "diagnosisAndMeds": "Hipótese diagnóstica de... — NUNCA diagnóstico definitivo.",
-          "beliefs": [
-            {
-              "title": "Nome Curto da Crença (ex: Desamparo)",
-              "coreBelief": "Nome da Crença.\\nSobre si mesmo: \\"frase1\\".\\nSobre os outros: \\"frase1\\".\\nSobre o futuro: \\"frase\\".",
-              "intermediateBelief": "Regras:\\n\\"Regra 1.\\"\\n\\"Regra 2.\\"\\n\\"Regra 3.\\"\\n\\"Regra 4.\\"\\n\\"Regra 5.\\"\\nPressupostos:\\n\\"Se... então....\\"\\n\\"Se... então....\\"",
-              "activatingSituations": "5+ gatilhos separados por \\n",
-              "compensatoryStrategies": "4+ estratégias separadas por \\n",
-              "goals": "metas terapêuticas separadas por / ",
-              "strengths": "recursos e pontos fortes do paciente",
-              "situations": [
-                { "situation": "...", "automaticThought": "...", "meaning": "...", "emotion": "...", "behavior": "..." },
-                { "situation": "...", "automaticThought": "...", "meaning": "...", "emotion": "...", "behavior": "..." },
-                { "situation": "...", "automaticThought": "...", "meaning": "...", "emotion": "...", "behavior": "..." }
-              ]
-            }
-          ]
-        }
-        (Gere até 3 objetos dentro do array 'beliefs')
-      ` : `
-        INSTRUÇÕES — retorne SOMENTE o JSON, sem markdown, sem texto extra:
-
-        1. lifeHistory: narrativa em 4-6 parágrafos densos (mín. 500 palavras) separados por \\n, cobrindo infância, dinâmica familiar, adolescência, vida afetiva, carreira e estressores atuais.
-        2. problemList: mín. 8 problemas clínicos específicos separados por ";\\n".
-        3. diagnosisAndMeds: "Hipótese diagnóstica de..." — NUNCA diagnóstico definitivo.
-        4. coreBelief: "Nome da Crença.\\nSobre si mesmo: \"frase1\".\\nSobre os outros: \"frase1\".\\nSobre o futuro: \"frase\"."
-        5. intermediateBelief: "Regras:\\n\"Regra 1.\"\\n\"Regra 2.\"\\n\"Regra 3.\"\\n\"Regra 4.\"\\n\"Regra 5.\"\\nPressupostos:\\n\"Se... então....\"\\n\"Se... então....\"\\n\"Se... então....\"\\n\"Se... então....\"\\n\"Se... então....\""
-        6. activatingSituations: 5+ gatilhos separados por "\\n".
-        7. compensatoryStrategies: 4+ estratégias "Nome: Descrição." separadas por "\\n".
-        8. goals: metas terapêuticas separadas por " / ".
-        9. strengths: recursos e pontos fortes do paciente.
-        10. situations: array JSON com EXATAMENTE 3 objetos com: situation, automaticThought, meaning, emotion, behavior.
       `;
 
       const prompt = `
@@ -3782,7 +3545,18 @@ function PatientDetailsView({
         ${patientContext}
 
         ---
-        ${promptInstructions}
+        INSTRUÇÕES — retorne SOMENTE o JSON, sem markdown, sem texto extra:
+
+        1. lifeHistory: narrativa em 4-6 parágrafos densos (mín. 500 palavras) separados por \\n, cobrindo infância, dinâmica familiar, adolescência, vida afetiva, carreira e estressores atuais.
+        2. problemList: mín. 8 problemas clínicos específicos separados por ";\\n".
+        3. diagnosisAndMeds: "Hipótese diagnóstica de..." — NUNCA diagnóstico definitivo.
+        4. coreBelief: "Nome da Crença.\\nSobre si mesmo: \\"frase1\\".\\nSobre os outros: \\"frase1\\".\\nSobre o futuro: \\"frase\\"."
+        5. intermediateBelief: "Regras:\\n\\"Regra 1.\\"\\n\\"Regra 2.\\"\\n\\"Regra 3.\\"\\n\\"Regra 4.\\"\\n\\"Regra 5.\\"\\nPressupostos:\\n\\"Se... então....\\"\\n\\"Se... então....\\"\\n\\"Se... então....\\"\\n\\"Se... então....\\"\\n\\"Se... então....\\""
+        6. activatingSituations: 5+ gatilhos separados por "\\n".
+        7. compensatoryStrategies: 4+ estratégias "Nome: Descrição." separadas por "\\n".
+        8. goals: metas terapêuticas separadas por " / ".
+        9. strengths: recursos e pontos fortes do paciente.
+        10. situations: array JSON com EXATAMENTE 3 objetos com: situation, automaticThought, meaning, emotion, behavior.
 
         Retorne SOMENTE o JSON válido. Nenhum texto antes ou depois.
       `;
@@ -3831,7 +3605,7 @@ function PatientDetailsView({
       let parsedData: any = {};
       try {
         parsedData = JSON.parse(sanitized);
-      } catch (jsonErr) {
+      } catch (jsonErr: any) {
         console.error('Raw AI response that failed to parse:', rawText);
         throw new Error('JSON_PARSE_FAILED');
       }
@@ -3840,44 +3614,9 @@ function PatientDetailsView({
         ...localTccData,
         lifeHistory: parsedData.lifeHistory || localTccData.lifeHistory,
         problemList: parsedData.problemList || localTccData.problemList,
-        diagnosisAndMeds: parsedData.diagnosisAndMeds || localTccData.diagnosisAndMeds
+        diagnosisAndMeds: parsedData.diagnosisAndMeds || localTccData.diagnosisAndMeds,
+        unifiedFormulation: parsedData
       };
-
-      if (isMultiBeliefGlobal && Array.isArray(parsedData.beliefs)) {
-        updatedTccData.beliefFormulations = parsedData.beliefs.map((b: any) => ({
-          id: Math.random().toString(36).substr(2, 9),
-          title: b.title || (b.coreBelief ? b.coreBelief.split('\n')[0] : 'Nova Crença'),
-          formulation: {
-            coreBelief: b.coreBelief || '',
-            intermediateBelief: b.intermediateBelief || '',
-            activatingSituations: b.activatingSituations || '',
-            compensatoryStrategies: b.compensatoryStrategies || '',
-            goals: b.goals || '',
-            strengths: b.strengths || '',
-            situations: b.situations || [
-              { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' },
-              { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' },
-              { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' }
-            ]
-          }
-        }));
-        if (updatedTccData.beliefFormulations.length > 0) {
-          setActiveBeliefId(updatedTccData.beliefFormulations[0].id);
-        }
-      } else if (localTccData.isSplitByBelief && activeBeliefId) {
-        updatedTccData.beliefFormulations = (localTccData.beliefFormulations || []).map((bf: any) => {
-          if (bf.id === activeBeliefId) {
-            return {
-              ...bf,
-              title: parsedData.coreBelief ? parsedData.coreBelief.split('\n')[0] : bf.title,
-              formulation: parsedData
-            };
-          }
-          return bf;
-        });
-      } else {
-        updatedTccData.unifiedFormulation = parsedData;
-      }
 
       setLocalTccData(updatedTccData);
 
@@ -3909,7 +3648,7 @@ function PatientDetailsView({
       } else if (rawMsg.includes('JSON_PARSE_FAILED') || rawMsg.includes('JSON Parse') || rawMsg.includes('parse')) {
         friendlyMsg = "A IA retornou uma resposta em formato inválido. Tente novamente — normalmente funciona na segunda tentativa.";
       } else if (rawMsg.includes('API_KEY') || rawMsg.includes('api_key') || rawMsg.includes('401')) {
-        friendlyMsg = "Chave de API inválida ou ausente. Verifique as configurações.";
+        friendlyMsg = "Chave da API inválida ou ausente. Verifique as configurações.";
       } else if (rawMsg.includes('429') || rawMsg.includes('RESOURCE_EXHAUSTED') || rawMsg.includes('quota')) {
         friendlyMsg = "A API atingiu o limite de requisições por minuto (não é cota diária). Aguarde 1 minuto e tente novamente.";
       } else if (rawMsg.includes('network') || rawMsg.includes('fetch')) {
@@ -6161,64 +5900,9 @@ Relato:
                             />
                           </div>
 
-                          {/* Toggle de Divisão por Crença */}
-                          <div className="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/5">
-                            <div>
-                              <p className="text-sm font-bold text-text-main font-sans">Dividir por Crença Central</p>
-                              <p className="text-xs text-text-muted">Separe cada formulação e loop cognitivo de acordo com a crença central correspondente</p>
-                            </div>
-                            <label className="relative inline-flex items-center cursor-pointer">
-                              <input 
-                                type="checkbox" 
-                                checked={!!localTccData?.isSplitByBelief}
-                                onChange={(e) => handleToggleSplitByBelief(e.target.checked)}
-                                className="sr-only peer"
-                              />
-                              <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                            </label>
-                          </div>
-
-                          {/* Abas de Crenças (Se Split) */}
-                          {localTccData?.isSplitByBelief && (
-                            <div className="flex flex-wrap items-center gap-2 border-b border-white/5 pb-2">
-                              {beliefFormulations.map((bf: any) => (
-                                <button
-                                  key={bf.id}
-                                  type="button"
-                                  onClick={() => setActiveBeliefId(bf.id)}
-                                  className={cn(
-                                    "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all border",
-                                    activeBeliefId === bf.id 
-                                      ? "bg-primary border-primary text-white" 
-                                      : "bg-surface-muted border-border-ui text-text-muted hover:text-text-main"
-                                  )}
-                                >
-                                  <span>{bf.formulation?.coreBelief || bf.title || 'Nova Crença'}</span>
-                                  {beliefFormulations.length > 1 && (
-                                    <span 
-                                      onClick={(e) => handleDeleteBelief(bf.id, e)}
-                                      className="p-0.5 rounded-full hover:bg-black/20 text-white/50 hover:text-white"
-                                    >
-                                      <X size={12} />
-                                    </span>
-                                  )}
-                                </button>
-                              ))}
-                              <button
-                                onClick={handleAddBelief}
-                                className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold border border-dashed border-primary/40 text-primary hover:bg-primary/5 transition-all"
-                              >
-                                <Plus size={14} /> Nova Crença
-                              </button>
-                            </div>
-                          )}
-
-                          {/* Conteúdo da Formulação Ativa */}
-                          {(!localTccData?.isSplitByBelief || activeBeliefId) && (() => {
-                            const form = localTccData?.isSplitByBelief 
-                              ? (localTccData?.beliefFormulations || []).find((bf: any) => bf.id === activeBeliefId)?.formulation
-                              : localTccData?.unifiedFormulation;
-                            const safeForm = getSafeFormulation(form);
+                          {/* Conteúdo da Formulação */}
+                          {(() => {
+                            const safeForm = getSafeFormulation(localTccData?.unifiedFormulation);
 
                             return (
                               <div className="space-y-6">
