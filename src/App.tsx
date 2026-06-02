@@ -3375,7 +3375,7 @@ function PatientDetailsView({
         lifeHistory: '',
         problemList: '',
         diagnosisAndMeds: '',
-        isSplitByBelief: false,
+        isSplitByBelief: true,
         unifiedFormulation: {
           coreBelief: '',
           intermediateBelief: '',
@@ -3709,15 +3709,21 @@ function PatientDetailsView({
         ? (localTccData.beliefFormulations || []).filter((bf: any) => bf.id !== activeBeliefId)
         : [];
 
-      const activeBeliefContext = activeBelief
+      const isMultiBeliefGlobal = localTccData?.isSplitByBelief && !activeBelief;
+
+      const activeBeliefContext = isMultiBeliefGlobal
         ? `
+        MODO DE TRABALHO: Conceitualização Multi-Crenças. Identifique as principais crenças centrais (até 3) do paciente.
+        INSTRUÇÃO CRÍTICA PARA ESTE MODO: Para CADA crença central identificada, você deve gerar uma formulação separada e retornar um array 'beliefs'.`
+        : activeBelief
+          ? `
         MODO DE TRABALHO: A conceitualização está separada/dividida por crenças.
         CRENÇA CENTRAL DE TRABALHO NESTA GERAÇÃO: "${activeBelief.formulation?.coreBelief || activeBelief.title}"
         OUTRAS CRENÇAS JÁ EXISTENTES NESTE PACIENTE:
         ${otherBeliefs.map((ob: any, idx: number) => `- Crença ${idx+1}: ${ob.formulation?.coreBelief || ob.title}`).join('\n')}
         
         INSTRUÇÃO CRÍTICA PARA ESTE MODO: Formule a crença central (coreBelief), crença intermediária (intermediateBelief), situações ativadoras (activatingSituations), estratégias compensatórias (compensatoryStrategies), metas (goals) e loops cognitivos das 3 situações (situations) focando EXCLUSIVAMENTE nesta Crença Central Ativa Atual ("${activeBelief.formulation?.coreBelief || activeBelief.title}"). Se este título for temporário ou genérico (ex: "Crença 1", "Crença 2") ou se a crença central estiver em branco, você deve analisar o prontuário para determinar e propor uma crença central clínica relevante (como Desvalor, Desamor ou Desamparo), configurando-a no campo "coreBelief" e baseando toda a conceitualização nela.`
-        : `MODO DE TRABALHO: Conceitualização unificada (uma única crença central principal).`;
+          : `MODO DE TRABALHO: Conceitualização unificada (uma única crença central principal).`;
 
       const patientContext = `
         PACIENTE: ${patient.name}
@@ -3729,14 +3735,22 @@ function PatientDetailsView({
         ${activeBeliefContext}
       `;
 
-      const prompt = `
-        Você é um terapeuta TCC sênior especialista em conceitualização cognitiva de Judith Beck.
-        Gere uma Conceitualização Cognitiva completa em português com base no contexto clínico abaixo.
+      const promptInstructions = isMultiBeliefGlobal ? `
+        INSTRUÇÕES — retorne SOMENTE o JSON, sem markdown, sem texto extra:
 
-        CONTEXTO CLÍNICO DO PACIENTE:
-        ${patientContext}
-
-        ---
+        1. lifeHistory: narrativa em 4-6 parágrafos densos (mín. 500 palavras) separados por \\n, cobrindo infância, dinâmica familiar, adolescência, vida afetiva, carreira e estressores atuais.
+        2. problemList: mín. 8 problemas clínicos específicos separados por ";\\n".
+        3. diagnosisAndMeds: "Hipótese diagnóstica de..." — NUNCA diagnóstico definitivo.
+        4. beliefs: ARRAY de objetos JSON, um para cada crença central identificada (máximo 3). Cada objeto deve ter exatamente esta estrutura:
+           - title: "Nome Curto da Crença (ex: Desamparo)"
+           - coreBelief: "Nome da Crença.\\nSobre si mesmo: \"frase1\".\\nSobre os outros: \"frase1\".\\nSobre o futuro: \"frase\"."
+           - intermediateBelief: "Regras:\\n\"Regra 1.\"\\n\"Regra 2.\"\\n\"Regra 3.\"\\n\"Regra 4.\"\\n\"Regra 5.\"\\nPressupostos:\\n\"Se... então....\"\\n\"Se... então....\"\\n\"Se... então....\"\\n\"Se... então....\"\\n\"Se... então....\""
+           - activatingSituations: 5+ gatilhos separados por "\\n".
+           - compensatoryStrategies: 4+ estratégias "Nome: Descrição." separadas por "\\n".
+           - goals: metas terapêuticas separadas por " / ".
+           - strengths: recursos e pontos fortes do paciente.
+           - situations: array JSON com EXATAMENTE 3 objetos com: situation, automaticThought, meaning, emotion, behavior.
+      ` : `
         INSTRUÇÕES — retorne SOMENTE o JSON, sem markdown, sem texto extra:
 
         1. lifeHistory: narrativa em 4-6 parágrafos densos (mín. 500 palavras) separados por \\n, cobrindo infância, dinâmica familiar, adolescência, vida afetiva, carreira e estressores atuais.
@@ -3749,6 +3763,17 @@ function PatientDetailsView({
         8. goals: metas terapêuticas separadas por " / ".
         9. strengths: recursos e pontos fortes do paciente.
         10. situations: array JSON com EXATAMENTE 3 objetos com: situation, automaticThought, meaning, emotion, behavior.
+      `;
+
+      const prompt = `
+        Você é um terapeuta TCC sênior especialista em conceitualização cognitiva de Judith Beck.
+        Gere uma Conceitualização Cognitiva completa em português com base no contexto clínico abaixo.
+
+        CONTEXTO CLÍNICO DO PACIENTE:
+        ${patientContext}
+
+        ---
+        ${promptInstructions}
 
         Retorne SOMENTE o JSON válido. Nenhum texto antes ou depois.
       `;
@@ -3809,7 +3834,28 @@ function PatientDetailsView({
         diagnosisAndMeds: parsedData.diagnosisAndMeds || localTccData.diagnosisAndMeds
       };
 
-      if (localTccData.isSplitByBelief && activeBeliefId) {
+      if (isMultiBeliefGlobal && Array.isArray(parsedData.beliefs)) {
+        updatedTccData.beliefFormulations = parsedData.beliefs.map((b: any) => ({
+          id: Math.random().toString(36).substr(2, 9),
+          title: b.title || (b.coreBelief ? b.coreBelief.split('\n')[0] : 'Nova Crença'),
+          formulation: {
+            coreBelief: b.coreBelief || '',
+            intermediateBelief: b.intermediateBelief || '',
+            activatingSituations: b.activatingSituations || '',
+            compensatoryStrategies: b.compensatoryStrategies || '',
+            goals: b.goals || '',
+            strengths: b.strengths || '',
+            situations: b.situations || [
+              { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' },
+              { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' },
+              { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' }
+            ]
+          }
+        }));
+        if (updatedTccData.beliefFormulations.length > 0) {
+          setActiveBeliefId(updatedTccData.beliefFormulations[0].id);
+        }
+      } else if (localTccData.isSplitByBelief && activeBeliefId) {
         updatedTccData.beliefFormulations = (localTccData.beliefFormulations || []).map((bf: any) => {
           if (bf.id === activeBeliefId) {
             return {
