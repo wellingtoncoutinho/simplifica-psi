@@ -42,7 +42,50 @@ export interface Patient {
       sessionNumber: number;
       note: string;
     }>;
+    smartNotes?: {
+      padroes?: string;
+      progresso?: string;
+      sugestao?: string;
+      topicos?: string[];
+    };
+    tccData?: {
+      lifeHistory?: string;
+      problemList?: string;
+      diagnosisAndMeds?: string;
+      isSplitByBelief?: boolean;
+      unifiedFormulation?: TccFormulation;
+      beliefFormulations?: Array<{
+        id: string;
+        title: string;
+        formulation: TccFormulation;
+      }>;
+    };
+    treatmentPlan?: Array<{
+      id: string;
+      goal: string;
+      interventions?: string;
+      status: 'pending' | 'in_progress' | 'completed';
+    }>;
+    nextSessionPlan?: string;
   };
+}
+
+export interface TccFormulation {
+  coreBelief?: string;
+  intermediateBelief?: string;
+  activatingSituations?: string;
+  compensatoryStrategies?: string;
+  goals?: string;
+  strengths?: string;
+  situations?: [TccSituation, TccSituation, TccSituation];
+}
+
+export interface TccSituation {
+  situation?: string;
+  automaticThought?: string;
+  meaning?: string;
+  emotion?: string;
+  behavior?: string;
 }
 
 export interface Session {

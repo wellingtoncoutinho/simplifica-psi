@@ -75,11 +75,14 @@ import {
   Chrome,
   Copy,
   Check,
-  X
+  X,
+  ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency } from './lib/utils';
 import LandingPage from './components/LandingPage';
+import PaywallScreen from './components/PaywallScreen';
+import AdminPanel from './components/AdminPanel';
 import { 
   Patient, 
   Session, 
@@ -312,8 +315,30 @@ Como posso te ajudar hoje?`
     crp: localStorage.getItem('prof_crp') || '',
     logo: localStorage.getItem('prof_logo') || '',
     isGoogleCalendarEnabled: localStorage.getItem('prof_gcal_enabled') === 'true',
-    clinicalApproach: localStorage.getItem('prof_approach') || 'tcc'
+    clinicalApproach: localStorage.getItem('prof_approach') || 'tcc',
+    trialStartDate: localStorage.getItem('prof_trial_start') || null,
+    isTrial: localStorage.getItem('prof_is_trial') === 'true',
+    tccAiUsage: JSON.parse(localStorage.getItem('prof_tcc_ai_usage') || '[]') as string[]
   });
+
+  // Helper to calculate trial remaining days
+  const trialRemainingDays = useMemo(() => {
+    if (!profileSettings.trialStartDate) return 7;
+    const start = new Date(profileSettings.trialStartDate);
+    const today = new Date();
+    
+    // Set times to midnight to calculate pure date differences
+    const startDateOnly = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    
+    const diffTime = todayDateOnly.getTime() - startDateOnly.getTime();
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    return 7 - diffDays;
+  }, [profileSettings.trialStartDate]);
+
+  const isTrialExpired = useMemo(() => {
+    return profileSettings.isTrial && trialRemainingDays < 0;
+  }, [profileSettings.isTrial, trialRemainingDays]);
   const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(localStorage.getItem('google_calendar_access_token'));
   const [patients, setPatients] = useState<Patient[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -379,28 +404,91 @@ Como posso te ajudar hoje?`
           const profileRef = doc(db, 'profiles', user.uid);
           const profileSnap = await getDoc(profileRef);
 
-          if (profileSnap.exists()) {
-            // Existing registered user! Let them log in immediately.
-            setUser(user);
-            setAuthError(null);
-            setLoading(false);
-            return;
-          }
-
           // 2. Check if email document exists in Firestore 'authorized_emails'
           const docRef = doc(db, 'authorized_emails', userEmail);
           const docSnap = await getDoc(docRef);
+          const isAuthorized = docSnap.exists() && docSnap.data().active !== false;
 
-          if (docSnap.exists() && docSnap.data().active !== false) {
+          if (isAuthorized) {
+            // Paid User
+            if (!profileSnap.exists()) {
+              // Create paid profile
+              const newProfile = {
+                name: user.displayName || '',
+                email: userEmail,
+                createdAt: new Date().toISOString(),
+                isTrial: false,
+                clinicalApproach: 'tcc',
+                isGoogleCalendarEnabled: false
+              };
+              await setDoc(profileRef, newProfile);
+              setProfileSettings(prev => ({
+                ...prev,
+                ...newProfile,
+                trialStartDate: null
+              }));
+            } else if (profileSnap.data().isTrial) {
+              // Convert trial user to paid user
+              await updateDoc(profileRef, { isTrial: false });
+              setProfileSettings(prev => ({
+                ...prev,
+                isTrial: false
+              }));
+            } else {
+              // Paid user already has profile
+              const data = profileSnap.data();
+              setProfileSettings({
+                name: data.name || '',
+                crp: data.crp || '',
+                logo: data.logo || '',
+                isGoogleCalendarEnabled: data.isGoogleCalendarEnabled || false,
+                clinicalApproach: data.clinicalApproach || 'tcc',
+                trialStartDate: data.trialStartDate || null,
+                isTrial: false,
+                tccAiUsage: data.tccAiUsage || []
+              });
+            }
             setUser(user);
             setAuthError(null);
           } else {
-            // Not authorized! Sign out immediately
-            await auth.signOut();
-            setUser(null);
-            setAuthError(
-              "Este e-mail não possui uma licença vitalícia ativa do SimplePsi. Se você acabou de comprar, aguarde 2 minutinhos para a liberação automática ou fale com o nosso suporte."
-            );
+            // Unpaid User (No email document in authorized_emails)
+            if (profileSnap.exists()) {
+              // User already has a profile.
+              // If it's a trial, we allow them in (checked for expiration in the UI).
+              // If it's not a trial, they are a legacy authorized user, we let them in.
+              const data = profileSnap.data();
+              setProfileSettings({
+                name: data.name || '',
+                crp: data.crp || '',
+                logo: data.logo || '',
+                isGoogleCalendarEnabled: data.isGoogleCalendarEnabled || false,
+                clinicalApproach: data.clinicalApproach || 'tcc',
+                trialStartDate: data.trialStartDate || null,
+                isTrial: data.isTrial || false,
+                tccAiUsage: data.tccAiUsage || []
+              });
+              setUser(user);
+              setAuthError(null);
+            } else {
+              // New user signing up for the first time without purchase -> Give them the 7-day trial!
+              const newProfile = {
+                name: user.displayName || '',
+                email: userEmail,
+                createdAt: new Date().toISOString(),
+                trialStartDate: new Date().toISOString(),
+                isTrial: true,
+                clinicalApproach: 'tcc',
+                isGoogleCalendarEnabled: false,
+                tccAiUsage: []
+              };
+              await setDoc(profileRef, newProfile);
+              setProfileSettings(prev => ({
+                ...prev,
+                ...newProfile
+              }));
+              setUser(user);
+              setAuthError(null);
+            }
           }
         } catch (err) {
           console.error("Erro ao verificar e-mail autorizado:", err);
@@ -436,7 +524,10 @@ Como posso te ajudar hoje?`
           crp: data.crp || '',
           logo: data.logo || '',
           isGoogleCalendarEnabled: data.isGoogleCalendarEnabled || false,
-          clinicalApproach: data.clinicalApproach || 'tcc'
+          clinicalApproach: data.clinicalApproach || 'tcc',
+          trialStartDate: data.trialStartDate || null,
+          isTrial: data.isTrial || false,
+          tccAiUsage: data.tccAiUsage || []
         });
         // Also update localStorage as backup/cache
         localStorage.setItem('prof_name', data.name || '');
@@ -444,6 +535,25 @@ Como posso te ajudar hoje?`
         localStorage.setItem('prof_logo', data.logo || '');
         localStorage.setItem('prof_gcal_enabled', data.isGoogleCalendarEnabled ? 'true' : 'false');
         localStorage.setItem('prof_approach', data.clinicalApproach || 'tcc');
+        localStorage.setItem('prof_trial_start', data.trialStartDate || '');
+        localStorage.setItem('prof_is_trial', data.isTrial ? 'true' : 'false');
+        localStorage.setItem('prof_tcc_ai_usage', JSON.stringify(data.tccAiUsage || []));
+      }
+    });
+
+    // Authorized Email Real-time Listener (Automatically upgrades user to vitalício when payment occurs)
+    const userEmail = user.email ? user.email.toLowerCase().trim() : '';
+    const unsubAuthEmail = onSnapshot(doc(db, 'authorized_emails', userEmail), async (snapshot) => {
+      if (snapshot.exists() && snapshot.data().active !== false) {
+        try {
+          const profileRef = doc(db, 'profiles', user.uid);
+          const profileSnap = await getDoc(profileRef);
+          if (profileSnap.exists() && profileSnap.data().isTrial) {
+            await updateDoc(profileRef, { isTrial: false });
+          }
+        } catch (e) {
+          console.error("Erro ao converter perfil de trial:", e);
+        }
       }
     });
 
@@ -470,6 +580,7 @@ Como posso te ajudar hoje?`
       unsubPatients();
       unsubSessions();
       unsubTransactions();
+      unsubAuthEmail();
     };
   }, [user]);
 
@@ -1672,13 +1783,19 @@ Como posso te ajudar hoje?`
     }
   };
 
-  const menuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'pacientes', label: 'Pacientes', icon: Users },
-    { id: 'agenda', label: 'Agenda', icon: CalendarIcon },
-    { id: 'prontuarios', label: 'Prontuários', icon: FileText },
-    { id: 'financeiro', label: 'Financeiro', icon: DollarSign },
-  ];
+  const menuItems = useMemo(() => {
+    const items = [
+      { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+      { id: 'pacientes', label: 'Pacientes', icon: Users },
+      { id: 'agenda', label: 'Agenda', icon: CalendarIcon },
+      { id: 'prontuarios', label: 'Prontuários', icon: FileText },
+      { id: 'financeiro', label: 'Financeiro', icon: DollarSign },
+    ];
+    if (user?.email && user.email.toLowerCase().trim() === 'wellcoutinho99@gmail.com') {
+      items.push({ id: 'admin', label: 'Painel Admin', icon: ShieldCheck });
+    }
+    return items;
+  }, [user]);
 
   if (loading) {
     return (
@@ -1737,6 +1854,16 @@ Como posso te ajudar hoje?`
           </div>
         )}
       </>
+    );
+  }
+
+  if (isTrialExpired) {
+    return (
+      <PaywallScreen 
+        email={user.email || ''} 
+        checkoutUrl="https://pay.hotmart.com/P105903618L" 
+        onSignOut={() => auth.signOut()} 
+      />
     );
   }
 
@@ -1806,6 +1933,26 @@ Como posso te ajudar hoje?`
         </nav>
 
           <div className="p-4 mt-auto border-t border-white/5 space-y-3">
+            {profileSettings.isTrial && (
+              <div className="bg-primary/10 border border-primary/20 rounded-xl p-3 space-y-2 text-left animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-primary">
+                  <Sparkles size={13} className="animate-pulse shrink-0 text-primary" />
+                  <span>Teste Grátis Ativo</span>
+                </div>
+                <p className="text-[10px] text-text-muted leading-tight">
+                  Restam <strong className="text-text-main font-bold">{Math.max(0, trialRemainingDays)} {Math.max(0, trialRemainingDays) === 1 ? 'dia' : 'dias'}</strong> de uso vitalício grátis.
+                </p>
+                <a
+                  href="https://pay.hotmart.com/P105903618L"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-1.5 bg-primary hover:bg-primary/95 text-white text-[9px] font-bold uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-1 shadow-sm select-none"
+                >
+                  Adquirir Licença Vitalícia
+                </a>
+              </div>
+            )}
+
             <button 
               onClick={() => setIsSupportOpen(true)}
               className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-text-muted hover:text-primary hover:bg-primary/5 rounded-xl transition-all border border-transparent hover:border-primary/10 group"
@@ -2049,6 +2196,10 @@ Como posso te ajudar hoje?`
                   setActiveTab('dashboard');
                 }}
               />
+            )}
+
+            {activeTab === 'admin' && (
+              <AdminPanel key="admin" />
             )}
           </AnimatePresence>
         </div>
@@ -3129,10 +3280,11 @@ function PatientDetailsView({
   onDeletePatient: (id: string) => void,
   profileSettings?: any,
   currentUserEmail?: string,
-  defaultSubTab?: 'perfil' | 'prontuario' | 'anamnese' | 'smartnotes' | 'biblioteca'
+  defaultSubTab?: 'perfil' | 'prontuario' | 'anamnese' | 'smartnotes' | 'biblioteca' | 'tratamento'
 }) {
   const patient = patients.find(p => p.id === patientId);
-  const [activeSubTab, setActiveSubTab] = useState<'perfil' | 'prontuario' | 'anamnese' | 'smartnotes' | 'biblioteca'>(defaultSubTab);
+  const user = auth.currentUser;
+  const [activeSubTab, setActiveSubTab] = useState<'perfil' | 'prontuario' | 'anamnese' | 'smartnotes' | 'biblioteca' | 'tratamento'>(defaultSubTab);
   const [isAddingEvolution, setIsAddingEvolution] = useState(false);
   const [newEvolutionNote, setNewEvolutionNote] = useState("");
   const [isRecording, setIsRecording] = useState(false);
@@ -3168,7 +3320,967 @@ function PatientDetailsView({
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<any>(null);
   const [editingAnamneseField, setEditingAnamneseField] = useState<string | null>(null);
+
+  // Next session plan states
+  const [editingNextSession, setEditingNextSession] = useState(false);
+  const [tempNextSessionPlan, setTempNextSessionPlan] = useState("");
+
+  // TCC CCD states
+  // Local Clinical Forms State
+  const [localTccData, setLocalTccData] = useState<any>(null);
+  const [lastPatientId, setLastPatientId] = useState<string>('');
+  const [localPsychoanalysisData, setLocalPsychoanalysisData] = useState<any>(null);
+  const [localGestaltData, setLocalGestaltData] = useState<any>(null);
+  const [localActData, setLocalActData] = useState<any>(null);
+  const [localTreatmentNotes, setLocalTreatmentNotes] = useState<string>('');
+  const [activeBeliefId, setActiveBeliefId] = useState<string | null>(null);
+  const [isGeneratingTccAi, setIsGeneratingTccAi] = useState(false);
+  const [isGeneratingApproachAi, setIsGeneratingApproachAi] = useState(false);
+  const [isGeneratingNextSession, setIsGeneratingNextSession] = useState(false);
   
+  // Treatment plan states
+  const [newGoalText, setNewGoalText] = useState("");
+  const [newInterventionsText, setNewInterventionsText] = useState("");
+  const [isGeneratingTreatmentPlanAi, setIsGeneratingTreatmentPlanAi] = useState(false);
+  const [draggedGoalId, setDraggedGoalId] = useState<string | null>(null);
+  const [dragInsertIndex, setDragInsertIndex] = useState<number | null>(null);
+
+  const getSafeFormulation = (formulation: any) => {
+    const situations = formulation?.situations || [];
+    const safeSituations = [0, 1, 2].map((idx) => {
+      const sit = situations[idx] || {};
+      return {
+        situation: sit.situation || "",
+        automaticThought: sit.automaticThought || "",
+        meaning: sit.meaning || "",
+        emotion: sit.emotion || "",
+        behavior: sit.behavior || ""
+      };
+    });
+    return {
+      coreBelief: formulation?.coreBelief || "",
+      intermediateBelief: formulation?.intermediateBelief || "",
+      activatingSituations: formulation?.activatingSituations || "",
+      compensatoryStrategies: formulation?.compensatoryStrategies || "",
+      goals: formulation?.goals || "",
+      strengths: formulation?.strengths || "",
+      situations: safeSituations
+    };
+  };
+
+  useEffect(() => {
+    if (patient && patient.id !== lastPatientId) {
+      setLastPatientId(patient.id);
+      setLocalTccData(patient.clinicalData?.tccData || {
+        lifeHistory: '',
+        problemList: '',
+        diagnosisAndMeds: '',
+        isSplitByBelief: false,
+        unifiedFormulation: {
+          coreBelief: '',
+          intermediateBelief: '',
+          activatingSituations: '',
+          compensatoryStrategies: '',
+          goals: '',
+          strengths: '',
+          situations: [
+            { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' },
+            { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' },
+            { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' }
+          ]
+        },
+        beliefFormulations: []
+      });
+      setTempNextSessionPlan(patient.clinicalData?.nextSessionPlan || "");
+      setLocalTreatmentNotes(patient.clinicalData?.treatmentNotes || "");
+      
+      setLocalPsychoanalysisData(patient.clinicalData?.psychoanalysisData || {
+        manifestDemand: '',
+        latentDemand: '',
+        defenses: '',
+        transference: '',
+        structuralPosition: ''
+      });
+      setLocalGestaltData(patient.clinicalData?.gestaltData || {
+        figureAndGround: '',
+        contactCycleBlocks: '',
+        awarenessLevel: '',
+        supportSystem: ''
+      });
+      setLocalActData(patient.clinicalData?.actData || {
+        fusion: '',
+        experientialAvoidance: '',
+        values: '',
+        committedAction: ''
+      });
+    }
+  }, [patient, lastPatientId]);
+
+  const beliefFormulations = localTccData?.beliefFormulations || [];
+
+  useEffect(() => {
+    if (localTccData?.isSplitByBelief && beliefFormulations.length > 0 && !activeBeliefId) {
+      setActiveBeliefId(beliefFormulations[0].id);
+    }
+  }, [localTccData?.isSplitByBelief, beliefFormulations, activeBeliefId]);
+
+  const handleUpdateTccField = (field: string, value: any) => {
+    if (!localTccData) return;
+    const updatedTccData = {
+      ...localTccData,
+      [field]: value
+    };
+    setLocalTccData(updatedTccData);
+  };
+
+  const commitLocalTccData = () => {
+    if (!localTccData) return;
+    onUpdatePatient({
+      ...patient,
+      clinicalData: {
+        ...patient.clinicalData,
+        tccData: localTccData
+      }
+    });
+  };
+
+  const handleUpdatePsychoanalysisField = (field: string, value: any) => {
+    if (!localPsychoanalysisData) return;
+    setLocalPsychoanalysisData((prev: any) => ({ ...prev, [field]: value }));
+  };
+  const handleUpdateGestaltField = (field: string, value: any) => {
+    if (!localGestaltData) return;
+    setLocalGestaltData((prev: any) => ({ ...prev, [field]: value }));
+  };
+  const handleUpdateActField = (field: string, value: any) => {
+    if (!localActData) return;
+    setLocalActData((prev: any) => ({ ...prev, [field]: value }));
+  };
+
+  const commitLocalApproachData = (approachKey: string, data: any) => {
+    if (!patient) return;
+    onUpdatePatient({
+      ...patient,
+      clinicalData: {
+        ...patient.clinicalData,
+        [`${approachKey}Data`]: data
+      }
+    });
+  };
+
+  const updateLocalGlobalField = (field: string, value: string) => {
+    if (!localTccData) return;
+    const updatedTccData = {
+      ...localTccData,
+      [field]: value
+    };
+    setLocalTccData(updatedTccData);
+  };
+
+  const updateLocalFormulationField = (field: string, value: string) => {
+    if (!localTccData) return;
+    
+    let updatedTccData = { ...localTccData };
+    if (localTccData.isSplitByBelief && activeBeliefId) {
+      updatedTccData.beliefFormulations = (localTccData.beliefFormulations || []).map((bf: any) => {
+        if (bf.id === activeBeliefId) {
+          return {
+            ...bf,
+            title: field === 'coreBelief' ? (value || 'Nova Crença') : bf.title,
+            formulation: {
+              ...getSafeFormulation(bf.formulation),
+              [field]: value
+            }
+          };
+        }
+        return bf;
+      });
+    } else {
+      updatedTccData.unifiedFormulation = {
+        ...getSafeFormulation(localTccData.unifiedFormulation),
+        [field]: value
+      };
+    }
+    
+    setLocalTccData(updatedTccData);
+  };
+
+  const updateLocalSituationField = (situationIndex: number, field: string, value: string) => {
+    if (!localTccData) return;
+    
+    let updatedTccData = { ...localTccData };
+    
+    const applyToFormulation = (formulation: any) => {
+      const safeForm = getSafeFormulation(formulation);
+      const situations = [...safeForm.situations];
+      situations[situationIndex] = {
+        ...situations[situationIndex],
+        [field]: value
+      };
+      return {
+        ...safeForm,
+        situations
+      };
+    };
+
+    if (localTccData.isSplitByBelief && activeBeliefId) {
+      updatedTccData.beliefFormulations = (localTccData.beliefFormulations || []).map((bf: any) => {
+        if (bf.id === activeBeliefId) {
+          return {
+            ...bf,
+            formulation: applyToFormulation(bf.formulation)
+          };
+        }
+        return bf;
+      });
+    } else {
+      updatedTccData.unifiedFormulation = applyToFormulation(localTccData.unifiedFormulation);
+    }
+    
+    setLocalTccData(updatedTccData);
+  };
+
+  const handleToggleSplitByBelief = (val: boolean) => {
+    if (!localTccData) return;
+    
+    let updatedTccData = {
+      ...localTccData,
+      isSplitByBelief: val
+    };
+
+    if (val && (!updatedTccData.beliefFormulations || updatedTccData.beliefFormulations.length === 0)) {
+      const newId = 'belief_' + Date.now();
+      updatedTccData.beliefFormulations = [{
+        id: newId,
+        title: 'Crença 1',
+        formulation: {
+          coreBelief: '',
+          intermediateBelief: '',
+          activatingSituations: '',
+          compensatoryStrategies: '',
+          goals: '',
+          strengths: '',
+          situations: [
+            { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' },
+            { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' },
+            { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' }
+          ]
+        }
+      }];
+      setActiveBeliefId(newId);
+    }
+
+    setLocalTccData(updatedTccData);
+    
+    onUpdatePatient({
+      ...patient,
+      clinicalData: {
+        ...patient.clinicalData,
+        tccData: updatedTccData
+      }
+    });
+  };
+
+  const handleAddBelief = () => {
+    if (!localTccData) return;
+    const newId = 'belief_' + Date.now();
+    const newBelief = {
+      id: newId,
+      title: `Crença ${beliefFormulations.length + 1}`,
+      formulation: {
+        coreBelief: '',
+        intermediateBelief: '',
+        activatingSituations: '',
+        compensatoryStrategies: '',
+        goals: '',
+        strengths: '',
+        situations: [
+          { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' },
+          { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' },
+          { situation: '', automaticThought: '', meaning: '', emotion: '', behavior: '' }
+        ]
+      }
+    };
+
+    const updatedTccData = {
+      ...localTccData,
+      beliefFormulations: [...beliefFormulations, newBelief]
+    };
+
+    setLocalTccData(updatedTccData);
+    setActiveBeliefId(newId);
+
+    onUpdatePatient({
+      ...patient,
+      clinicalData: {
+        ...patient.clinicalData,
+        tccData: updatedTccData
+      }
+    });
+  };
+
+  const handleDeleteBelief = (beliefId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!localTccData) return;
+    if (!confirm("Tem certeza que deseja excluir esta crença central e toda a sua conceitualização?")) {
+      return;
+    }
+    const updatedFormulations = beliefFormulations.filter((bf: any) => bf.id !== beliefId);
+    const updatedTccData = {
+      ...localTccData,
+      beliefFormulations: updatedFormulations
+    };
+
+    setLocalTccData(updatedTccData);
+
+    if (activeBeliefId === beliefId) {
+      if (updatedFormulations.length > 0) {
+        setActiveBeliefId(updatedFormulations[0].id);
+      } else {
+        setActiveBeliefId('');
+      }
+    }
+
+    onUpdatePatient({
+      ...patient,
+      clinicalData: {
+        ...patient.clinicalData,
+        tccData: updatedTccData
+      }
+    });
+  };
+
+  const checkTccAiLimit = () => {
+    return {
+      canGenerate: true,
+      recentUsage: [],
+      remainingCount: 9999
+    };
+  };
+
+  const getNextReleaseTime = () => {
+    return null;
+  };
+
+  const handleGenerateTccWithAi = async () => {
+    if (!localTccData) return;
+
+    if (!confirm("Deseja usar a IA para gerar a conceitualização cognitiva?")) {
+      return;
+    }
+
+    const isMaster = user?.email?.toLowerCase() === 'wellcoutinho99@gmail.com';
+    if (!isMaster) {
+      if (profileSettings?.isTrial) {
+        const tccCount = profileSettings.aiTccCount || 0;
+        if (tccCount >= 1) {
+          alert("✨ Ops! Você já utilizou a sua geração de Conceitualização de teste.\n\nAssine um de nossos planos para ter acesso ilimitado à inteligência artificial em todos os seus prontuários!");
+          return;
+        }
+      } else {
+        const lastAiTccAt = patient?.clinicalData?.lastAiTccAt;
+        if (lastAiTccAt) {
+          const lastDate = new Date(lastAiTccAt);
+          const diffDays = (Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24);
+          if (diffDays < 7) {
+            const daysLeft = Math.ceil(7 - diffDays);
+            alert(`⏰ Limite de uso: Você já gerou a Conceitualização IA para este paciente nesta semana.\n\nPor favor, aguarde ${daysLeft} dia(s) para gerar uma nova, ou edite manualmente.`);
+            return;
+          }
+        }
+      }
+    }
+
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) {
+      alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
+      return;
+    }
+
+    setIsGeneratingTccAi(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      
+      const activeBelief = localTccData.isSplitByBelief && activeBeliefId
+        ? (localTccData.beliefFormulations || []).find((bf: any) => bf.id === activeBeliefId)
+        : null;
+
+      const otherBeliefs = localTccData.isSplitByBelief
+        ? (localTccData.beliefFormulations || []).filter((bf: any) => bf.id !== activeBeliefId)
+        : [];
+
+      const activeBeliefContext = activeBelief
+        ? `
+        MODO DE TRABALHO: A conceitualização está separada/dividida por crenças.
+        CRENÇA CENTRAL DE TRABALHO NESTA GERAÇÃO: "${activeBelief.formulation?.coreBelief || activeBelief.title}"
+        OUTRAS CRENÇAS JÁ EXISTENTES NESTE PACIENTE:
+        ${otherBeliefs.map((ob: any, idx: number) => `- Crença ${idx+1}: ${ob.formulation?.coreBelief || ob.title}`).join('\n')}
+        
+        INSTRUÇÃO CRÍTICA PARA ESTE MODO: Formule a crença central (coreBelief), crença intermediária (intermediateBelief), situações ativadoras (activatingSituations), estratégias compensatórias (compensatoryStrategies), metas (goals) e loops cognitivos das 3 situações (situations) focando EXCLUSIVAMENTE nesta Crença Central Ativa Atual ("${activeBelief.formulation?.coreBelief || activeBelief.title}"). Se este título for temporário ou genérico (ex: "Crença 1", "Crença 2") ou se a crença central estiver em branco, você deve analisar o prontuário para determinar e propor uma crença central clínica relevante (como Desvalor, Desamor ou Desamparo), configurando-a no campo "coreBelief" e baseando toda a conceitualização nela.`
+        : `MODO DE TRABALHO: Conceitualização unificada (uma única crença central principal).`;
+
+      const patientContext = `
+        PACIENTE: ${patient.name}
+        HISTÓRIA DE VIDA (ANAMNESE): ${localTccData?.lifeHistory || patient?.clinicalData?.anamnese?.lifeHistory || 'Não preenchido'}
+        LISTA DE PROBLEMAS: ${localTccData?.problemList || 'Não preenchido'}
+        DIAGNÓSTICO E MEDICAMENTOS: ${localTccData?.diagnosisAndMeds || patient?.clinicalData?.anamnese?.currentMedication || 'Não preenchido'}
+        EVOLUÇÕES CLÍNICAS RECENTES:
+        ${(patient?.clinicalData?.evoluções || []).slice(-5).map((e: any) => `${e.date}: ${e.note}`).join('\n')}
+        ${activeBeliefContext}
+      `;
+
+      const prompt = `
+        Você é um terapeuta TCC sênior especialista em conceitualização cognitiva de Judith Beck.
+        Gere uma Conceitualização Cognitiva completa em português com base no contexto clínico abaixo.
+
+        CONTEXTO CLÍNICO DO PACIENTE:
+        ${patientContext}
+
+        ---
+        INSTRUÇÕES — retorne SOMENTE o JSON, sem markdown, sem texto extra:
+
+        1. lifeHistory: narrativa em 4-6 parágrafos densos (mín. 500 palavras) separados por \\n, cobrindo infância, dinâmica familiar, adolescência, vida afetiva, carreira e estressores atuais.
+        2. problemList: mín. 8 problemas clínicos específicos separados por ";\\n".
+        3. diagnosisAndMeds: "Hipótese diagnóstica de..." — NUNCA diagnóstico definitivo.
+        4. coreBelief: "Nome da Crença.\\nSobre si mesmo: \"frase1\".\\nSobre os outros: \"frase1\".\\nSobre o futuro: \"frase\"."
+        5. intermediateBelief: "Regras:\\n\"Regra 1.\"\\n\"Regra 2.\"\\n\"Regra 3.\"\\n\"Regra 4.\"\\n\"Regra 5.\"\\nPressupostos:\\n\"Se... então....\"\\n\"Se... então....\"\\n\"Se... então....\"\\n\"Se... então....\"\\n\"Se... então....\""
+        6. activatingSituations: 5+ gatilhos separados por "\\n".
+        7. compensatoryStrategies: 4+ estratégias "Nome: Descrição." separadas por "\\n".
+        8. goals: metas terapêuticas separadas por " / ".
+        9. strengths: recursos e pontos fortes do paciente.
+        10. situations: array JSON com EXATAMENTE 3 objetos com: situation, automaticThought, meaning, emotion, behavior.
+
+        Retorne SOMENTE o JSON válido. Nenhum texto antes ou depois.
+      `;
+
+      // Retry logic for 503 / overload errors
+      let response: any = null;
+      const maxRetries = 3;
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+              responseMimeType: "application/json",
+              maxOutputTokens: 8192,
+            }
+          });
+          break; // success
+        } catch (retryErr: any) {
+          const msg = String(retryErr?.message || retryErr);
+          const isOverload = msg.includes('503') || msg.includes('UNAVAILABLE') || msg.includes('high demand');
+          const isRateLimit = msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota');
+          if ((isOverload || isRateLimit) && attempt < maxRetries) {
+            // 429 = per-minute throttle → wait longer; 503 = overload → shorter wait
+            const waitMs = isRateLimit ? 15000 : attempt * 2000;
+            await new Promise(res => setTimeout(res, waitMs));
+            continue;
+          }
+          throw retryErr;
+        }
+      }
+
+      // Strip markdown code fences the model sometimes adds despite instructions
+      const rawText = response?.text || '{}';
+      const sanitized = (() => {
+        // Remove ```json ... ``` or ``` ... ``` wrappers
+        const fenceStripped = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+        // If there's still no leading '{', try to extract first {...} block
+        const firstBrace = fenceStripped.indexOf('{');
+        const lastBrace = fenceStripped.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+          return fenceStripped.slice(firstBrace, lastBrace + 1);
+        }
+        return fenceStripped;
+      })();
+      let parsedData: any = {};
+      try {
+        parsedData = JSON.parse(sanitized);
+      } catch (jsonErr) {
+        console.error('Raw AI response that failed to parse:', rawText);
+        throw new Error('JSON_PARSE_FAILED');
+      }
+      
+      let updatedTccData = { 
+        ...localTccData,
+        lifeHistory: parsedData.lifeHistory || localTccData.lifeHistory,
+        problemList: parsedData.problemList || localTccData.problemList,
+        diagnosisAndMeds: parsedData.diagnosisAndMeds || localTccData.diagnosisAndMeds
+      };
+
+      if (localTccData.isSplitByBelief && activeBeliefId) {
+        updatedTccData.beliefFormulations = (localTccData.beliefFormulations || []).map((bf: any) => {
+          if (bf.id === activeBeliefId) {
+            return {
+              ...bf,
+              title: parsedData.coreBelief ? parsedData.coreBelief.split('\n')[0] : bf.title,
+              formulation: parsedData
+            };
+          }
+          return bf;
+        });
+      } else {
+        updatedTccData.unifiedFormulation = parsedData;
+      }
+
+      setLocalTccData(updatedTccData);
+
+      onUpdatePatient({
+        ...patient,
+        clinicalData: {
+          ...patient.clinicalData,
+          tccData: updatedTccData,
+          lastAiTccAt: new Date().toISOString()
+        }
+      });
+
+      if (profileSettings?.isTrial) {
+        try {
+          const profileRef = doc(db, 'profiles', user.uid);
+          await updateDoc(profileRef, { aiTccCount: (profileSettings.aiTccCount || 0) + 1 });
+        } catch (e) {
+          console.error("Failed to update AI count", e);
+        }
+      }
+
+      alert("Conceitualização TCC gerada com IA e salva com sucesso!");
+    } catch (err: any) {
+      console.error("Erro ao gerar TCC com IA:", err);
+      const rawMsg = String(err?.message || err);
+      let friendlyMsg = "Erro ao gerar conceitualização com IA. Tente novamente.";
+      if (rawMsg.includes('503') || rawMsg.includes('UNAVAILABLE') || rawMsg.includes('high demand')) {
+        friendlyMsg = "O servidor de IA está sobrecarregado no momento. Aguarde alguns instantes e tente novamente.";
+      } else if (rawMsg.includes('JSON_PARSE_FAILED') || rawMsg.includes('JSON Parse') || rawMsg.includes('parse')) {
+        friendlyMsg = "A IA retornou uma resposta em formato inválido. Tente novamente — normalmente funciona na segunda tentativa.";
+      } else if (rawMsg.includes('API_KEY') || rawMsg.includes('api_key') || rawMsg.includes('401')) {
+        friendlyMsg = "Chave de API inválida ou ausente. Verifique as configurações.";
+      } else if (rawMsg.includes('429') || rawMsg.includes('RESOURCE_EXHAUSTED') || rawMsg.includes('quota')) {
+        friendlyMsg = "A API atingiu o limite de requisições por minuto (não é cota diária). Aguarde 1 minuto e tente novamente.";
+      } else if (rawMsg.includes('network') || rawMsg.includes('fetch')) {
+        friendlyMsg = "Sem conexão com a internet. Verifique sua rede e tente novamente.";
+      }
+      alert(friendlyMsg);
+    } finally {
+      setIsGeneratingTccAi(false);
+    }
+  };
+
+  const handleGenerateApproachWithAi = async (approachKey: string) => {
+    if (!patient) return;
+    const user = auth.currentUser;
+    const isMaster = user?.email?.toLowerCase() === 'wellcoutinho99@gmail.com';
+    if (!isMaster) {
+      if (profileSettings?.isTrial) {
+        const count = profileSettings[`ai${approachKey}Count`] || 0;
+        if (count >= 1) {
+          alert(`✨ Ops! Você já utilizou a sua geração de teste para esta abordagem.\n\nAssine um de nossos planos para ter acesso ilimitado à inteligência artificial!`);
+          return;
+        }
+      } else {
+        const lastAiAt = patient?.clinicalData?.[`lastAi${approachKey}At`];
+        if (lastAiAt) {
+          const lastDate = new Date(lastAiAt);
+          const diffDays = (Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24);
+          if (diffDays < 7) {
+            const daysLeft = Math.ceil(7 - diffDays);
+            alert(`⏰ Limite de uso: Você já gerou a formulação IA para este paciente nesta semana.\n\nPor favor, aguarde ${daysLeft} dia(s) para gerar uma nova, ou edite manualmente.`);
+            return;
+          }
+        }
+      }
+    }
+
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) {
+      alert("Chave da API do Gemini não configurada.");
+      return;
+    }
+
+    if (!confirm("Deseja usar a IA para gerar a formulação de caso com base no histórico recente?")) {
+      return;
+    }
+
+    setIsGeneratingApproachAi(true);
+
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      let schemaString = '';
+      let schemaKeys: string[] = [];
+      let modelPrompt = '';
+
+      if (approachKey === 'psicanalise') {
+        schemaString = `{"manifestDemand": "...", "latentDemand": "...", "defenses": "...", "transference": "...", "structuralPosition": "..."}`;
+        schemaKeys = ['manifestDemand', 'latentDemand', 'defenses', 'transference', 'structuralPosition'];
+        modelPrompt = `Analise o histórico e as evoluções clínicas sob a ótica da Psicanálise. Preencha os campos estruturais considerando os mecanismos de defesa, posição do sujeito, e dinâmicas transferenciais latentes.`;
+      } else if (approachKey === 'gestalt') {
+        schemaString = `{"figureAndGround": "...", "contactCycleBlocks": "...", "awarenessLevel": "...", "supportSystem": "..."}`;
+        schemaKeys = ['figureAndGround', 'contactCycleBlocks', 'awarenessLevel', 'supportSystem'];
+        modelPrompt = `Analise o histórico sob a ótica da Gestalt-Terapia. Identifique a figura principal emergente, bloqueios no ciclo de contato, nível de awareness e sistemas de suporte.`;
+      } else if (approachKey === 'act') {
+        schemaString = `{"fusion": "...", "experientialAvoidance": "...", "values": "...", "committedAction": "..."}`;
+        schemaKeys = ['fusion', 'experientialAvoidance', 'values', 'committedAction'];
+        modelPrompt = `Analise o caso clínico sob a ótica da Terapia de Aceitação e Compromisso (ACT). Foque nos componentes do Hexaflex: fusão cognitiva, evitação experiencial, valores e ações comprometidas.`;
+      }
+
+      const prompt = `
+        Você é um assistente sênior em psicologia clínica.
+        Analise o caso e retorne ESTRITAMENTE em formato JSON. NÃO use marcação markdown.
+        
+        ${modelPrompt}
+        
+        HISTÓRIA DE VIDA (ANAMNESE): ${patient.clinicalData?.anamnese?.lifeHistory || 'Não preenchido'}
+        DIAGNÓSTICO E MEDICAMENTOS: ${patient.clinicalData?.anamnese?.currentMedication || 'Não preenchido'}
+        EVOLUÇÕES CLÍNICAS RECENTES:
+        ${(patient.clinicalData?.evoluções || []).slice(-5).map((e: any) => `${e.date}: ${e.note}`).join('\n')}
+        
+        Responda APENAS com um objeto JSON válido, neste exato formato:
+        ${schemaString}
+      `;
+
+      let response;
+      const maxRetries = 2;
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+              responseMimeType: "application/json",
+              maxOutputTokens: 8192,
+            }
+          });
+          break; 
+        } catch (error: any) {
+          if (attempt === maxRetries) throw error;
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+        }
+      }
+
+      const rawText = response?.text || '{}';
+      const sanitized = (() => {
+        const str = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+        const startIdx = str.indexOf('{');
+        const endIdx = str.lastIndexOf('}');
+        if (startIdx !== -1 && endIdx !== -1) {
+          return str.substring(startIdx, endIdx + 1);
+        }
+        return str;
+      })();
+
+      const parsedData = JSON.parse(sanitized);
+
+      const isValid = schemaKeys.every(k => Object.keys(parsedData).includes(k));
+      if (!isValid) {
+        throw new Error('JSON_PARSE_FAILED');
+      }
+
+      let updatedData;
+      if (approachKey === 'psicanalise') {
+        updatedData = { ...localPsychoanalysisData, ...parsedData };
+        setLocalPsychoanalysisData(updatedData);
+      } else if (approachKey === 'gestalt') {
+        updatedData = { ...localGestaltData, ...parsedData };
+        setLocalGestaltData(updatedData);
+      } else if (approachKey === 'act') {
+        updatedData = { ...localActData, ...parsedData };
+        setLocalActData(updatedData);
+      }
+
+      onUpdatePatient({
+        ...patient,
+        clinicalData: {
+          ...patient.clinicalData,
+          [`${approachKey}Data`]: updatedData,
+          [`lastAi${approachKey}At`]: new Date().toISOString()
+        }
+      });
+
+      if (profileSettings?.isTrial && user) {
+        try {
+          const profileRef = doc(db, 'profiles', user.uid);
+          await updateDoc(profileRef, { [`ai${approachKey}Count`]: (profileSettings[`ai${approachKey}Count`] || 0) + 1 });
+        } catch (e) {
+          console.error("Failed to update AI count", e);
+        }
+      }
+
+      alert("Formulação gerada com IA e salva com sucesso!");
+    } catch (err: any) {
+      console.error("Erro ao gerar formulação com IA:", err);
+      alert("Erro ao gerar formulação com IA. Tente novamente.");
+    } finally {
+      setIsGeneratingApproachAi(false);
+    }
+  };
+
+  const handleUpdateTreatmentPlan = (newPlan: any) => {
+    onUpdatePatient({
+      ...patient,
+      clinicalData: {
+        ...patient.clinicalData,
+        treatmentPlan: newPlan
+      }
+    });
+  };
+
+  const handleUpdateTreatmentNotes = (val: string) => {
+    setLocalTreatmentNotes(val);
+  };
+
+  const commitTreatmentNotes = () => {
+    if (!patient) return;
+    onUpdatePatient({
+      ...patient,
+      clinicalData: {
+        ...patient.clinicalData,
+        treatmentNotes: localTreatmentNotes
+      }
+    });
+  };
+
+  const handleGenerateTreatmentPlanWithAi = async () => {
+    if (!patient) return;
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) {
+      alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
+      return;
+    }
+
+    if (!confirm("Deseja usar a IA para gerar um Plano de Tratamento estruturado baseado no histórico do paciente? Isso irá substituir as metas atuais.")) {
+      return;
+    }
+
+    const isMaster = user?.email?.toLowerCase() === 'wellcoutinho99@gmail.com';
+    if (!isMaster) {
+      if (profileSettings?.isTrial) {
+        const planCount = profileSettings.aiPlanCount || 0;
+        if (planCount >= 2) {
+          alert("✨ Ops! Você já utilizou suas 2 gerações de Plano de Tratamento de teste.\n\nAssine um de nossos planos para ter acesso ilimitado à inteligência artificial em todos os seus prontuários!");
+          return;
+        }
+      } else {
+        const lastAiPlanAt = patient?.clinicalData?.lastAiPlanAt;
+        if (lastAiPlanAt) {
+          const lastDate = new Date(lastAiPlanAt);
+          const diffDays = (Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24);
+          if (diffDays < 7) {
+            const daysLeft = Math.ceil(7 - diffDays);
+            alert(`⏰ Limite de uso: Você já gerou um Plano de Tratamento IA para este paciente nesta semana.\n\nPor favor, aguarde ${daysLeft} dia(s) para gerar um novo, ou adicione metas manualmente.`);
+            return;
+          }
+        }
+      }
+    }
+
+    const approachKey = profileSettings?.clinicalApproach || 'tcc';
+    const approachInfo = CLINICAL_APPROACHES[approachKey] || CLINICAL_APPROACHES.tcc;
+
+    setIsGeneratingTreatmentPlanAi(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      
+      const formulationText = localTccData?.isSplitByBelief 
+        ? (localTccData?.beliefFormulations || []).map((bf: any) => 
+            `Crença: ${bf.formulation?.coreBelief}\nRegras: ${bf.formulation?.intermediateBelief}\nMetas: ${bf.formulation?.goals}`
+          ).join('\n\n')
+        : `Crença Central: ${localTccData?.unifiedFormulation?.coreBelief}\nRegras: ${localTccData?.unifiedFormulation?.intermediateBelief}\nMetas: ${localTccData?.unifiedFormulation?.goals}`;
+
+      const patientContext = `
+        PACIENTE: ${patient.name}
+        ABORDAGEM CLÍNICA: ${approachInfo.name}
+        HISTÓRIA DE VIDA DO PACIENTE: ${localTccData?.lifeHistory || patient?.clinicalData?.anamnese?.lifeHistory || 'Não preenchido'}
+        LISTA DE PROBLEMAS: ${localTccData?.problemList || 'Não preenchido'}
+        DIAGNÓSTICO E MEDICAMENTOS: ${localTccData?.diagnosisAndMeds || patient?.clinicalData?.anamnese?.currentMedication || 'Não preenchido'}
+        
+        CONCEITUALIZAÇÃO COGNITIVA:
+        ${formulationText}
+        
+        EVOLUÇÕES CLÍNICAS RECENTES:
+        ${(patient?.clinicalData?.evoluções || []).slice(-5).map((e: any) => `${e.date}: ${e.note}`).join('\n')}
+      `;
+
+      const prompt = `
+        Você é um terapeuta sênior especialista em planejamento de tratamento clínico na abordagem ${approachInfo.name}.
+        Sua tarefa é analisar a conceitualização, histórico de problemas e evoluções clínicas recentes do paciente, e propor um plano de tratamento estruturado e progressivo, dividido em fases lógicas apropriadas para a abordagem ${approachInfo.name}.
+
+        CONTEXTO DO PACIENTE:
+        ${patientContext}
+
+        Retorne um array JSON contendo metas detalhadas de tratamento para cada fase do processo clínico. A resposta deve ser EXCLUSIVAMENTE um array JSON válido sem marcações markdown extra ou texto, com o seguinte formato:
+        [
+          {
+            "goal": "Fase 1 — Psicoeducação: [Breve descrição da meta, ex: Psicoeducação sobre o funcionamento do estresse crônico]",
+            "interventions": "[Técnicas/Intervenções específicas, ex: Questionamento socrático, RPD]",
+            "status": "pending"
+          },
+          ...
+        ]
+
+        Diretrizes de Estruturação:
+        - O plano deve ter de 12 a 20 metas, divididas sequencialmente por fases (ex: Fase 1, Fase 2, Fase 3, etc.).
+        - Se com base no histórico de evoluções recentes, certas metas iniciais (como consolidação de aliança, mapeamento inicial, etc.) já tiverem sido trabalhadas e concluídas, marque o status delas como "completed"; caso contrário, use "pending" ou "in_progress".
+        - Use linguagem clara, altamente técnica e específica para a abordagem ${approachInfo.name}.
+      `;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+        }
+      });
+
+      const parsedPlan = JSON.parse(response.text || '[]');
+      if (Array.isArray(parsedPlan) && parsedPlan.length > 0) {
+        const formattedPlan = parsedPlan.map((item: any, idx: number) => ({
+          id: 'goal_ai_' + Date.now() + '_' + idx,
+          goal: item.goal || '',
+          interventions: item.interventions || '',
+          status: item.status || 'pending'
+        }));
+
+        onUpdatePatient({
+          ...patient,
+          clinicalData: {
+            ...patient.clinicalData,
+            treatmentPlan: formattedPlan,
+            lastAiPlanAt: new Date().toISOString()
+          }
+        });
+        
+        if (profileSettings?.isTrial) {
+          try {
+            const profileRef = doc(db, 'profiles', user.uid);
+            await updateDoc(profileRef, { aiPlanCount: (profileSettings.aiPlanCount || 0) + 1 });
+          } catch (e) {
+            console.error("Failed to update AI plan count", e);
+          }
+        }
+        
+        alert("Plano de tratamento gerado com IA e salvo com sucesso!");
+      } else {
+        throw new Error("Resposta da IA não é um array válido.");
+      }
+    } catch (err) {
+      console.error("Erro ao gerar plano de tratamento com IA:", err);
+      alert("Erro no plano de tratamento: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsGeneratingTreatmentPlanAi(false);
+    }
+  };
+
+  const handleAddTreatmentGoal = () => {
+    if (!newGoalText.trim()) return;
+    const plan = patient.clinicalData?.treatmentPlan || [];
+    const newGoal = {
+      id: 'goal_' + Date.now(),
+      goal: newGoalText,
+      interventions: newInterventionsText,
+      status: 'pending' as const
+    };
+    
+    const updatedPlan = [...plan, newGoal];
+    handleUpdateTreatmentPlan(updatedPlan);
+    setNewGoalText("");
+    setNewInterventionsText("");
+  };
+
+  const handleUpdateTreatmentGoalField = (goalId: string, field: string, value: any) => {
+    const plan = patient.clinicalData?.treatmentPlan || [];
+    const updatedPlan = plan.map((g: any) => {
+      if (g.id === goalId) {
+        return { ...g, [field]: value };
+      }
+      return g;
+    });
+    handleUpdateTreatmentPlan(updatedPlan);
+  };
+
+  const handleDeleteTreatmentGoal = (goalId: string) => {
+    if (!confirm("Tem certeza que deseja excluir esta meta terapêutica?")) return;
+    const plan = patient.clinicalData?.treatmentPlan || [];
+    const updatedPlan = plan.filter((g: any) => g.id !== goalId);
+    handleUpdateTreatmentPlan(updatedPlan);
+  };
+
+  const handleGoalReorder = (fromId: string, insertAt: number) => {
+    const plan = [...(patient.clinicalData?.treatmentPlan || [])];
+    const fromIdx = plan.findIndex((g: any) => g.id === fromId);
+    if (fromIdx === -1) return;
+    const [moved] = plan.splice(fromIdx, 1);
+    // Adjust index because removing shifts elements after fromIdx left by 1
+    const adjustedIdx = insertAt > fromIdx ? insertAt - 1 : insertAt;
+    plan.splice(adjustedIdx, 0, moved);
+    handleUpdateTreatmentPlan(plan);
+  };
+
+  const handleGenerateNextSessionPlanWithAi = async () => {
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) {
+      alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
+      return;
+    }
+
+    setIsGeneratingNextSession(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+
+      const formulationText = localTccData?.isSplitByBelief 
+        ? (localTccData?.beliefFormulations || []).map((bf: any) => 
+            `Crença: ${bf.formulation?.coreBelief}\nRegras: ${bf.formulation?.intermediateBelief}\nMetas: ${bf.formulation?.goals}`
+          ).join('\n\n')
+        : `Crença Central: ${localTccData?.unifiedFormulation?.coreBelief}\nRegras: ${localTccData?.unifiedFormulation?.intermediateBelief}\nMetas: ${localTccData?.unifiedFormulation?.goals}`;
+
+      const plan = patient.clinicalData?.treatmentPlan || [];
+      const planText = plan.map((g: any) => `- Meta: ${g.goal} (${g.status === 'completed' ? 'Alcançada' : g.status === 'in_progress' ? 'Em Progresso' : 'Pendente'})${g.interventions ? ` | Intervenções: ${g.interventions}` : ''}`).join('\n');
+
+      const prompt = `
+        Aja como um assistente clínico de psicologia experiente.
+        Com base na Conceitualização Cognitiva do paciente ${patient.name} e no Plano de Tratamento atualizado dele, proponha um planejamento prático de intervenções, tópicos e planos de ação para serem trabalhados na PRÓXIMA SESSÃO.
+        
+        CONCEITUALIZAÇÃO COGNITIVA:
+        ${formulationText}
+        
+        PLANO DE TRATAMENTO / METAS:
+        ${planText}
+        
+        EVOLUÇÕES RECENTES:
+        ${clinicalData.evoluções.slice(-3).map((e: any) => `${e.date}: ${e.note}`).join('\n')}
+        
+        Escreva uma recomendação concisa, objetiva, ética e baseada em evidências clínicas para a próxima sessão de psicoterapia. Divida em:
+        1. Foco Principal da Sessão
+        2. Intervenções Recomendadas (específicas para a abordagem do paciente)
+        3. Possíveis Tarefas de Casa (Plano de Ação)
+        
+        Retorne em português, formatado em Markdown limpo.
+      `;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt
+      });
+
+      const generatedPlan = response.text || '';
+      setTempNextSessionPlan(generatedPlan);
+
+      onUpdatePatient({
+        ...patient,
+        clinicalData: {
+          ...patient.clinicalData,
+          nextSessionPlan: generatedPlan
+        }
+      });
+
+      alert("Planejamento da próxima sessão gerado com sucesso!");
+    } catch (err) {
+      console.error("Erro ao gerar plano da próxima sessão:", err);
+      alert("Houve um erro ao processar a geração do planejamento da sessão.");
+    } finally {
+      setIsGeneratingNextSession(false);
+    }
+  };
+
   const [uploadCategory, setUploadCategory] = useState<'prontuario' | 'anexo'>('anexo');
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -4079,8 +5191,23 @@ Relato:
             {[
               { id: 'perfil', label: 'Perfil', icon: Users },
               { id: 'prontuario', label: 'Evoluções', icon: FileText, badge: 'NOVO' },
-              { id: 'anamnese', label: 'Anamnese', icon: FileText },
+              { 
+                id: 'anamnese', 
+                label: profileSettings?.clinicalApproach === 'tcc' ? 'Conceitualização TCC' : 
+                       profileSettings?.clinicalApproach === 'psicanalise' ? 'Estruturação Analítica' :
+                       profileSettings?.clinicalApproach === 'gestalt' ? 'Mapa Gestáltico' :
+                       profileSettings?.clinicalApproach === 'act' ? 'Matriz ACT' :
+                       'Anamnese', 
+                icon: FileText 
+              },
               { id: 'biblioteca', label: 'Biblioteca / Prontuários', icon: FolderOpen },
+              { 
+                id: 'tratamento', 
+                label: ['psicanalise', 'junguiana', 'gestalt', 'humanista'].includes(profileSettings?.clinicalApproach)
+                  ? 'Organização do Caso' 
+                  : 'Plano de Tratamento', 
+                icon: CheckCircle2 
+              },
               { id: 'smartnotes', label: 'Resumo', icon: BarChart3 },
             ].map(item => (
              <button
@@ -4908,93 +6035,661 @@ Relato:
                     exit={{ opacity: 0, y: -10 }}
                     className="space-y-8"
                   >
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-purple-500/10 text-purple-500 flex items-center justify-center">
-                        <FileText size={20} />
-                      </div>
-                      <h3 className="text-xl font-bold text-text-main">Anamnese Psicológica</h3>
-                    </div>
+                    {profileSettings?.clinicalApproach === 'tcc' ? (
+                      /* RENDER JUDITH BECK CCD */
+                      <div className="space-y-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-purple-500/10 text-purple-500 flex items-center justify-center">
+                              <FileText size={20} />
+                            </div>
+                            <div>
+                              <h3 className="text-xl font-bold text-text-main">Conceitualização Cognitiva (Beck CCD)</h3>
+                              <p className="text-xs text-text-muted">Mapeamento de crenças, regras e loops cognitivos</p>
+                            </div>
+                          </div>
+                          
+                           <div className="flex items-center gap-3">
+                            <button 
+                              onClick={handleGenerateTccWithAi}
+                              disabled={isGeneratingTccAi}
+                              className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2"
+                            >
+                              {isGeneratingTccAi ? "Processando..." : "✨ Gerar com IA"}
+                            </button>
+                          </div>
+                        </div>
 
-                    <div className="grid grid-cols-1 gap-6">
-                      <div className="space-y-4">
-                        <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui group relative">
-                          <h5 className="text-xs font-bold text-primary uppercase tracking-widest mb-3">Queixa Principal</h5>
-                          {editingAnamneseField === 'mainComplaint' ? (
-                            <textarea 
-                              autoFocus
-                              value={clinicalData.anamnese.mainComplaint}
-                              onChange={(e) => handleUpdateAnamnese('mainComplaint', e.target.value)}
-                              onBlur={() => setEditingAnamneseField(null)}
-                              className="w-full bg-white/5 border border-primary/20 rounded-lg p-2 text-sm text-text-main outline-none min-h-[80px]"
-                            />
-                          ) : (
-                            <p 
-                              onClick={() => setEditingAnamneseField('mainComplaint')}
-                              className="text-sm text-text-main cursor-pointer hover:text-primary transition-colors min-h-[40px] whitespace-pre-wrap"
-                            >
-                              {clinicalData.anamnese.mainComplaint || "Clique para descrever a queixa principal..."}
-                            </p>
-                          )}
+                        {/* Warning Banner */}
+                        <div className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-400 flex items-start gap-2">
+                          <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                          <p>
+                            <strong>Validação Ética Profissional:</strong> Os rascunhos e sugestões gerados por inteligência artificial são apenas orientações e hipóteses clínicas de suporte. O psicólogo é inteiramente responsável pela validação ética, técnica e clínica das informações registradas no prontuário.
+                          </p>
                         </div>
-                        <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui group relative">
-                          <h5 className="text-xs font-bold text-primary uppercase tracking-widest mb-3">Histórico Familiar</h5>
-                          {editingAnamneseField === 'familyHistory' ? (
-                            <textarea 
-                              autoFocus
-                              value={clinicalData.anamnese.familyHistory}
-                              onChange={(e) => handleUpdateAnamnese('familyHistory', e.target.value)}
-                              onBlur={() => setEditingAnamneseField(null)}
-                              className="w-full bg-white/5 border border-primary/20 rounded-lg p-2 text-sm text-text-main outline-none min-h-[80px]"
+
+                        {/* Papel de Conceitualização (Verticamente Empilhado) */}
+                        <div className="space-y-6">
+                          {/* História de Vida (Quadradão maior) */}
+                          <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui flex flex-col gap-2">
+                            <label className="text-xs font-bold text-primary uppercase tracking-widest font-sans">História de Vida</label>
+                            <textarea
+                              value={localTccData?.lifeHistory || ""}
+                              onChange={(e) => updateLocalGlobalField('lifeHistory', e.target.value)}
+                              onBlur={commitLocalTccData}
+                              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-text-main outline-none focus:border-primary/50 min-h-[160px] transition-colors resize-y"
+                              placeholder="Histórico pessoal, infância, dinâmicas familiares, eventos traumáticos ou marcos importantes de desenvolvimento..."
                             />
-                          ) : (
-                            <p 
-                              onClick={() => setEditingAnamneseField('familyHistory')}
-                              className="text-sm text-text-main cursor-pointer hover:text-primary transition-colors min-h-[40px] whitespace-pre-wrap"
-                            >
-                              {clinicalData.anamnese.familyHistory || "Clique para descrever o histórico familiar..."}
-                            </p>
-                          )}
-                        </div>
-                        <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui group relative">
-                          <h5 className="text-xs font-bold text-primary uppercase tracking-widest mb-3">História de Vida</h5>
-                          {editingAnamneseField === 'lifeHistory' ? (
-                            <textarea 
-                              autoFocus
-                              value={clinicalData.anamnese.lifeHistory}
-                              onChange={(e) => handleUpdateAnamnese('lifeHistory', e.target.value)}
-                              onBlur={() => setEditingAnamneseField(null)}
-                              className="w-full bg-white/5 border border-primary/20 rounded-lg p-2 text-sm text-text-main outline-none min-h-[80px]"
+                          </div>
+
+                          {/* Lista de Problemas - Questões situacionais */}
+                          <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui flex flex-col gap-2">
+                            <label className="text-xs font-bold text-primary uppercase tracking-widest font-sans">Lista de Problemas - Questões situacionais</label>
+                            <textarea
+                              value={localTccData?.problemList || ""}
+                              onChange={(e) => updateLocalGlobalField('problemList', e.target.value)}
+                              onBlur={commitLocalTccData}
+                              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-text-main outline-none focus:border-primary/50 min-h-[80px] transition-colors resize-y"
+                              placeholder="Queixas principais, dificuldades atuais, situações-problema ou sintomas recorrentes..."
                             />
-                          ) : (
-                            <p 
-                              onClick={() => setEditingAnamneseField('lifeHistory')}
-                              className="text-sm text-text-main cursor-pointer hover:text-primary transition-colors min-h-[40px] whitespace-pre-wrap"
-                            >
-                              {clinicalData.anamnese.lifeHistory || "Clique para descrever a história de vida..."}
-                            </p>
-                          )}
-                        </div>
-                        <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui group relative">
-                          <h5 className="text-xs font-bold text-primary uppercase tracking-widest mb-3">Medicamentos em Uso</h5>
-                          {editingAnamneseField === 'currentMedication' ? (
-                            <textarea 
-                              autoFocus
-                              value={clinicalData.anamnese.currentMedication}
-                              onChange={(e) => handleUpdateAnamnese('currentMedication', e.target.value)}
-                              onBlur={() => setEditingAnamneseField(null)}
-                              className="w-full bg-white/5 border border-primary/20 rounded-lg p-2 text-sm text-text-main outline-none min-h-[80px]"
+                          </div>
+
+                          {/* Diagnóstico e medicações */}
+                          <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui flex flex-col gap-2">
+                            <label className="text-xs font-bold text-primary uppercase tracking-widest font-sans">Diagnóstico e medicações</label>
+                            <textarea
+                              value={localTccData?.diagnosisAndMeds || ""}
+                              onChange={(e) => updateLocalGlobalField('diagnosisAndMeds', e.target.value)}
+                              onBlur={commitLocalTccData}
+                              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-text-main outline-none focus:border-primary/50 min-h-[80px] transition-colors resize-y"
+                              placeholder="Hipóteses diagnósticas, CID-10/DSM-5 e tratamentos farmacológicos em uso (com dosagem e frequência)..."
                             />
-                          ) : (
-                            <p 
-                              onClick={() => setEditingAnamneseField('currentMedication')}
-                              className="text-sm text-text-main cursor-pointer hover:text-primary transition-colors min-h-[40px] whitespace-pre-wrap"
-                            >
-                              {clinicalData.anamnese.currentMedication || "Clique para descrever os medicamentos em uso..."}
-                            </p>
+                          </div>
+
+                          {/* Toggle de Divisão por Crença */}
+                          <div className="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/5">
+                            <div>
+                              <p className="text-sm font-bold text-text-main font-sans">Dividir por Crença Central</p>
+                              <p className="text-xs text-text-muted">Separe cada formulação e loop cognitivo de acordo com a crença central correspondente</p>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                              <input 
+                                type="checkbox" 
+                                checked={!!localTccData?.isSplitByBelief}
+                                onChange={(e) => handleToggleSplitByBelief(e.target.checked)}
+                                className="sr-only peer"
+                              />
+                              <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                            </label>
+                          </div>
+
+                          {/* Abas de Crenças (Se Split) */}
+                          {localTccData?.isSplitByBelief && (
+                            <div className="flex flex-wrap items-center gap-2 border-b border-white/5 pb-2">
+                              {beliefFormulations.map((bf: any) => (
+                                <button
+                                  key={bf.id}
+                                  type="button"
+                                  onClick={() => setActiveBeliefId(bf.id)}
+                                  className={cn(
+                                    "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all border",
+                                    activeBeliefId === bf.id 
+                                      ? "bg-primary border-primary text-white" 
+                                      : "bg-surface-muted border-border-ui text-text-muted hover:text-text-main"
+                                  )}
+                                >
+                                  <span>{bf.formulation?.coreBelief || bf.title || 'Nova Crença'}</span>
+                                  {beliefFormulations.length > 1 && (
+                                    <span 
+                                      onClick={(e) => handleDeleteBelief(bf.id, e)}
+                                      className="p-0.5 rounded-full hover:bg-black/20 text-white/50 hover:text-white"
+                                    >
+                                      <X size={12} />
+                                    </span>
+                                  )}
+                                </button>
+                              ))}
+                              <button
+                                onClick={handleAddBelief}
+                                className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold border border-dashed border-primary/40 text-primary hover:bg-primary/5 transition-all"
+                              >
+                                <Plus size={14} /> Nova Crença
+                              </button>
+                            </div>
                           )}
+
+                          {/* Conteúdo da Formulação Ativa */}
+                          {(!localTccData?.isSplitByBelief || activeBeliefId) && (() => {
+                            const form = localTccData?.isSplitByBelief 
+                              ? (localTccData?.beliefFormulations || []).find((bf: any) => bf.id === activeBeliefId)?.formulation
+                              : localTccData?.unifiedFormulation;
+                            const safeForm = getSafeFormulation(form);
+
+                            return (
+                              <div className="space-y-6">
+                                {/* Crença Central */}
+                                <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui flex flex-col gap-2">
+                                  <label className="text-xs font-bold text-primary uppercase tracking-widest font-sans">Crença Central</label>
+                                  <textarea
+                                    value={safeForm.coreBelief}
+                                    onChange={(e) => updateLocalFormulationField('coreBelief', e.target.value)}
+                                    onBlur={commitLocalTccData}
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-text-main outline-none focus:border-primary/50 min-h-[80px] transition-colors resize-y font-bold"
+                                    placeholder="Crenças nucleares profundas sobre si mesmo, os outros e o mundo (Ex: 'Sou inadequado')..."
+                                  />
+                                </div>
+
+                                {/* Crença Intermediária/Regras */}
+                                <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui flex flex-col gap-2">
+                                  <label className="text-xs font-bold text-primary uppercase tracking-widest font-sans">Crença Intermediária / Regras e Pressupostos</label>
+                                  <textarea
+                                    value={safeForm.intermediateBelief}
+                                    onChange={(e) => updateLocalFormulationField('intermediateBelief', e.target.value)}
+                                    onBlur={commitLocalTccData}
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-text-main outline-none focus:border-primary/50 min-h-[80px] transition-colors resize-y"
+                                    placeholder="Atitudes, regras e pressupostos subjacentes (Ex: 'Se eu não fizer tudo perfeito, então serei aceito')..."
+                                  />
+                                </div>
+
+                                {/* Situações ativadoras das crenças */}
+                                <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui flex flex-col gap-2">
+                                  <label className="text-xs font-bold text-primary uppercase tracking-widest font-sans">Situações ativadoras das crenças</label>
+                                  <textarea
+                                    value={safeForm.activatingSituations}
+                                    onChange={(e) => updateLocalFormulationField('activatingSituations', e.target.value)}
+                                    onBlur={commitLocalTccData}
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-text-main outline-none focus:border-primary/50 min-h-[80px] transition-colors resize-y"
+                                    placeholder="Eventos cotidianos, lembranças ou contextos específicos que ativam as crenças centrais..."
+                                  />
+                                </div>
+
+                                {/* Comportamentos/estratégias compensatórias */}
+                                <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui flex flex-col gap-2">
+                                  <label className="text-xs font-bold text-primary uppercase tracking-widest font-sans">Comportamentos / estratégias compensatórias</label>
+                                  <textarea
+                                    value={safeForm.compensatoryStrategies}
+                                    onChange={(e) => updateLocalFormulationField('compensatoryStrategies', e.target.value)}
+                                    onBlur={commitLocalTccData}
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-text-main outline-none focus:border-primary/50 min-h-[80px] transition-colors resize-y"
+                                    placeholder="Comportamentos que o paciente utiliza para se proteger da ativação da crença central (Ex: Perfeccionismo, esquiva)..."
+                                  />
+                                </div>
+
+                                {/* Metas de terapia */}
+                                <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui flex flex-col gap-2">
+                                  <label className="text-xs font-bold text-primary uppercase tracking-widest font-sans">Metas de terapia</label>
+                                  <textarea
+                                    value={safeForm.goals}
+                                    onChange={(e) => updateLocalFormulationField('goals', e.target.value)}
+                                    onBlur={commitLocalTccData}
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-text-main outline-none focus:border-primary/50 min-h-[80px] transition-colors resize-y"
+                                    placeholder="Metas cognitivas, comportamentais e emocionais associadas a esta formulação..."
+                                  />
+                                </div>
+
+                                {/* Pontos fortes */}
+                                <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui flex flex-col gap-2">
+                                  <label className="text-xs font-bold text-primary uppercase tracking-widest font-sans">Pontos fortes</label>
+                                  <textarea
+                                    value={safeForm.strengths}
+                                    onChange={(e) => updateLocalFormulationField('strengths', e.target.value)}
+                                    onBlur={commitLocalTccData}
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-text-main outline-none focus:border-primary/50 min-h-[80px] transition-colors resize-y"
+                                    placeholder="Recursos psicológicos saudáveis, resiliência, rede de apoio, hobbies ou qualidades do paciente..."
+                                  />
+                                </div>
+
+                                {/* Loops Cognitivos */}
+                                <div className="space-y-4 pt-4">
+                                  <div className="border-t border-white/5 pt-6">
+                                    <h4 className="text-sm font-bold text-primary uppercase tracking-widest mb-1 font-sans">Loops Cognitivos (Tríade / 3 Situações)</h4>
+                                    <p className="text-xs text-text-muted mb-4">Análise funcional das três situações ativadoras mais frequentes</p>
+                                  </div>
+
+                                  <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                                    {[0, 1, 2].map((idx) => {
+                                      const sit: any = safeForm.situations[idx] || {};
+                                      return (
+                                        <div key={idx} className="p-6 rounded-[28px] bg-surface-muted border border-border-ui space-y-4 relative font-sans">
+                                          <div className="absolute top-4 right-6 text-[10px] font-bold text-primary/30 uppercase tracking-wider">
+                                            Situação {idx + 1}
+                                          </div>
+                                          
+                                          <div className="flex flex-col gap-1 pt-2">
+                                            <label className="text-[10px] font-bold text-primary uppercase">Situação Real</label>
+                                            <textarea
+                                              value={sit.situation || ""}
+                                              onChange={(e) => updateLocalSituationField(idx, 'situation', e.target.value)}
+                                              onBlur={commitLocalTccData}
+                                              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-xs text-text-main outline-none focus:border-primary/50 min-h-[60px] transition-colors resize-y"
+                                              placeholder="O que aconteceu? Onde? Com quem?"
+                                            />
+                                          </div>
+
+                                          <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] font-bold text-primary uppercase">Pensamento Automático (PA)</label>
+                                            <textarea
+                                              value={sit.automaticThought || ""}
+                                              onChange={(e) => updateLocalSituationField(idx, 'automaticThought', e.target.value)}
+                                              onBlur={commitLocalTccData}
+                                              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-xs text-text-main outline-none focus:border-primary/50 min-h-[60px] transition-colors resize-y"
+                                              placeholder="Que pensamentos surgiram imediatamente?"
+                                            />
+                                          </div>
+
+                                          <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] font-bold text-primary uppercase">Significado do Pensamento</label>
+                                            <textarea
+                                              value={sit.meaning || ""}
+                                              onChange={(e) => updateLocalSituationField(idx, 'meaning', e.target.value)}
+                                              onBlur={commitLocalTccData}
+                                              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-xs text-text-main outline-none focus:border-primary/50 min-h-[60px] transition-colors resize-y"
+                                              placeholder="O que isso significa de pior sobre você?"
+                                            />
+                                          </div>
+
+                                          <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] font-bold text-primary uppercase">Emoção & Intensidade</label>
+                                            <textarea
+                                              value={sit.emotion || ""}
+                                              onChange={(e) => updateLocalSituationField(idx, 'emotion', e.target.value)}
+                                              onBlur={commitLocalTccData}
+                                              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-xs text-text-main outline-none focus:border-primary/50 min-h-[60px] transition-colors resize-y"
+                                              placeholder="O que sentiu no corpo? (Ex: Ansiedade 90%)"
+                                            />
+                                          </div>
+
+                                          <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] font-bold text-primary uppercase">Comportamento Resultante</label>
+                                            <textarea
+                                              value={sit.behavior || ""}
+                                              onChange={(e) => updateLocalSituationField(idx, 'behavior', e.target.value)}
+                                              onBlur={commitLocalTccData}
+                                              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-xs text-text-main outline-none focus:border-primary/50 min-h-[60px] transition-colors resize-y"
+                                              placeholder="O que fez? Como agiu em resposta?"
+                                            />
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
-                    </div>
+                    ) : profileSettings?.clinicalApproach === 'psicanalise' ? (
+                      /* RENDER PSICANALISE */
+                      <div className="space-y-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-blue-500/10 text-blue-500 flex items-center justify-center">
+                              <FileText size={20} />
+                            </div>
+                            <div>
+                              <h3 className="text-xl font-bold text-text-main">Estruturação Analítica (Psicanálise)</h3>
+                              <p className="text-xs text-text-muted">Mapeamento estrutural, defesas e transferência</p>
+                            </div>
+                          </div>
+                          
+                           <div className="flex items-center gap-3">
+                            <button 
+                              onClick={() => handleGenerateApproachWithAi('psicanalise')}
+                              disabled={isGeneratingApproachAi}
+                              className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2"
+                            >
+                              {isGeneratingApproachAi ? "Processando..." : "✨ Gerar com IA"}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="bg-white/80 backdrop-blur-xl border border-white/40 rounded-3xl p-6 md:p-8 shadow-sm col-span-1 md:col-span-2">
+                            <h4 className="text-lg font-bold text-text-main mb-4 flex items-center gap-2">
+                              <span className="w-8 h-8 rounded-full bg-blue-500/10 text-blue-500 flex items-center justify-center">1</span>
+                              Demanda Clínica
+                            </h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <label className="text-sm font-semibold text-text-main flex items-center gap-2">Demanda Manifesta</label>
+                                <textarea 
+                                  className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[100px] resize-none"
+                                  value={localPsychoanalysisData?.manifestDemand || ''}
+                                  onChange={e => handleUpdatePsychoanalysisField('manifestDemand', e.target.value)}
+                                  onBlur={() => commitLocalApproachData('psychoanalysis', localPsychoanalysisData)}
+                                  placeholder="O que o paciente diz que quer..."
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-sm font-semibold text-text-main flex items-center gap-2">Demanda Latente</label>
+                                <textarea 
+                                  className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[100px] resize-none"
+                                  value={localPsychoanalysisData?.latentDemand || ''}
+                                  onChange={e => handleUpdatePsychoanalysisField('latentDemand', e.target.value)}
+                                  onBlur={() => commitLocalApproachData('psychoanalysis', localPsychoanalysisData)}
+                                  placeholder="O que emerge através da escuta..."
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="bg-white/80 backdrop-blur-xl border border-white/40 rounded-3xl p-6 shadow-sm">
+                            <h4 className="text-lg font-bold text-text-main mb-4 flex items-center gap-2">
+                              <span className="w-8 h-8 rounded-full bg-blue-500/10 text-blue-500 flex items-center justify-center">2</span>
+                              Dinâmica Inconsciente
+                            </h4>
+                            <div className="space-y-2">
+                              <label className="text-sm font-semibold text-text-main flex items-center gap-2">Mecanismos de Defesa Principais</label>
+                              <textarea 
+                                className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[120px] resize-none"
+                                value={localPsychoanalysisData?.defenses || ''}
+                                onChange={e => handleUpdatePsychoanalysisField('defenses', e.target.value)}
+                                onBlur={() => commitLocalApproachData('psychoanalysis', localPsychoanalysisData)}
+                                placeholder="Recalque, projeção, denegação..."
+                              />
+                            </div>
+                          </div>
+
+                          <div className="bg-white/80 backdrop-blur-xl border border-white/40 rounded-3xl p-6 shadow-sm">
+                            <h4 className="text-lg font-bold text-text-main mb-4 flex items-center gap-2">
+                              <span className="w-8 h-8 rounded-full bg-blue-500/10 text-blue-500 flex items-center justify-center">3</span>
+                              Posição Estrutural & Transferência
+                            </h4>
+                            <div className="space-y-4">
+                              <div className="space-y-2">
+                                <label className="text-sm font-semibold text-text-main flex items-center gap-2">Hipótese Estrutural</label>
+                                <textarea 
+                                  className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[60px] resize-none"
+                                  value={localPsychoanalysisData?.structuralPosition || ''}
+                                  onChange={e => handleUpdatePsychoanalysisField('structuralPosition', e.target.value)}
+                                  onBlur={() => commitLocalApproachData('psychoanalysis', localPsychoanalysisData)}
+                                  placeholder="Neurose, Psicose, Perversão..."
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-sm font-semibold text-text-main flex items-center gap-2">Transferência</label>
+                                <textarea 
+                                  className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[60px] resize-none"
+                                  value={localPsychoanalysisData?.transference || ''}
+                                  onChange={e => handleUpdatePsychoanalysisField('transference', e.target.value)}
+                                  onBlur={() => commitLocalApproachData('psychoanalysis', localPsychoanalysisData)}
+                                  placeholder="Como o paciente aloca o analista..."
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : profileSettings?.clinicalApproach === 'gestalt' ? (
+                      /* RENDER GESTALT */
+                      <div className="space-y-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-orange-500/10 text-orange-500 flex items-center justify-center">
+                              <FileText size={20} />
+                            </div>
+                            <div>
+                              <h3 className="text-xl font-bold text-text-main">Mapa Gestáltico</h3>
+                              <p className="text-xs text-text-muted">Mapeamento fenomênico, awareness e contato</p>
+                            </div>
+                          </div>
+                          
+                           <div className="flex items-center gap-3">
+                            <button 
+                              onClick={() => handleGenerateApproachWithAi('gestalt')}
+                              disabled={isGeneratingApproachAi}
+                              className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2"
+                            >
+                              {isGeneratingApproachAi ? "Processando..." : "✨ Gerar com IA"}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="bg-white/80 backdrop-blur-xl border border-white/40 rounded-3xl p-6 shadow-sm col-span-1 md:col-span-2">
+                            <h4 className="text-lg font-bold text-text-main mb-4 flex items-center gap-2">
+                              <span className="w-8 h-8 rounded-full bg-orange-500/10 text-orange-500 flex items-center justify-center">1</span>
+                              Figura e Fundo
+                            </h4>
+                            <div className="space-y-2">
+                              <label className="text-sm font-semibold text-text-main flex items-center gap-2">O que emerge no campo fenomenológico?</label>
+                              <textarea 
+                                className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 min-h-[100px] resize-none"
+                                value={localGestaltData?.figureAndGround || ''}
+                                onChange={e => handleUpdateGestaltField('figureAndGround', e.target.value)}
+                                onBlur={() => commitLocalApproachData('gestalt', localGestaltData)}
+                                placeholder="Descreva a queixa no aqui-e-agora..."
+                              />
+                            </div>
+                          </div>
+
+                          <div className="bg-white/80 backdrop-blur-xl border border-white/40 rounded-3xl p-6 shadow-sm">
+                            <h4 className="text-lg font-bold text-text-main mb-4 flex items-center gap-2">
+                              <span className="w-8 h-8 rounded-full bg-orange-500/10 text-orange-500 flex items-center justify-center">2</span>
+                              Dinâmica de Contato
+                            </h4>
+                            <div className="space-y-4">
+                              <div className="space-y-2">
+                                <label className="text-sm font-semibold text-text-main flex items-center gap-2">Bloqueios no Ciclo de Contato</label>
+                                <textarea 
+                                  className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 min-h-[100px] resize-none"
+                                  value={localGestaltData?.contactCycleBlocks || ''}
+                                  onChange={e => handleUpdateGestaltField('contactCycleBlocks', e.target.value)}
+                                  onBlur={() => commitLocalApproachData('gestalt', localGestaltData)}
+                                  placeholder="Introjeção, projeção, retroflexão, confluência..."
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="bg-white/80 backdrop-blur-xl border border-white/40 rounded-3xl p-6 shadow-sm">
+                            <h4 className="text-lg font-bold text-text-main mb-4 flex items-center gap-2">
+                              <span className="w-8 h-8 rounded-full bg-orange-500/10 text-orange-500 flex items-center justify-center">3</span>
+                              Auto-Suporte e Consciência
+                            </h4>
+                            <div className="space-y-4">
+                              <div className="space-y-2">
+                                <label className="text-sm font-semibold text-text-main flex items-center gap-2">Nível de Awareness</label>
+                                <textarea 
+                                  className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 min-h-[60px] resize-none"
+                                  value={localGestaltData?.awarenessLevel || ''}
+                                  onChange={e => handleUpdateGestaltField('awarenessLevel', e.target.value)}
+                                  onBlur={() => commitLocalApproachData('gestalt', localGestaltData)}
+                                  placeholder="Consciência corporal, emocional, cognitiva..."
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-sm font-semibold text-text-main flex items-center gap-2">Sistemas de Suporte</label>
+                                <textarea 
+                                  className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 min-h-[60px] resize-none"
+                                  value={localGestaltData?.supportSystem || ''}
+                                  onChange={e => handleUpdateGestaltField('supportSystem', e.target.value)}
+                                  onBlur={() => commitLocalApproachData('gestalt', localGestaltData)}
+                                  placeholder="Auto-suporte vs Hetero-suporte..."
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : profileSettings?.clinicalApproach === 'act' ? (
+                      /* RENDER ACT */
+                      <div className="space-y-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
+                              <FileText size={20} />
+                            </div>
+                            <div>
+                              <h3 className="text-xl font-bold text-text-main">Matriz ACT (Hexaflex)</h3>
+                              <p className="text-xs text-text-muted">Mapeamento de flexibilidade, valores e compromissos</p>
+                            </div>
+                          </div>
+                          
+                           <div className="flex items-center gap-3">
+                            <button 
+                              onClick={() => handleGenerateApproachWithAi('act')}
+                              disabled={isGeneratingApproachAi}
+                              className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2"
+                            >
+                              {isGeneratingApproachAi ? "Processando..." : "✨ Gerar com IA"}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="bg-white/80 backdrop-blur-xl border border-white/40 rounded-3xl p-6 shadow-sm">
+                            <h4 className="text-lg font-bold text-text-main mb-4 flex items-center gap-2">
+                              <span className="w-8 h-8 rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center">1</span>
+                              Processos de Inflexibilidade
+                            </h4>
+                            <div className="space-y-4">
+                              <div className="space-y-2">
+                                <label className="text-sm font-semibold text-text-main flex items-center gap-2">Fusão Cognitiva</label>
+                                <textarea 
+                                  className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 min-h-[100px] resize-none"
+                                  value={localActData?.fusion || ''}
+                                  onChange={e => handleUpdateActField('fusion', e.target.value)}
+                                  onBlur={() => commitLocalApproachData('act', localActData)}
+                                  placeholder="Pensamentos rígidos dos quais o paciente não desgarra..."
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-sm font-semibold text-text-main flex items-center gap-2">Evitação Experiencial</label>
+                                <textarea 
+                                  className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 min-h-[100px] resize-none"
+                                  value={localActData?.experientialAvoidance || ''}
+                                  onChange={e => handleUpdateActField('experientialAvoidance', e.target.value)}
+                                  onBlur={() => commitLocalApproachData('act', localActData)}
+                                  placeholder="Emoções ou sensações que o paciente luta para evitar..."
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="bg-white/80 backdrop-blur-xl border border-white/40 rounded-3xl p-6 shadow-sm">
+                            <h4 className="text-lg font-bold text-text-main mb-4 flex items-center gap-2">
+                              <span className="w-8 h-8 rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center">2</span>
+                              Processos de Flexibilidade
+                            </h4>
+                            <div className="space-y-4">
+                              <div className="space-y-2">
+                                <label className="text-sm font-semibold text-text-main flex items-center gap-2">Valores Pessoais</label>
+                                <textarea 
+                                  className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 min-h-[100px] resize-none"
+                                  value={localActData?.values || ''}
+                                  onChange={e => handleUpdateActField('values', e.target.value)}
+                                  onBlur={() => commitLocalApproachData('act', localActData)}
+                                  placeholder="O que é verdadeiramente importante para ele..."
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-sm font-semibold text-text-main flex items-center gap-2">Ação Comprometida</label>
+                                <textarea 
+                                  className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 min-h-[100px] resize-none"
+                                  value={localActData?.committedAction || ''}
+                                  onChange={e => handleUpdateActField('committedAction', e.target.value)}
+                                  onBlur={() => commitLocalApproachData('act', localActData)}
+                                  placeholder="Comportamentos em direção aos valores escolhidos..."
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      /* RENDER STANDARD ANAMNESE */
+                      <>
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-purple-500/10 text-purple-500 flex items-center justify-center">
+                            <FileText size={20} />
+                          </div>
+                          <h3 className="text-xl font-bold text-text-main font-sans">Anamnese Psicológica</h3>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-6">
+                          <div className="space-y-4">
+                            <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui group relative">
+                              <h5 className="text-xs font-bold text-primary uppercase tracking-widest mb-3">Queixa Principal</h5>
+                              {editingAnamneseField === 'mainComplaint' ? (
+                                <textarea 
+                                  autoFocus
+                                  value={clinicalData.anamnese.mainComplaint}
+                                  onChange={(e) => handleUpdateAnamnese('mainComplaint', e.target.value)}
+                                  onBlur={() => setEditingAnamneseField(null)}
+                                  className="w-full bg-white/5 border border-primary/20 rounded-lg p-2 text-sm text-text-main outline-none min-h-[80px]"
+                                />
+                              ) : (
+                                <p 
+                                  onClick={() => setEditingAnamneseField('mainComplaint')}
+                                  className="text-sm text-text-main cursor-pointer hover:text-primary transition-colors min-h-[40px] whitespace-pre-wrap"
+                                >
+                                  {clinicalData.anamnese.mainComplaint || "Clique para descrever a queixa principal..."}
+                                </p>
+                              )}
+                            </div>
+                            <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui group relative">
+                              <h5 className="text-xs font-bold text-primary uppercase tracking-widest mb-3">Histórico Familiar</h5>
+                              {editingAnamneseField === 'familyHistory' ? (
+                                <textarea 
+                                  autoFocus
+                                  value={clinicalData.anamnese.familyHistory}
+                                  onChange={(e) => handleUpdateAnamnese('familyHistory', e.target.value)}
+                                  onBlur={() => setEditingAnamneseField(null)}
+                                  className="w-full bg-white/5 border border-primary/20 rounded-lg p-2 text-sm text-text-main outline-none min-h-[80px]"
+                                />
+                              ) : (
+                                <p 
+                                  onClick={() => setEditingAnamneseField('familyHistory')}
+                                  className="text-sm text-text-main cursor-pointer hover:text-primary transition-colors min-h-[40px] whitespace-pre-wrap"
+                                >
+                                  {clinicalData.anamnese.familyHistory || "Clique para descrever o histórico familiar..."}
+                                </p>
+                              )}
+                            </div>
+                            <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui group relative">
+                              <h5 className="text-xs font-bold text-primary uppercase tracking-widest mb-3">História de Vida</h5>
+                              {editingAnamneseField === 'lifeHistory' ? (
+                                <textarea 
+                                  autoFocus
+                                  value={clinicalData.anamnese.lifeHistory}
+                                  onChange={(e) => handleUpdateAnamnese('lifeHistory', e.target.value)}
+                                  onBlur={() => setEditingAnamneseField(null)}
+                                  className="w-full bg-white/5 border border-primary/20 rounded-lg p-2 text-sm text-text-main outline-none min-h-[80px]"
+                                />
+                              ) : (
+                                <p 
+                                  onClick={() => setEditingAnamneseField('lifeHistory')}
+                                  className="text-sm text-text-main cursor-pointer hover:text-primary transition-colors min-h-[40px] whitespace-pre-wrap"
+                                >
+                                  {clinicalData.anamnese.lifeHistory || "Clique para descrever a história de vida..."}
+                                </p>
+                              )}
+                            </div>
+                            <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui group relative">
+                              <h5 className="text-xs font-bold text-primary uppercase tracking-widest mb-3">Medicamentos em Uso</h5>
+                              {editingAnamneseField === 'currentMedication' ? (
+                                <textarea 
+                                  autoFocus
+                                  value={clinicalData.anamnese.currentMedication}
+                                  onChange={(e) => handleUpdateAnamnese('currentMedication', e.target.value)}
+                                  onBlur={() => setEditingAnamneseField(null)}
+                                  className="w-full bg-white/5 border border-primary/20 rounded-lg p-2 text-sm text-text-main outline-none min-h-[80px]"
+                                />
+                              ) : (
+                                <p 
+                                  onClick={() => setEditingAnamneseField('currentMedication')}
+                                  className="text-sm text-text-main cursor-pointer hover:text-primary transition-colors min-h-[40px] whitespace-pre-wrap"
+                                >
+                                  {clinicalData.anamnese.currentMedication || "Clique para descrever os medicamentos em uso..."}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </motion.div>
                 )}
 
@@ -5058,8 +6753,351 @@ Relato:
                         </div>
                       </div>
                     </div>
+
+                    {/* Planejamento da Próxima Sessão */}
+                    <div className="p-8 rounded-[32px] bg-gradient-to-br from-primary/5 to-transparent border border-primary/10 mt-6 space-y-6 font-sans">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-start gap-4">
+                          <div className="w-8 h-8 rounded-lg bg-orange-500 text-white flex items-center justify-center">
+                            <span className="text-xs font-bold">🎯</span>
+                          </div>
+                          <div>
+                            <h4 className="text-lg font-bold text-text-main font-sans">Planejamento da Próxima Sessão</h4>
+                            <p className="text-xs text-text-muted italic">Foco e intervenções sugeridas ou personalizadas para a próxima sessão</p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={handleGenerateNextSessionPlanWithAi}
+                          disabled={isGeneratingNextSession}
+                          className="bg-orange-500 hover:opacity-90 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 self-start sm:self-center"
+                        >
+                          {isGeneratingNextSession ? "Planejando..." : "✨ Planejar com IA"}
+                        </button>
+                      </div>
+
+                      {/* Warning Banner */}
+                      <div className="p-4 rounded-xl bg-orange-500/10 border border-orange-500/20 text-xs text-orange-400 flex items-start gap-2">
+                        <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                        <p>
+                          <strong>Validação Ética Profissional:</strong> Os rascunhos e sugestões gerados por inteligência artificial são apenas orientações e hipóteses clínicas de suporte. O psicólogo é inteiramente responsável pela validação ética, técnica e clínica das informações registradas no prontuário.
+                        </p>
+                      </div>
+
+                      <div className="p-6 rounded-2xl bg-surface-muted border border-border-ui">
+                        {editingNextSession ? (
+                          <textarea
+                            autoFocus
+                            value={tempNextSessionPlan}
+                            onChange={(e) => setTempNextSessionPlan(e.target.value)}
+                            onBlur={() => {
+                              onUpdatePatient({
+                                ...patient,
+                                clinicalData: {
+                                  ...patient.clinicalData,
+                                  nextSessionPlan: tempNextSessionPlan
+                                }
+                              });
+                              setEditingNextSession(false);
+                            }}
+                            className="w-full bg-white/5 border border-primary/20 rounded-lg p-3 text-sm text-text-main outline-none min-h-[150px]"
+                            placeholder="Descreva o plano para a próxima sessão..."
+                          />
+                        ) : (
+                          <div 
+                            onClick={() => {
+                              setTempNextSessionPlan(patient.clinicalData?.nextSessionPlan || "");
+                              setEditingNextSession(true);
+                            }}
+                            className="text-sm text-text-main cursor-pointer hover:border-primary/30 border border-transparent p-2 rounded transition-all min-h-[100px] whitespace-pre-wrap leading-relaxed"
+                          >
+                            {patient.clinicalData?.nextSessionPlan ? (
+                              patient.clinicalData.nextSessionPlan
+                            ) : (
+                              <span className="text-text-muted italic">Nenhum planejamento gerado ainda. Clique para escrever manualmente ou use a IA acima.</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </motion.div>
                 )}
+
+                {activeSubTab === 'tratamento' && (() => {
+                  const isNotesOnly = ['psicanalise', 'junguiana', 'gestalt', 'humanista'].includes(profileSettings?.clinicalApproach);
+
+                  if (isNotesOnly) {
+                    return (
+                      <motion.div 
+                        key="organizacao_caso"
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        className="space-y-6 font-sans"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-purple-500/10 text-purple-500 flex items-center justify-center">
+                            <FolderOpen size={20} />
+                          </div>
+                          <div>
+                            <h3 className="text-xl font-bold text-text-main font-sans">Organização do Caso & Bloco de Notas</h3>
+                            <p className="text-xs text-text-muted">Espaço livre e confidencial para organizar hipóteses clínicas, insights teóricos e apontamentos gerais.</p>
+                          </div>
+                        </div>
+
+                        <div className="p-6 rounded-[28px] bg-surface-muted border border-border-ui space-y-4">
+                          <div className="flex items-center justify-between mb-2">
+                            <label className="text-xs font-bold text-primary uppercase tracking-widest font-sans">Anotações do Terapeuta</label>
+                            <span className="text-[10px] text-text-muted flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span> Salvo automaticamente ao clicar fora
+                            </span>
+                          </div>
+                          <textarea
+                            value={localTreatmentNotes}
+                            onChange={(e) => handleUpdateTreatmentNotes(e.target.value)}
+                            onBlur={commitTreatmentNotes}
+                            className="w-full bg-white/5 border border-white/10 rounded-xl p-4 text-sm text-text-main outline-none focus:border-primary/50 min-h-[380px] transition-colors resize-y leading-relaxed font-sans"
+                            placeholder="Escreva livremente aqui suas hipóteses, insights, temas a serem trabalhados, análises de transferência ou observações gerais sobre o andamento do caso..."
+                          />
+                        </div>
+                      </motion.div>
+                    );
+                  }
+
+                  return (
+                    <motion.div 
+                      key="tratamento"
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="space-y-8"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-green-500/10 text-green-500 flex items-center justify-center">
+                            <CheckCircle2 size={20} />
+                          </div>
+                          <div>
+                            <h3 className="text-xl font-bold text-text-main font-sans">Plano de Tratamento</h3>
+                            <p className="text-xs text-text-muted">Acompanhe as metas e intervenções terapêuticas pactuadas</p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={handleGenerateTreatmentPlanWithAi}
+                          disabled={isGeneratingTreatmentPlanAi}
+                          className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 self-start sm:self-center font-sans"
+                        >
+                          {isGeneratingTreatmentPlanAi ? "Gerando..." : "✨ Gerar Plano com IA"}
+                        </button>
+                      </div>
+
+                      {/* Formulário de Nova Meta */}
+                      <div className="p-6 rounded-[28px] bg-surface-muted border border-border-ui space-y-4">
+                        <h4 className="text-sm font-bold text-primary uppercase tracking-widest font-sans">Nova Meta Terapêutica</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="flex flex-col gap-1.5">
+                            <label className="text-[10px] font-bold text-primary uppercase">Meta / Objetivo</label>
+                            <input
+                              type="text"
+                              value={newGoalText}
+                              onChange={(e) => setNewGoalText(e.target.value)}
+                              className="bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-text-main outline-none focus:border-primary/50 transition-colors"
+                              placeholder="Ex: Reduzir a ansiedade social em situações de trabalho"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1.5">
+                            <label className="text-[10px] font-bold text-primary uppercase">Intervenções Associadas</label>
+                            <input
+                              type="text"
+                              value={newInterventionsText}
+                              onChange={(e) => setNewInterventionsText(e.target.value)}
+                              className="bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-text-main outline-none focus:border-primary/50 transition-colors"
+                              placeholder="Ex: Exposição sistemática, questionamento socrático, role-play"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex justify-end">
+                          <button
+                            onClick={handleAddTreatmentGoal}
+                            className="bg-primary hover:opacity-90 text-white px-5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+                          >
+                            <Plus size={16} /> Adicionar Meta
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Tabela/Lista de Metas Cadastradas */}
+                      <div className="space-y-4">
+                        <h4 className="text-sm font-bold text-primary uppercase tracking-widest font-sans">Metas e Intervenções Atuais</h4>
+                        {(() => {
+                          const plan = patient.clinicalData?.treatmentPlan || [];
+                          if (plan.length === 0) {
+                            return (
+                              <div className="p-8 rounded-[28px] border border-dashed border-white/10 text-center">
+                                <p className="text-sm text-text-muted italic">Nenhuma meta adicionada ao plano de tratamento ainda.</p>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div
+                              className="flex flex-col"
+                              onDragLeave={(e) => {
+                                // Only clear if leaving the entire list container
+                                if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                                  setDragInsertIndex(null);
+                                }
+                              }}
+                            >
+                              {plan.map((item: any, index: number) => (
+                                <div key={item.id}>
+                                  {/* Drop zone line — appears ABOVE this card */}
+                                  <div
+                                    onDragOver={(e) => { e.preventDefault(); setDragInsertIndex(index); }}
+                                    onDrop={(e) => {
+                                      e.preventDefault();
+                                      if (draggedGoalId) handleGoalReorder(draggedGoalId, index);
+                                      setDraggedGoalId(null);
+                                      setDragInsertIndex(null);
+                                    }}
+                                    style={{
+                                      height: dragInsertIndex === index && draggedGoalId ? '20px' : '8px',
+                                      transition: 'height 0.15s',
+                                    }}
+                                    className="relative flex items-center"
+                                  >
+                                    {dragInsertIndex === index && draggedGoalId && (
+                                      <div className="w-full h-0.5 rounded-full bg-primary shadow-[0_0_8px_2px] shadow-primary/60 mx-1" />
+                                    )}
+                                  </div>
+
+                                  {/* The card itself */}
+                                  <div
+                                    draggable
+                                    onDragStart={(e) => {
+                                      setDraggedGoalId(item.id);
+                                      e.dataTransfer.effectAllowed = 'move';
+                                    }}
+                                    onDragOver={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      // Determine if mouse is in top or bottom half of this card
+                                      const rect = e.currentTarget.getBoundingClientRect();
+                                      const midY = rect.top + rect.height / 2;
+                                      setDragInsertIndex(e.clientY < midY ? index : index + 1);
+                                    }}
+                                    onDrop={(e) => {
+                                      e.preventDefault();
+                                      const rect = e.currentTarget.getBoundingClientRect();
+                                      const midY = rect.top + rect.height / 2;
+                                      const insertAt = e.clientY < midY ? index : index + 1;
+                                      if (draggedGoalId) handleGoalReorder(draggedGoalId, insertAt);
+                                      setDraggedGoalId(null);
+                                      setDragInsertIndex(null);
+                                    }}
+                                    onDragEnd={() => { setDraggedGoalId(null); setDragInsertIndex(null); }}
+                                    style={{
+                                      opacity: draggedGoalId === item.id ? 0.35 : 1,
+                                      transition: 'opacity 0.15s',
+                                    }}
+                                    className="p-5 rounded-2xl bg-surface-muted border border-border-ui flex flex-col md:flex-row md:items-center justify-between gap-4 font-sans"
+                                  >
+                                    {/* Drag Handle */}
+                                    <div
+                                      className="hidden md:flex items-center self-stretch pr-2 cursor-grab active:cursor-grabbing text-text-muted hover:text-primary transition-colors select-none"
+                                      title="Arrastar para reordenar"
+                                    >
+                                      <svg width="14" height="22" viewBox="0 0 14 22" fill="currentColor">
+                                        <circle cx="4" cy="4" r="2"/><circle cx="10" cy="4" r="2"/>
+                                        <circle cx="4" cy="11" r="2"/><circle cx="10" cy="11" r="2"/>
+                                        <circle cx="4" cy="18" r="2"/><circle cx="10" cy="18" r="2"/>
+                                      </svg>
+                                    </div>
+
+                                    <div className="space-y-2 flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className={cn(
+                                          "text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider",
+                                          item.status === 'completed' 
+                                            ? "bg-green-500/10 text-green-500 border border-green-500/20" 
+                                            : item.status === 'in_progress'
+                                              ? "bg-blue-500/10 text-blue-500 border border-blue-500/20"
+                                              : "bg-yellow-500/10 text-yellow-500 border border-yellow-500/20"
+                                        )}>
+                                          {item.status === 'completed' ? 'Alcançada' : item.status === 'in_progress' ? 'Em Progresso' : 'Aguardando'}
+                                        </span>
+                                      </div>
+                                      
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                          <p className="text-[10px] font-bold text-primary uppercase">Meta</p>
+                                          <input
+                                            type="text"
+                                            value={item.goal}
+                                            onChange={(e) => handleUpdateTreatmentGoalField(item.id, 'goal', e.target.value)}
+                                            className="w-full bg-transparent border-b border-transparent focus:border-primary/30 py-0.5 text-sm text-text-main outline-none transition-colors"
+                                          />
+                                        </div>
+                                        <div>
+                                          <p className="text-[10px] font-bold text-primary uppercase">Intervenções</p>
+                                          <input
+                                            type="text"
+                                            value={item.interventions || ""}
+                                            onChange={(e) => handleUpdateTreatmentGoalField(item.id, 'interventions', e.target.value)}
+                                            className="w-full bg-transparent border-b border-transparent focus:border-primary/30 py-0.5 text-sm text-text-main outline-none transition-colors"
+                                          />
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2 self-end md:self-center">
+                                      <select
+                                        value={item.status}
+                                        onChange={(e) => handleUpdateTreatmentGoalField(item.id, 'status', e.target.value)}
+                                        className="bg-white/5 border border-white/10 rounded-lg p-1.5 text-xs text-text-main outline-none focus:border-primary/30 font-sans"
+                                      >
+                                        <option value="pending" className="bg-background-dark">Aguardando</option>
+                                        <option value="in_progress" className="bg-background-dark">Em Progresso</option>
+                                        <option value="completed" className="bg-background-dark">Alcançada</option>
+                                      </select>
+                                      
+                                      <button
+                                        onClick={() => handleDeleteTreatmentGoal(item.id)}
+                                        className="p-2 text-text-muted hover:text-red-500 rounded-lg hover:bg-red-500/10 transition-all"
+                                        title="Excluir Meta"
+                                      >
+                                        <Trash2 size={16} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+
+                              {/* Drop zone after the last card */}
+                              <div
+                                onDragOver={(e) => { e.preventDefault(); setDragInsertIndex(plan.length); }}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  if (draggedGoalId) handleGoalReorder(draggedGoalId, plan.length);
+                                  setDraggedGoalId(null);
+                                  setDragInsertIndex(null);
+                                }}
+                                style={{
+                                  height: dragInsertIndex === plan.length && draggedGoalId ? '20px' : '8px',
+                                  transition: 'height 0.15s',
+                                }}
+                                className="relative flex items-center"
+                              >
+                                {dragInsertIndex === plan.length && draggedGoalId && (
+                                  <div className="w-full h-0.5 rounded-full bg-primary shadow-[0_0_8px_2px] shadow-primary/60 mx-1" />
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </motion.div>
+                  );
+                })()}
 
                 {activeSubTab === 'biblioteca' && (
                   <motion.div 

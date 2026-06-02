@@ -9,7 +9,7 @@ service cloud.firestore {
     // Helper Primitives
     function isSignedIn() { return request.auth != null; }
     function isAdmin() { 
-      return isSignedIn() && request.auth.token.email == 'acessoriavitrinni@gmail.com' && request.auth.token.email_verified == true; 
+      return isSignedIn() && (request.auth.token.email == 'acessoriavitrinni@gmail.com' || request.auth.token.email == 'wellcoutinho99@gmail.com') && request.auth.token.email_verified == true; 
     }
 
     function isOwner(data) { 
@@ -96,6 +96,10 @@ service cloud.firestore {
     match /authorized_emails/{email} {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    match /profiles/{userId} {
+      allow read, write: if (isSignedIn() && userId == request.auth.uid) || isAdmin();
     }
   }
 }

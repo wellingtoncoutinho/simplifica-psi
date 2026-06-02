@@ -228,7 +228,7 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
           onClick={onLogin}
           className="px-3 sm:px-6 py-2 sm:py-2.5 bg-[#5F7D5C] hover:bg-[#4E674C] text-[#FAF9F6] text-[10px] sm:text-xs font-bold uppercase tracking-wider rounded-xl transition-all shadow-md shadow-[#5F7D5C]/10 flex items-center gap-1.5 sm:gap-2 hover:scale-[1.03]"
         >
-          Entrar no Sistema
+          Entrar / Testar Grátis
           <ArrowRight size={12} className="hidden sm:inline-block" />
         </button>
       </nav>
@@ -282,6 +282,18 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
             <span>Garantir acesso vitalício</span>
             <ArrowRight size={16} />
           </button>
+
+          <button 
+            onClick={onLogin}
+            className="w-full py-4.5 bg-transparent hover:bg-[#2E3C2B]/5 text-[#2E3C2B] border border-[#2E3C2B]/10 hover:border-[#2E3C2B]/20 font-bold rounded-2xl transition-all hover:scale-[1.01] flex items-center justify-center gap-2 text-xs uppercase tracking-widest font-sans"
+          >
+            <Sparkles size={14} className="text-[#5F7D5C]" />
+            <span>Experimentar 7 Dias Grátis</span>
+          </button>
+
+          <p className="text-[10px] text-[#2E3C2B]/50 font-semibold tracking-wide">
+            *Sem cartão de crédito. Teste tudo sem compromisso.
+          </p>
         </div>
 
         {/* Infinite Premium Scrolling Ticker */}
@@ -1033,7 +1045,7 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
               <span className="text-xs font-bold text-[#2E3C2B]/50">12x de</span>
               <span className="text-5xl font-serif font-black text-[#5F7D5C]">R$ 30,72</span>
             </div>
-            <p className="text-xs font-bold text-[#2E3C2B]/80">ou apenas R$ 297,00 à vista no PIX/Boleto</p>
+            <p className="text-xs font-bold text-[#2E3C2B]/80">ou apenas R$ 297,00 à vista (cartão, PIX ou boleto)</p>
           </div>
 
           <button 
@@ -1042,6 +1054,13 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
           >
             <span>Quero acesso vitalício</span>
             <ArrowRight size={16} />
+          </button>
+
+          <button
+            onClick={onLogin}
+            className="text-[11px] font-bold text-[#5F7D5C] hover:text-[#4E674C] transition-colors underline decoration-2 underline-offset-4 mt-2"
+          >
+            Ou inicie um teste grátis de 7 dias sem cartão
           </button>
 
           <p className="text-[10px] font-bold uppercase tracking-widest text-[#2E3C2B]/40">
@@ -1070,6 +1089,15 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
             <span>Garantir Licença Vitalícia</span>
             <ArrowRight size={16} />
           </button>
+
+          <div className="pt-4">
+            <button
+              onClick={onLogin}
+              className="text-xs font-bold text-[#5F7D5C] hover:text-[#4E674C] transition-colors underline decoration-2 underline-offset-4"
+            >
+              Ou comece testando grátis por 7 dias sem cartão
+            </button>
+          </div>
         </div>
       </section>
 
