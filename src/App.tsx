@@ -3736,20 +3736,29 @@ function PatientDetailsView({
       `;
 
       const promptInstructions = isMultiBeliefGlobal ? `
-        INSTRUÇÕES — retorne SOMENTE o JSON, sem markdown, sem texto extra:
-
-        1. lifeHistory: narrativa em 4-6 parágrafos densos (mín. 500 palavras) separados por \\n, cobrindo infância, dinâmica familiar, adolescência, vida afetiva, carreira e estressores atuais.
-        2. problemList: mín. 8 problemas clínicos específicos separados por ";\\n".
-        3. diagnosisAndMeds: "Hipótese diagnóstica de..." — NUNCA diagnóstico definitivo.
-        4. beliefs: ARRAY de objetos JSON, um para cada crença central identificada (máximo 3). Cada objeto deve ter exatamente esta estrutura:
-           - title: "Nome Curto da Crença (ex: Desamparo)"
-           - coreBelief: "Nome da Crença.\\nSobre si mesmo: \"frase1\".\\nSobre os outros: \"frase1\".\\nSobre o futuro: \"frase\"."
-           - intermediateBelief: "Regras:\\n\"Regra 1.\"\\n\"Regra 2.\"\\n\"Regra 3.\"\\n\"Regra 4.\"\\n\"Regra 5.\"\\nPressupostos:\\n\"Se... então....\"\\n\"Se... então....\"\\n\"Se... então....\"\\n\"Se... então....\"\\n\"Se... então....\""
-           - activatingSituations: 5+ gatilhos separados por "\\n".
-           - compensatoryStrategies: 4+ estratégias "Nome: Descrição." separadas por "\\n".
-           - goals: metas terapêuticas separadas por " / ".
-           - strengths: recursos e pontos fortes do paciente.
-           - situations: array JSON com EXATAMENTE 3 objetos com: situation, automaticThought, meaning, emotion, behavior.
+        INSTRUÇÕES — retorne SOMENTE o JSON, sem markdown, sem texto extra. O JSON deve ter EXATAMENTE esta estrutura na raiz:
+        {
+          "lifeHistory": "narrativa em 4-6 parágrafos densos (mín. 500 palavras) separados por \\n, cobrindo infância, dinâmica familiar, adolescência, vida afetiva, carreira e estressores atuais.",
+          "problemList": "mín. 8 problemas clínicos específicos separados por ;\\n",
+          "diagnosisAndMeds": "Hipótese diagnóstica de... — NUNCA diagnóstico definitivo.",
+          "beliefs": [
+            {
+              "title": "Nome Curto da Crença (ex: Desamparo)",
+              "coreBelief": "Nome da Crença.\\nSobre si mesmo: \\"frase1\\".\\nSobre os outros: \\"frase1\\".\\nSobre o futuro: \\"frase\\".",
+              "intermediateBelief": "Regras:\\n\\"Regra 1.\\"\\n\\"Regra 2.\\"\\n\\"Regra 3.\\"\\n\\"Regra 4.\\"\\n\\"Regra 5.\\"\\nPressupostos:\\n\\"Se... então....\\"\\n\\"Se... então....\\"",
+              "activatingSituations": "5+ gatilhos separados por \\n",
+              "compensatoryStrategies": "4+ estratégias separadas por \\n",
+              "goals": "metas terapêuticas separadas por / ",
+              "strengths": "recursos e pontos fortes do paciente",
+              "situations": [
+                { "situation": "...", "automaticThought": "...", "meaning": "...", "emotion": "...", "behavior": "..." },
+                { "situation": "...", "automaticThought": "...", "meaning": "...", "emotion": "...", "behavior": "..." },
+                { "situation": "...", "automaticThought": "...", "meaning": "...", "emotion": "...", "behavior": "..." }
+              ]
+            }
+          ]
+        }
+        (Gere até 3 objetos dentro do array 'beliefs')
       ` : `
         INSTRUÇÕES — retorne SOMENTE o JSON, sem markdown, sem texto extra:
 
