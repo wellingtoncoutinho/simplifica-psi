@@ -138,3 +138,27 @@
   animation: float-orb-3 28s infinite ease-in-out;
 }
 
+/* Markdown Content Styles */
+.markdown-content p {
+  margin-top: 0;
+  margin-bottom: 6px;
+}
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+.markdown-content ul, .markdown-content ol {
+  margin-top: 0;
+  margin-bottom: 6px;
+  padding-left: 16px;
+}
+.markdown-content li {
+  margin-bottom: 3px;
+}
+.markdown-content li:last-child {
+  margin-bottom: 0;
+}
+.markdown-content strong {
+  font-weight: 700;
+  color: inherit;
+}
+

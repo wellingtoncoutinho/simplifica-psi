@@ -26,8 +26,66 @@ import {
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { GoogleGenAI } from "@google/genai";
+
+async function generateContentWithFallback(
+  ai: any,
+  options: {
+    model?: string;
+    contents: any;
+    config?: any;
+  }
+) {
+  const modelsToTry = [
+    "gemini-2.5-flash",
+    "gemini-3.5-flash",
+    "gemini-2.5-flash-lite",
+  ];
+  
+  const modelQueue = options.model 
+    ? [options.model, ...modelsToTry.filter(m => m !== options.model)]
+    : modelsToTry;
+
+  let lastError: any = null;
+
+  for (const model of modelQueue) {
+    let attempts = 2;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        console.log(`Trying Gemini with model: ${model} (attempt ${attempt}/${attempts})`);
+        const response = await ai.models.generateContent({
+          ...options,
+          model: model,
+        });
+        return response;
+      } catch (err: any) {
+        lastError = err;
+        const msg = String(err?.message || err);
+        console.warn(`Error on model ${model} (attempt ${attempt}):`, msg);
+        
+        const isTransient = 
+          msg.includes('503') || 
+          msg.includes('UNAVAILABLE') || 
+          msg.includes('high demand') ||
+          msg.includes('429') || 
+          msg.includes('RESOURCE_EXHAUSTED') || 
+          msg.includes('quota');
+
+        if (isTransient && attempt < attempts) {
+          const waitMs = msg.includes('429') ? 2000 : 500 * attempt;
+          await new Promise(resolve => setTimeout(resolve, waitMs));
+          continue;
+        }
+        break;
+      }
+    }
+  }
+  
+  throw lastError;
+}
+
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import ReactMarkdown from 'react-markdown';
 import { 
   LayoutDashboard, 
   Users, 
@@ -119,7 +177,7 @@ enum OperationType {
 const CLINICAL_APPROACHES: Record<string, { name: string; rules: string; pdfTopics: string[]; evolutionPrompt: string }> = {
   tcc: {
     name: "Terapia Cognitivo-Comportamental",
-    rules: "Siga a linha de raciocínio da TCC (identificando pensamentos, comportamentos, regulação emocional ou plano de ação) de forma orgânica e sutil. Evite forçar termos técnicos excessivos de uma só vez; use-os apenas se fizerem sentido prático na sessão.",
+    rules: "Analise e estruture o caso sob a ótica da TCC, identificando e detalhando os pensamentos automáticos, emoções, distorções cognitivas, comportamentos (incluindo de segurança ou esquemas de enfrentamento) e, principalmente, as crenças centrais/nucleares, regras intermediárias e pressupostos trazidos direta ou indiretamente na fala do paciente.",
     pdfTopics: [
       "1. Demanda / Queixa do Dia",
       "2. Técnicas & Intervenções de TCC Aplicadas",
@@ -278,12 +336,12 @@ export default function App() {
 
   // Listen for the special /import-transcript route
   useEffect(() => {
-    if (window.location.pathname.includes('/import-transcript')) {
-      if (user && user.email === 'wellcoutinho99@gmail.com') {
+    if (window.location.pathname.includes('/import-transcript') || window.location.search.includes('goto=import-transcript')) {
+      if (user) {
         setActiveTab('import-transcript');
-      } else if (user) {
-        setActiveTab('dashboard');
-        window.history.replaceState({}, '', '/');
+        if (window.location.search.includes('goto=import-transcript')) {
+          window.history.replaceState({}, '', '/import-transcript');
+        }
       }
     }
   }, [user]);
@@ -590,17 +648,19 @@ Como posso te ajudar hoje?`
     const newDoc = {
       id: Math.random().toString(36).substr(2, 9),
       name: file.name,
-      type: file.type.split('/')[1].toUpperCase(),
+      type: file.type && file.type.includes('/') ? file.type.split('/')[1].toUpperCase() : 'PDF',
       size: (file.size / 1024).toFixed(1) + ' KB',
       date: new Date().toLocaleDateString('pt-BR'),
       url: URL.createObjectURL(file),
-      category: category
+      category: category,
+      createdAt: new Date().toISOString()
     };
 
     setPatientDocuments(prev => ({
       ...prev,
       [patientId]: [newDoc, ...(prev[patientId] || [])]
     }));
+    return Promise.resolve();
   };
 
   const handleDeleteDocument = (patientId: string, docId: string) => {
@@ -608,6 +668,7 @@ Como posso te ajudar hoje?`
       ...prev,
       [patientId]: (prev[patientId] || []).filter(d => d.id !== docId)
     }));
+    return Promise.resolve();
   };
 
   useEffect(() => {
@@ -951,8 +1012,8 @@ Como posso te ajudar hoje?`
         Se o usuário demonstrar frustração extrema ou se esta for a 5ª interação ou mais, informe amigavelmente que ele também pode chamar o suporte direto no WhatsApp pelo botão que aparecerá na janela de chat.
       `;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+      const response = await generateContentWithFallback(ai, {
+        model: "gemini-2.5-flash",
         contents: [
           { role: "user", parts: [{ text: systemInstruction }] },
           ...contents
@@ -1792,6 +1853,7 @@ Como posso te ajudar hoje?`
       { id: 'financeiro', label: 'Financeiro', icon: DollarSign },
     ];
     if (user?.email && user.email.toLowerCase().trim() === 'wellcoutinho99@gmail.com') {
+      items.push({ id: 'import-transcript', label: 'Importar Transcrição', icon: FileDown });
       items.push({ id: 'admin', label: 'Painel Admin', icon: ShieldCheck });
     }
     return items;
@@ -1836,7 +1898,7 @@ Como posso te ajudar hoje?`
               
               <div className="space-y-3 pt-2">
                 <a 
-                  href="https://wa.me/5562983208784" // Wellington's Whatsapp!
+                  href="https://wa.me/5511939215473" // Wellington's Whatsapp!
                   target="_blank" 
                   rel="noopener noreferrer"
                   className="w-full py-3 bg-[#5F7D5C] hover:bg-[#4E674C] text-white font-bold rounded-xl transition-all shadow-md shadow-[#5F7D5C]/10 flex items-center justify-center gap-2 text-xs uppercase tracking-wider font-sans"
@@ -2145,30 +2207,57 @@ Como posso te ajudar hoje?`
                 clinicalApproach={profileSettings.clinicalApproach || 'tcc'}
                 onSaveSession={async (patientId, date, time, duration, amount, type, note) => {
                   try {
-                    const sessionData: any = {
-                      patientId,
-                      date,
-                      time,
-                      duration,
-                      type,
-                      status: 'Realizada',
-                      ownerId: user.uid,
-                      createdAt: new Date().toISOString(),
-                      updatedAt: new Date().toISOString(),
-                      amount: parseFloat(amount) || 0,
-                      cost: 0,
-                      paid: false,
-                      nfIssued: false
-                    };
-                    const sessionRef = await addDoc(collection(db, 'sessions'), sessionData);
-                    
                     const p = patients.find(pat => pat.id === patientId);
+                    const existingSession = sessions.find(s => s.patientId === patientId && s.date === date && s.status === 'Agendada');
+                    
+                    let isScheduledDay = false;
+                    if (p && p.sessionDay) {
+                      const dObj = new Date(date + 'T12:00:00');
+                      const dayName = format(dObj, 'eeee', { locale: ptBR });
+                      const capitalized = dayName.charAt(0).toUpperCase() + dayName.slice(1);
+                      if (p.sessionDay === capitalized) {
+                        isScheduledDay = true;
+                      }
+                    }
+
+                    let sessionId = '';
+                    let createdOrUpdatedSession = false;
+
+                    if (existingSession) {
+                      await updateDoc(doc(db, 'sessions', existingSession.id), {
+                        status: 'Realizada',
+                        updatedAt: new Date().toISOString(),
+                        amount: parseFloat(amount) || existingSession.amount || 0
+                      });
+                      sessionId = existingSession.id;
+                      createdOrUpdatedSession = true;
+                    } else if (isScheduledDay) {
+                      const sessionData: any = {
+                        patientId,
+                        date,
+                        time,
+                        duration,
+                        type,
+                        status: 'Realizada',
+                        ownerId: user.uid,
+                        createdAt: new Date().toISOString(),
+                        updatedAt: new Date().toISOString(),
+                        amount: parseFloat(amount) || 0,
+                        cost: 0,
+                        paid: false,
+                        nfIssued: false
+                      };
+                      const sessionRef = await addDoc(collection(db, 'sessions'), sessionData);
+                      sessionId = sessionRef.id;
+                      createdOrUpdatedSession = true;
+                    }
+                    
                     if (p) {
                       const evolucoes = p.clinicalData?.evoluções || [];
                       const nextSessionNum = (evolucoes.length > 0 ? Math.max(...evolucoes.map(e => e.sessionNumber || 0)) : 0) + 1;
                       
                       const newEvo = {
-                        id: sessionRef.id,
+                        id: sessionId || 'evo_' + Date.now(),
                         date: date.split('-').reverse().join('/'),
                         time,
                         sessionNumber: nextSessionNum,
@@ -2187,13 +2276,23 @@ Como posso te ajudar hoje?`
                     
                     setSelectedPatient(patientId);
                     setActiveTab('pacientes');
-                    alert("Transcrição importada e sessão registrada com sucesso!");
+                    
+                    if (createdOrUpdatedSession) {
+                      alert("Transcrição importada e sessão registrada com sucesso!");
+                    } else {
+                      alert("Transcrição importada como relato de evolução com sucesso! (Nenhuma sessão financeira foi criada para este dia não agendado)");
+                    }
+
+                    // Limpa o storage da extensão
+                    window.dispatchEvent(new CustomEvent("simplepsi-clear-transcript"));
                   } catch (err: any) {
                     alert("Erro ao salvar a sessão: " + err.message);
                   }
                 }}
                 onCancel={() => {
                   setActiveTab('dashboard');
+                  // Limpa o storage da extensão
+                  window.dispatchEvent(new CustomEvent("simplepsi-clear-transcript"));
                 }}
               />
             )}
@@ -2345,7 +2444,7 @@ Como posso te ajudar hoje?`
                       </div>
                     </div>
                     <a
-                      href={`https://wa.me/5562983208784?text=${encodeURIComponent(
+                      href={`https://wa.me/5511939215473?text=${encodeURIComponent(
                         `Olá Suporte SimplePsi! Estou usando o sistema e preciso de suporte com a plataforma. Aqui está o histórico da minha conversa com a IA de Suporte:\n\n${supportMessages.map(m => `${m.role === 'user' ? 'Psicólogo' : 'IA Assistente'}: ${m.content}`).join('\n\n')}`
                       )}`}
                       target="_blank"
@@ -3230,7 +3329,7 @@ function DocCard({ doc, onDelete }: { doc: any, onDelete: (id: string) => void }
           e.stopPropagation();
           onDelete(doc.id);
         }}
-        className="absolute top-2 right-2 p-1.5 rounded-lg bg-red-500/10 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500 hover:text-white"
+        className="absolute top-2 right-2 p-1.5 rounded-lg bg-red-500/10 text-red-500 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity hover:bg-red-500 hover:text-white"
         title="Excluir documento"
       >
         <Trash2 size={12} />
@@ -3274,7 +3373,7 @@ function PatientDetailsView({
   onBack: () => void, 
   patients: any[], 
   documents: any[], 
-  onUpload: (file: File, category: 'prontuario' | 'anexo') => void,
+  onUpload: (file: File, category: 'prontuario' | 'anexo') => Promise<void>,
   onDeleteDocument: (docId: string) => void,
   onUpdatePatient: (patient: any) => void,
   onDeletePatient: (id: string) => void,
@@ -3561,33 +3660,14 @@ function PatientDetailsView({
         Retorne SOMENTE o JSON válido. Nenhum texto antes ou depois.
       `;
 
-      // Retry logic for 503 / overload errors
-      let response: any = null;
-      const maxRetries = 3;
-      for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-          response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-              responseMimeType: "application/json",
-              maxOutputTokens: 8192,
-            }
-          });
-          break; // success
-        } catch (retryErr: any) {
-          const msg = String(retryErr?.message || retryErr);
-          const isOverload = msg.includes('503') || msg.includes('UNAVAILABLE') || msg.includes('high demand');
-          const isRateLimit = msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota');
-          if ((isOverload || isRateLimit) && attempt < maxRetries) {
-            // 429 = per-minute throttle → wait longer; 503 = overload → shorter wait
-            const waitMs = isRateLimit ? 15000 : attempt * 2000;
-            await new Promise(res => setTimeout(res, waitMs));
-            continue;
-          }
-          throw retryErr;
+      const response = await generateContentWithFallback(ai, {
+        model: "gemini-2.5-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          maxOutputTokens: 8192,
         }
-      }
+      });
 
       // Strip markdown code fences the model sometimes adds despite instructions
       const rawText = response?.text || '{}';
@@ -3732,24 +3812,14 @@ function PatientDetailsView({
         ${schemaString}
       `;
 
-      let response;
-      const maxRetries = 2;
-      for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-          response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-              responseMimeType: "application/json",
-              maxOutputTokens: 8192,
-            }
-          });
-          break; 
-        } catch (error: any) {
-          if (attempt === maxRetries) throw error;
-          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      const response = await generateContentWithFallback(ai, {
+        model: "gemini-2.5-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          maxOutputTokens: 8192,
         }
-      }
+      });
 
       const rawText = response?.text || '{}';
       const sanitized = (() => {
@@ -3917,7 +3987,7 @@ function PatientDetailsView({
         - Use linguagem clara, altamente técnica e específica para a abordagem ${approachInfo.name}.
       `;
 
-      const response = await ai.models.generateContent({
+      const response = await generateContentWithFallback(ai, {
         model: "gemini-2.5-flash",
         contents: prompt,
         config: {
@@ -4050,7 +4120,7 @@ function PatientDetailsView({
         Retorne em português, formatado em Markdown limpo.
       `;
 
-      const response = await ai.models.generateContent({
+      const response = await generateContentWithFallback(ai, {
         model: "gemini-2.5-flash",
         contents: prompt
       });
@@ -4262,8 +4332,8 @@ function PatientDetailsView({
           const ai = new GoogleGenAI({ apiKey });
           const prompt = "Transcreva o áudio acima na íntegra, com máxima precisão. Escreva exatamente o que foi falado (em português), palavra por palavra, de forma corrida. Não adicione resumos, comentários, introduções ou explicações. Apenas retorne a transcrição bruta pura.";
 
-          const response = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
+          const response = await generateContentWithFallback(ai, {
+            model: "gemini-2.5-flash",
             contents: [
               {
                 inlineData: {
@@ -4342,26 +4412,33 @@ function PatientDetailsView({
 
       const ai = new GoogleGenAI({ apiKey });
       const prompt = `Atue como um psicólogo clínico experiente cuja abordagem teórica principal de atendimento é a ${approachInfo.name}.
-      Transforme a seguinte transcrição bruta de um áudio em um relato de sessão clínica escrito de forma profissional, mas com um tom pessoal (estilo relato de caso) adequado à sua linha teórica de atendimento.
+      Transforme a seguinte transcrição bruta de um áudio em um relato de sessão clínica completo, rico e estruturado de forma profissional, com um tom pessoal (estilo relato de caso) adequado à sua linha teórica de atendimento.
       
       DIRETRIZES DA SUA ABORDAGEM CLÍNICA (${approachInfo.name}):
       ${approachInfo.rules}
       
-      REGRA DE ESTILO CRÍTICA: Escreva de forma extremamente natural, humana, equilibrada e fluida. Utilize os conceitos teóricos da sua abordagem de maneira SUTIL e ORGÂNICA, apenas onde fizer sentido prático na fala do cliente. NUNCA force termos técnicos desnecessários de forma artificial e evite encher o relato com excesso de jargões acadêmicos. O texto deve soar como as anotações sóbrias e elegantes de um terapeuta humano real em seu cotidiano, sem parecer um artigo científico caricato.
+      CONTEÚDO CLÍNICO ESSENCIAL A SER MAPEADO E EXTRAÍDO:
+      Analise detalhadamente a transcrição para extrair e descrever com profundidade os aspectos clínicos chaves da sessão:
+      - Para TCC e abordagens cognitivas: Identifique e registre ativamente pensamentos automáticos, crenças centrais/nucleares (sobre si, os outros e o mundo), regras intermediárias, pressupostos condicionais (regras do tipo "se... então..."), distorções cognitivas, comportamentos de segurança, estratégias de enfrentamento e planos de ação.
+      - Para Psicanálise e abordagens psicodinâmicas: Identifique dinâmicas inconscientes, mecanismos de defesa do ego, padrões repetitivos de relacionamento e resistências.
+      - Para Humanista/Gestalt/ACT: Identifique o nível de awareness, contato com a experiência no aqui-e-agora, barreiras no self, sentimentos imediatos, valores e ações comprometidas.
+      - Para todas as abordagens: Detalhe os temas principais discutidos, o estado emocional/humor do paciente, as intervenções realizadas pelo terapeuta e as respostas do paciente.
+      
+      REGRA DE ESTILO E FLUXO: Escreva de forma extremamente natural, humana, equilibrada e fluida. Utilize os conceitos teóricos de maneira clinicamente útil e integrada à narrativa do paciente. O texto deve soar como as anotações ricas, completas e profundas de um terapeuta humano real em seu cotidiano clínico.
       
       REGRA DE FORMATO DE TEXTO:
       ${aiTextFormat === 'topics' 
-        ? 'O relato DEVE ser totalmente estruturado em TÓPICOS E BULLET POINTS claros e legíveis, organizados por temas ou momentos da sessão.' 
-        : 'O relato DEVE ser organizado em TEXTO CORRIDO E PARÁGRAFOS bem articulados e fluidos.'}
+        ? 'O relato DEVE ser totalmente estruturado em TÓPICOS E BULLET POINTS claros, legíveis e completos, organizados por temas ou momentos da sessão.' 
+        : 'O relato DEVE ser organizado em TEXTO CORRIDO E PARÁGRAFOS bem articulados, fluidos e integrados (sem listas simples ou tópicos, a menos que seja para um plano de ação).'}
       
       REGRA DE NÍVEL DE DETALHAMENTO:
       ${aiDetailLevel === 'proportional' 
-        ? 'Proporcional: O tamanho e a quantidade de detalhes do seu relato devem ser estritamente proporcionais ao tamanho e riqueza da transcrição fornecida. Se a transcrição for curta e contiver apenas o básico, devolva um relato curto e básico. Se a transcrição for longa, rica e detalhada, devolva um relato extremamente detalhado e rico correspondendo a toda a complexidade trazida.' 
+        ? 'Proporcional: O relato deve refletir a complexidade clínica da sessão de forma proporcional, mas sem omitir detalhes importantes. Mesmo se a transcrição for curta ou contiver falas fragmentadas, conecte os pontos de forma inteligente para redigir um relato coerente, completo e substancial.' 
         : aiDetailLevel === 'detailed'
-        ? 'Muito Detalhado: Escreva um relato extremamente detalhado, profundo e minucioso. Explore ao máximo cada ponto, sentimento e comportamento mencionado na transcrição, garantindo que nada de relevante seja omitido, e aprofunde o máximo possível na contextualização clínica, mesmo que o texto original precise ser muito expandido.'
+        ? 'Muito Detalhado: Escreva um relato extremamente detalhado, profundo e minucioso. Explore detalhadamente a dinâmica dos sintomas, as crenças, regras e pressupostos subjacentes identificados, as intervenções do terapeuta e as respostas do paciente, expandindo a análise clínica ao máximo.'
         : 'Super Resumido: Escreva um relato super conciso, direto ao ponto e focado apenas nos principais tópicos e insights. Evite rodeios e sintetize as informações com máxima objetividade.'}
       
-      REGRA IMPORTANTÍSSIMA 1: NUNCA invente, presuma ou adicione informações falsas ou não factuais que contradigam o sentido da transcrição bruta.
+      REGRA IMPORTANTÍSSIMA 1: NUNCA invente fatos externos não ditos na sessão, mas faça inferências clínicas legítimas sobre o funcionamento cognitivo e emocional do paciente a partir do material transcrito.
       
       REGRA IMPORTANTÍSSIMA 2: Substitua TODOS os nomes próprios de pessoas (pacientes, parceiros, parentes, etc) mencionados na transcrição APENAS pela letra inicial do nome seguida de ponto (exemplo: Gabi -> G., Alana -> A., Carol -> C.). 
       
@@ -4370,8 +4447,8 @@ function PatientDetailsView({
       Transcrição bruta a ser convertida:
       "${transcriptionText}"
       `;
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+      const response = await generateContentWithFallback(ai, {
+        model: "gemini-2.5-flash",
         contents: prompt,
       });
       setNewEvolutionNote(response.text);
@@ -4436,8 +4513,8 @@ Seja muito sucinto, formal, ético e direto de acordo com as diretrizes da sua a
 Relato:
 "${evo.note}"`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+      const response = await generateContentWithFallback(ai, {
+        model: "gemini-2.5-flash",
         contents: prompt,
         config: {
           responseMimeType: "application/json",
@@ -4549,7 +4626,7 @@ Relato:
       const fileName = `Prontuario_Sessao_${evo.sessionNumber || evo.id}_${safeDate}.pdf`;
       const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
       
-      onUpload(file, 'prontuario');
+      await onUpload(file, 'prontuario');
       alert("Prontuário gerado e salvo na Biblioteca de Documentos com sucesso!");
 
     } catch (err: any) {
@@ -4610,8 +4687,8 @@ Seja muito sucinto, formal, ético e direto de acordo com as diretrizes da sua a
 Relato:
 "${evo.note}"`;
 
-          const response = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
+          const response = await generateContentWithFallback(ai, {
+            model: "gemini-2.5-flash",
             contents: prompt,
             config: {
               responseMimeType: "application/json",
@@ -4717,7 +4794,7 @@ Relato:
           const fileName = `Prontuario_Sessao_${evo.sessionNumber || evo.id}_${safeDate}.pdf`;
           const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
           
-          onUpload(file, 'prontuario');
+          await onUpload(file, 'prontuario');
 
           if (i < sortedEvolutions.length - 1) {
             await new Promise(resolve => setTimeout(resolve, 800));
@@ -4900,8 +4977,8 @@ Relato:
         }
       `;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+      const response = await generateContentWithFallback(ai, {
+        model: "gemini-2.5-flash",
         contents: prompt,
         config: {
           responseMimeType: "application/json",
@@ -4947,9 +5024,7 @@ Relato:
           <ChevronRight className="rotate-180" size={24} />
         </button>
         <div>
-          {currentUserEmail === 'wellcoutinho99@gmail.com' && (
-            <div id="simplepsi-active-patient" data-id={patient.id} data-name={patient.name} style={{ display: 'none' }} />
-          )}
+          <div id="simplepsi-active-patient" data-id={patient.id} data-name={patient.name} style={{ display: 'none' }} />
           <h2 className="text-2xl font-bold uppercase text-text-main">{patient.name}</h2>
           <div className="flex gap-4 mt-1">
             <span className="text-xs text-text-muted flex items-center gap-1">
@@ -5026,7 +5101,7 @@ Relato:
 
         {/* Content Area */}
         <div className="lg:col-span-9 space-y-6">
-           <section className="glass-card rounded-[32px] p-8 min-h-[600px] overflow-hidden">
+           <section className="glass-card rounded-[24px] sm:rounded-[32px] p-4 sm:p-8 min-h-[500px] sm:min-h-[600px] overflow-hidden">
               <AnimatePresence mode="wait">
                 {activeSubTab === 'perfil' && (
                   <motion.div 
@@ -5036,9 +5111,9 @@ Relato:
                     exit={{ opacity: 0, y: -10 }}
                     className="space-y-8"
                   >
-                    <div className="flex items-center justify-between pb-8 border-b border-border-ui">
-                      <div className="flex items-center gap-6">
-                        <div className="w-24 h-24 rounded-3xl bg-primary/10 text-primary flex items-center justify-center text-4xl font-bold italic border border-primary/20">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-8 border-b border-border-ui">
+                      <div className="flex items-center gap-4 sm:gap-6">
+                        <div className="w-16 h-16 sm:w-24 sm:h-24 rounded-3xl bg-primary/10 text-primary flex items-center justify-center text-2xl sm:text-4xl font-bold italic border border-primary/20 flex-shrink-0">
                           {patient.name.charAt(0)}
                         </div>
                         <div className="space-y-1">
@@ -5046,44 +5121,44 @@ Relato:
                             <input 
                               value={editForm.name} 
                               onChange={(e) => setEditForm({...editForm, name: e.target.value.toUpperCase()})}
-                              className="text-2xl font-bold bg-surface-muted border border-border-ui rounded-lg px-2 py-1 outline-none focus:border-primary text-text-main w-full"
+                              className="text-xl sm:text-2xl font-bold bg-surface-muted border border-border-ui rounded-lg px-2 py-1 outline-none focus:border-primary text-text-main w-full"
                             />
                           ) : (
-                            <h3 className="text-2xl font-bold text-text-main uppercase">{patient.name}</h3>
+                            <h3 className="text-xl sm:text-2xl font-bold text-text-main uppercase">{patient.name}</h3>
                           )}
                           
                           {isEditing ? (
                             <input 
                               value={editForm.email} 
                               onChange={(e) => setEditForm({...editForm, email: e.target.value})}
-                              className="text-text-muted bg-surface-muted border border-border-ui rounded-lg px-2 py-1 outline-none focus:border-primary w-full text-sm mt-1"
+                              className="text-xs sm:text-sm text-text-muted bg-surface-muted border border-border-ui rounded-lg px-2 py-1 outline-none focus:border-primary w-full mt-1"
                             />
                           ) : (
-                            <p className="text-text-muted">{patient.email}</p>
+                            <p className="text-xs sm:text-sm text-text-muted truncate max-w-[180px] sm:max-w-none">{patient.email}</p>
                           )}
 
-                          <div className="flex gap-4 mt-2">
+                          <div className="flex flex-wrap gap-2 mt-2">
                             {isEditing ? (
                               <input 
                                 value={editForm.phone} 
                                 onChange={(e) => setEditForm({...editForm, phone: e.target.value})}
-                                className="text-xs bg-surface-muted px-3 py-1 rounded-lg border border-border-ui outline-none focus:border-primary"
+                                className="text-xs bg-surface-muted px-2 py-1 rounded-lg border border-border-ui outline-none focus:border-primary w-28"
                               />
                             ) : (
-                              <span className="text-xs bg-surface-muted px-3 py-1 rounded-full border border-border-ui">{patient.phone}</span>
+                              <span className="text-[10px] sm:text-xs bg-surface-muted px-2 py-0.5 sm:px-3 sm:py-1 rounded-full border border-border-ui">{patient.phone}</span>
                             )}
                             {isEditing ? (
                               <select 
                                 value={editForm.status || 'Ativo'}
                                 onChange={(e) => setEditForm({...editForm, status: e.target.value})}
-                                className="text-xs bg-surface-muted px-3 py-1 rounded-lg border border-border-ui outline-none focus:border-primary font-bold"
+                                className="text-xs bg-surface-muted px-2 py-1 rounded-lg border border-border-ui outline-none focus:border-primary font-bold"
                               >
                                 <option value="Ativo">ATIVO</option>
                                 <option value="Inativo">INATIVO</option>
                               </select>
                             ) : (
                               <span className={cn(
-                                "text-xs px-3 py-1 rounded-full border font-bold uppercase tracking-widest",
+                                "text-[10px] sm:text-xs px-2 py-0.5 sm:px-3 sm:py-1 rounded-full border font-bold uppercase tracking-widest",
                                 patient.status === 'Inativo' ? "bg-orange-500/10 text-orange-500 border-orange-500/10" : "bg-green-500/10 text-green-500 border-green-500/10"
                               )}>
                                 Paciente {patient.status || 'Ativo'}
@@ -5096,7 +5171,7 @@ Relato:
                       <button 
                         onClick={() => isEditing ? handleSaveProfile() : setIsEditing(true)}
                         className={cn(
-                          "px-6 py-2 rounded-xl text-xs font-bold transition-all shadow-sm",
+                          "px-6 py-2 rounded-xl text-xs font-bold transition-all shadow-sm w-full sm:w-auto",
                           isEditing ? "bg-primary text-white" : "bg-surface-muted text-text-main border border-border-ui hover:bg-border-ui"
                         )}
                       >
@@ -5429,20 +5504,20 @@ Relato:
                     exit={{ opacity: 0, y: -10 }}
                     className="space-y-8"
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center">
+                        <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
                           <FileText size={20} />
                         </div>
-                        <h3 className="text-xl font-bold text-text-main">Evoluções Clínicas</h3>
+                        <h3 className="text-lg sm:text-xl font-bold text-text-main">Evoluções Clínicas</h3>
                       </div>
                       {!isAddingEvolution && (
-                        <div className="flex items-center gap-3">
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
                           {clinicalData.evoluções.length > 0 && (
                             <button 
                               onClick={handleGenerateAllIndividualPDFs}
                               disabled={generatingAllPdfsProgress !== null}
-                              className="bg-blue-500/10 text-blue-500 border border-blue-500/20 px-4 py-2 rounded-xl text-sm font-medium hover:bg-blue-500 hover:text-white disabled:opacity-50 transition-all flex items-center gap-2 shadow-sm"
+                              className="bg-blue-500/10 text-blue-500 border border-blue-500/20 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium hover:bg-blue-500 hover:text-white disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-sm w-full sm:w-auto"
                             >
                               {generatingAllPdfsProgress ? (
                                 <>
@@ -5459,7 +5534,7 @@ Relato:
                           )}
                           <button 
                             onClick={() => setIsAddingEvolution(true)}
-                            className="bg-primary text-white px-4 py-2 rounded-xl text-sm font-medium hover:opacity-90 shadow-sm transition-all flex items-center gap-2"
+                            className="bg-primary text-white px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium hover:opacity-90 shadow-sm transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
                           >
                             <Plus size={16} /> Nova Evolução
                           </button>
@@ -5477,7 +5552,7 @@ Relato:
                           <h4 className="text-xs font-bold text-primary uppercase tracking-widest">Registrar Nova Sessão</h4>
                         </div>
                         
-                        <div className="grid grid-cols-3 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                           <div className="space-y-2">
                             <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Número da Sessão</label>
                             <input type="number" min="1" value={evolutionSessionNumber} onChange={(e) => setEvolutionSessionNumber(parseInt(e.target.value))} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-2 text-sm text-text-main outline-none focus:border-primary" />
@@ -5505,8 +5580,8 @@ Relato:
                                   <p className="text-xs font-bold text-primary uppercase tracking-widest text-center">Transcrevendo áudio com Inteligência Artificial...</p>
                                 </div>
                               ) : isRecording ? (
-                                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 py-2">
-                                  <div className="flex items-center gap-3">
+                                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 py-2 w-full">
+                                  <div className="flex items-center justify-center gap-3 w-full sm:w-auto">
                                     <div className="w-3 h-3 rounded-full bg-red-500 animate-ping" />
                                     <span className="text-[10px] font-bold text-red-500 uppercase tracking-widest">
                                       {isPaused ? "GRAVAÇÃO PAUSADA" : "GRAVANDO"}
@@ -5534,7 +5609,7 @@ Relato:
                                     `}</style>
                                   </div>
 
-                                  <div className="flex items-center gap-4">
+                                  <div className="flex items-center justify-center gap-4 w-full sm:w-auto flex-wrap">
                                     <span className="text-base font-bold text-text-main font-mono tracking-wider bg-surface-muted px-3 py-1 rounded-xl border border-white/5">
                                       {formatDuration(recordingDuration)}
                                     </span>
@@ -5600,8 +5675,8 @@ Relato:
                               )}
                             </div>
                             
-                            {/* Banner Extensão do Google Meet (Exclusivo para wellcoutinho99@gmail.com para fase de testes) */}
-                            {auth.currentUser?.email?.toLowerCase().trim() === 'wellcoutinho99@gmail.com' && (
+                            {/* Banner Extensão do Google Meet */}
+                            {auth.currentUser && (
                               <div className="p-4 rounded-2xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all">
                                 <div className="flex items-center gap-3 text-left">
                                   <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
@@ -6846,14 +6921,14 @@ Relato:
                     exit={{ opacity: 0, y: -10 }}
                     className="space-y-8"
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-blue-500/10 text-blue-500 flex items-center justify-center">
+                        <div className="w-10 h-10 rounded-full bg-blue-500/10 text-blue-500 flex items-center justify-center flex-shrink-0">
                           <FolderOpen size={20} />
                         </div>
-                        <h3 className="text-xl font-bold text-text-main uppercase tracking-tight">Biblioteca de Documentos</h3>
+                        <h3 className="text-lg sm:text-xl font-bold text-text-main uppercase tracking-tight">Biblioteca de Documentos</h3>
                       </div>
-                      <div className="flex gap-3">
+                      <div className="flex flex-wrap gap-2 w-full sm:w-auto">
                         <input 
                           type="file" 
                           ref={fileInputRef} 
@@ -6866,32 +6941,15 @@ Relato:
                           }} 
                           className="hidden" 
                         />
-                         <button 
-                          onClick={handleGenerateAllPDFRecords}
-                          disabled={isGeneratingAllPdf}
-                          className="bg-blue-500/10 text-blue-500 border border-blue-500/20 px-4 py-2 rounded-xl text-xs font-bold hover:bg-blue-500 hover:text-white transition-all uppercase flex items-center gap-2"
-                        >
-                           {isGeneratingAllPdf ? (
-                             <>
-                               <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                               Gerando...
-                             </>
-                           ) : (
-                             <>
-                               <FileDown size={14} />
-                               Baixar Prontuário Completo
-                             </>
-                           )}
-                        </button>
                         <button 
                           onClick={() => { setUploadCategory('prontuario'); setTimeout(() => fileInputRef.current?.click(), 0); }}
-                          className="bg-primary/20 text-primary px-4 py-2 rounded-xl text-xs font-bold hover:bg-primary hover:text-white transition-all border border-primary/20 uppercase"
+                          className="flex-1 sm:flex-initial bg-primary/20 text-primary px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-primary hover:text-white transition-all border border-primary/20 uppercase"
                         >
                            + Prontuário
                         </button>
                         <button 
                           onClick={() => { setUploadCategory('anexo'); setTimeout(() => fileInputRef.current?.click(), 0); }}
-                          className="bg-surface-muted text-text-main border border-border-ui px-4 py-2 rounded-xl text-xs font-bold hover:bg-border-ui transition-all uppercase"
+                          className="flex-1 sm:flex-initial bg-surface-muted text-text-main border border-border-ui px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-border-ui transition-all uppercase"
                         >
                            + Outro Documento
                         </button>
@@ -7329,45 +7387,45 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
           <h2 className="text-3xl font-bold tracking-tight text-text-main">Gestão Financeira</h2>
           <p className="text-text-muted mt-2">Acompanhe seus rendimentos e custos de consultório.</p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
           <button 
             onClick={() => setIsAddingExpense(true)}
-            className="bg-red-500 hover:bg-red-600 text-white px-6 py-2.5 rounded-xl font-bold text-[10px] uppercase tracking-widest flex items-center gap-2 transition-all shadow-lg shadow-red-500/20"
+            className="w-full sm:w-auto justify-center bg-red-500 hover:bg-red-600 text-white px-6 py-2.5 rounded-xl font-bold text-[10px] uppercase tracking-widest flex items-center gap-2 transition-all shadow-lg shadow-red-500/20"
           >
             <Plus size={16} />
             Nova Despesa
           </button>
-          <div className="flex gap-2 p-1 bg-surface-muted rounded-2xl border border-border-ui">
-          <button 
-            onClick={() => setFilter('all')}
-            className={cn(
-              "px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all",
-              filter === 'all' ? "bg-card text-primary shadow-sm" : "text-text-muted hover:text-text-main"
-            )}
-          >
-            Todos
-          </button>
-          <button 
-            onClick={() => setFilter('paid')}
-            className={cn(
-              "px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all",
-              filter === 'paid' ? "bg-card text-green-500 shadow-sm" : "text-text-muted hover:text-text-main"
-            )}
-          >
-            Recebidos
-          </button>
-          <button 
-            onClick={() => setFilter('pending')}
-            className={cn(
-              "px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all",
-              filter === 'pending' ? "bg-card text-yellow-500 shadow-sm" : "text-text-muted hover:text-text-main"
-            )}
-          >
-            A Receber
-          </button>
+          <div className="flex gap-1 p-1 bg-surface-muted rounded-2xl border border-border-ui w-full sm:w-auto justify-between">
+            <button 
+              onClick={() => setFilter('all')}
+              className={cn(
+                "flex-1 sm:flex-none text-center px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all",
+                filter === 'all' ? "bg-card text-primary shadow-sm" : "text-text-muted hover:text-text-main"
+              )}
+            >
+              Todos
+            </button>
+            <button 
+              onClick={() => setFilter('paid')}
+              className={cn(
+                "flex-1 sm:flex-none text-center px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all",
+                filter === 'paid' ? "bg-card text-green-500 shadow-sm" : "text-text-muted hover:text-text-main"
+              )}
+            >
+              Recebidos
+            </button>
+            <button 
+              onClick={() => setFilter('pending')}
+              className={cn(
+                "flex-1 sm:flex-none text-center px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all",
+                filter === 'pending' ? "bg-card text-yellow-500 shadow-sm" : "text-text-muted hover:text-text-main"
+              )}
+            >
+              A Receber
+            </button>
+          </div>
         </div>
       </div>
-    </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="glass-card p-6 rounded-[32px] border border-white/5 space-y-4 relative">
@@ -9107,12 +9165,48 @@ function ImportTranscriptView({
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [interactionCount, setInteractionCount] = useState(0);
 
+  const currentUser = auth.currentUser;
+  const isMaster = currentUser?.email?.toLowerCase().trim() === 'wellcoutinho99@gmail.com';
+  const hasReachedLimit = interactionCount >= 4 && !isMaster;
+
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll chat on new message
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [aiMessages, isAiLoading]);
+
+  // Escuta postMessage da extensão do Chrome para importar os dados de forma assíncrona
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'SIMPLEPSI_IMPORT_TRANSCRIPT') {
+        const { text, patientId } = event.data;
+        console.log("[React App] Recebeu postMessage do Chrome extension:", { textLength: text?.length, patientId });
+        
+        // Só importa se o campo estiver vazio para evitar sobrescrever edições manuais
+        setTranscriptText(current => {
+          if (!current && text) {
+            console.log("[React App] Populando transcriptText com:", text.substring(0, 50) + "...");
+            return text;
+          }
+          return current;
+        });
+
+        if (patientId) {
+          setSelectedPatientId(current => {
+            if (!current && patientId) {
+              console.log("[React App] Populando selectedPatientId com:", patientId);
+              return patientId;
+            }
+            return current;
+          });
+        }
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
 
   // Handle trigger from Chrome extension
   const handleImportTriggered = () => {
@@ -9163,7 +9257,7 @@ function ImportTranscriptView({
       alert("A transcrição está vazia. Capture ou digite algo primeiro!");
       return;
     }
-    if (interactionCount >= 4) {
+    if (hasReachedLimit) {
       alert("Limite de 4 interações de IA atingido.");
       return;
     }
@@ -9232,8 +9326,8 @@ function ImportTranscriptView({
 
       setAiMessages(prev => [...prev, { role: 'user', content: `Executar: ${label}` }]);
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+      const response = await generateContentWithFallback(ai, {
+        model: "gemini-2.5-flash",
         contents: prompt,
       });
 
@@ -9254,7 +9348,7 @@ function ImportTranscriptView({
       alert("A transcrição está vazia. Capture ou digite algo primeiro!");
       return;
     }
-    if (interactionCount >= 4) {
+    if (hasReachedLimit) {
       alert("Limite de 4 interações de IA atingido.");
       return;
     }
@@ -9293,10 +9387,11 @@ function ImportTranscriptView({
       Pergunta/Instrução atual do terapeuta:
       "${userMessage}"
 
-      Responda de forma ética, empática, profissional e focada nas melhores práticas da psicologia clínica. Nunca presuma dados de identificação do paciente. Seja objetivo e conciso.`;
+      Aja como um assistente de inteligência artificial prestativo e profissional (estilo o Gemini padrão). Se o usuário der uma instrução direta (como "escreva o relato no estilo TCC", "resuma", "analise" ou "reescreva tal parte"), execute a instrução exatamente como pedido, focando estritamente no conteúdo e na abordagem.
+      REGRA DE OURO: Vá direto ao ponto. Não adicione introduções burocráticas (como "Aqui está a análise...") ou assinaturas/rodapés repetitivos (como "Observação do Copiloto:" ou "Nota da IA"). Retorne diretamente a resposta limpa e útil.`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+      const response = await generateContentWithFallback(ai, {
+        model: "gemini-2.5-flash",
         contents: prompt,
       });
 
@@ -9335,8 +9430,8 @@ function ImportTranscriptView({
       className="space-y-6 animate-in fade-in-50 duration-300"
     >
       {/* Inputs ocultos para ponte com a Extensão Chrome */}
-      <input type="hidden" id="simplepsi-pending-transcript-input" value="" />
-      <input type="hidden" id="simplepsi-pending-patient-id-input" value="" />
+      <input type="hidden" id="simplepsi-pending-transcript-input" defaultValue="" />
+      <input type="hidden" id="simplepsi-pending-patient-id-input" defaultValue="" />
       <button id="simplepsi-trigger-import" style={{ display: 'none' }} onClick={handleImportTriggered} />
 
       <div className="flex items-center gap-4">
@@ -9379,9 +9474,9 @@ function ImportTranscriptView({
                 <Sparkles size={14} /> Copiloto de IA
                 <span className={cn(
                   "text-[9px] px-1.5 py-0.5 rounded-full lowercase tracking-normal font-bold",
-                  interactionCount >= 4 ? "bg-red-500/20 text-red-500" : "bg-primary/20 text-primary"
+                  hasReachedLimit ? "bg-red-500/20 text-red-500" : "bg-primary/20 text-primary"
                 )}>
-                  {interactionCount}/4
+                  {isMaster ? `${interactionCount}/∞` : `${interactionCount}/4`}
                 </span>
               </button>
             </div>
@@ -9390,21 +9485,16 @@ function ImportTranscriptView({
             {activeLeftTab === 'transcript' && (
               <div className="flex-1 flex flex-col">
                 <h4 className="text-xs font-bold text-primary uppercase tracking-widest mb-3">Falas Capturadas na Sessão</h4>
-                {transcriptText ? (
-                  <textarea
-                    value={transcriptText}
-                    onChange={(e) => setTranscriptText(e.target.value)}
-                    className="w-full flex-1 bg-surface-muted/50 border border-border-ui rounded-2xl p-4 text-xs leading-relaxed text-text-main font-mono outline-none resize-none focus:border-primary/50 transition-all focus:ring-1 focus:ring-primary/20 min-h-[300px]"
-                    placeholder="Edite a transcrição se necessário..."
-                  />
-                ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-surface-muted/30 border border-dashed border-border-ui rounded-2xl min-h-[300px]">
-                    <Loader2 size={32} className="animate-spin text-primary/50 mb-3" />
-                    <p className="text-sm font-bold text-text-main">Aguardando extensão...</p>
-                    <p className="text-xs text-text-muted mt-1 max-w-sm">
-                      Se você acabou de fechar o Google Meet ou clicou em enviar, a extensão está carregando o histórico de falas para esta tela.
-                    </p>
-                  </div>
+                <textarea
+                  value={transcriptText}
+                  onChange={(e) => setTranscriptText(e.target.value)}
+                  className="w-full flex-1 bg-surface-muted/50 border border-border-ui rounded-2xl p-4 text-xs leading-relaxed text-text-main font-mono outline-none resize-none focus:border-primary/50 transition-all focus:ring-1 focus:ring-primary/20 min-h-[300px]"
+                  placeholder="Cole a transcrição bruta do Meet aqui ou edite-a livremente..."
+                />
+                {!transcriptText && (
+                  <p className="text-[10px] text-text-muted mt-2 pl-1 animate-pulse">
+                    💡 Aguardando extensão... Cole a transcrição manualmente ou envie os dados pela extensão do Google Meet.
+                  </p>
                 )}
               </div>
             )}
@@ -9416,47 +9506,51 @@ function ImportTranscriptView({
                 {/* Badge de interações */}
                 <div className={cn(
                   "p-3 rounded-2xl mb-4 text-xs font-medium flex items-center justify-between transition-all duration-300",
-                  interactionCount >= 4 
+                  hasReachedLimit 
                     ? "bg-red-500/10 border border-red-500/25 text-red-500"
                     : "bg-primary/5 border border-primary/20 text-primary"
                 )}>
                   <div className="flex items-center gap-2">
-                    <Sparkles size={14} className={cn(interactionCount >= 4 ? "" : "animate-pulse")} />
+                    <Sparkles size={14} className={cn(hasReachedLimit ? "" : "animate-pulse")} />
                     <span>
-                      {interactionCount >= 4 
+                      {hasReachedLimit 
                         ? "Limite de 4 interações de IA atingido para esta sessão."
-                        : `Uso do Copiloto: ${interactionCount} de 4 interações utilizadas`}
+                        : isMaster 
+                          ? `Uso do Copiloto: ${interactionCount} interações utilizadas (Acesso Ilimitado)` 
+                          : `Uso do Copiloto: ${interactionCount} de 4 interações utilizadas`}
                     </span>
                   </div>
-                  <span className="text-[10px] font-bold uppercase">{4 - interactionCount} restantes</span>
+                  <span className="text-[10px] font-bold uppercase">
+                    {isMaster ? "Ilimitado" : `${4 - interactionCount} restantes`}
+                  </span>
                 </div>
 
                 {/* Ações Rápidas */}
                 <div className="grid grid-cols-2 gap-3 mb-5">
                   <button
                     onClick={() => handleAiAction('sintetizar')}
-                    disabled={isAiLoading || interactionCount >= 4 || !transcriptText.trim()}
+                    disabled={isAiLoading || hasReachedLimit || !transcriptText.trim()}
                     className="flex items-center gap-2 justify-center px-3 py-2.5 rounded-xl border border-white/5 bg-white/5 text-[11px] font-bold text-text-main uppercase hover:bg-primary/10 hover:border-primary/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed group"
                   >
                     <span>✨ Sintetizar Prontuário</span>
                   </button>
                   <button
                     onClick={() => handleAiAction('formatar')}
-                    disabled={isAiLoading || interactionCount >= 4 || !transcriptText.trim()}
+                    disabled={isAiLoading || hasReachedLimit || !transcriptText.trim()}
                     className="flex items-center gap-2 justify-center px-3 py-2.5 rounded-xl border border-white/5 bg-white/5 text-[11px] font-bold text-text-main uppercase hover:bg-primary/10 hover:border-primary/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     <span>🧹 Formatar Diálogo</span>
                   </button>
                   <button
                     onClick={() => handleAiAction('analise')}
-                    disabled={isAiLoading || interactionCount >= 4 || !transcriptText.trim()}
+                    disabled={isAiLoading || hasReachedLimit || !transcriptText.trim()}
                     className="flex items-center gap-2 justify-center px-3 py-2.5 rounded-xl border border-white/5 bg-white/5 text-[11px] font-bold text-text-main uppercase hover:bg-primary/10 hover:border-primary/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     <span>{dynamicAnalysisLabel}</span>
                   </button>
                   <button
                     onClick={() => handleAiAction('plano')}
-                    disabled={isAiLoading || interactionCount >= 4 || !transcriptText.trim()}
+                    disabled={isAiLoading || hasReachedLimit || !transcriptText.trim()}
                     className="flex items-center gap-2 justify-center px-3 py-2.5 rounded-xl border border-white/5 bg-white/5 text-[11px] font-bold text-text-main uppercase hover:bg-primary/10 hover:border-primary/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     <span>🎯 Plano de Ação</span>
@@ -9475,7 +9569,13 @@ function ImportTranscriptView({
                           : "bg-surface-muted border border-border-ui text-text-main self-start rounded-tl-none text-left"
                       )}
                     >
-                      <span>{msg.content}</span>
+                      {msg.role === 'user' ? (
+                        <span>{msg.content}</span>
+                      ) : (
+                        <div className="markdown-content text-xs leading-relaxed text-left">
+                          <ReactMarkdown>{msg.content}</ReactMarkdown>
+                        </div>
+                      )}
                       
                       {/* Controles para respostas da IA */}
                       {msg.role === 'model' && idx > 0 && (
@@ -9523,8 +9623,8 @@ function ImportTranscriptView({
                     type="text"
                     value={aiInput}
                     onChange={(e) => setAiInput(e.target.value)}
-                    placeholder={interactionCount >= 4 ? "Limite atingido." : "Pergunte algo sobre a transcrição..."}
-                    disabled={isAiLoading || interactionCount >= 4 || !transcriptText.trim()}
+                    placeholder={hasReachedLimit ? "Limite atingido." : "Pergunte algo sobre a transcrição..."}
+                    disabled={isAiLoading || hasReachedLimit || !transcriptText.trim()}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') handleSendCustomMessage();
                     }}
@@ -9532,7 +9632,7 @@ function ImportTranscriptView({
                   />
                   <button
                     onClick={handleSendCustomMessage}
-                    disabled={isAiLoading || interactionCount >= 4 || !aiInput.trim() || !transcriptText.trim()}
+                    disabled={isAiLoading || hasReachedLimit || !aiInput.trim() || !transcriptText.trim()}
                     className="p-2.5 rounded-2xl bg-primary text-white hover:opacity-90 transition-opacity disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center"
                   >
                     <Send size={15} />

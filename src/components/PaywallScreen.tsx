@@ -114,7 +114,7 @@ export default function PaywallScreen({
           {/* Ações Secundárias e Rodapé */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-6 border-t border-[#2E3C2B]/5 text-xs text-[#2E3C2B]/60">
             <a 
-              href="https://wa.me/5562983208784"
+              href="https://wa.me/5511939215473"
               target="_blank" 
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 hover:text-[#5F7D5C] transition-colors font-semibold"
