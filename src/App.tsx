@@ -303,8 +303,8 @@ const calculateIncomePrediction = (start: Date, end: Date, sessions: any[], pati
         const capitalized = dayName.charAt(0).toUpperCase() + dayName.slice(1);
         if (capitalized !== p.sessionDay) return;
         
-        const pCreatedAt = new Date(p.createdAt || p.birthDate || '2024-01-01');
-        if (startOfDay(d) < startOfDay(pCreatedAt)) return;
+        const pRecurrenceStart = p.recurrenceStart ? new Date(p.recurrenceStart + 'T12:00:00') : new Date(p.createdAt || p.birthDate || '2024-01-01');
+        if (startOfDay(d) < startOfDay(pRecurrenceStart)) return;
 
         const hasRecorded = recordedInRange.some(s => s.patientId === p.id && isSameDay(new Date(s.date + 'T12:00:00'), d));
         if (hasRecorded) return;
@@ -312,7 +312,7 @@ const calculateIncomePrediction = (start: Date, end: Date, sessions: any[], pati
         const hasCancelled = sessions.some(s => s.patientId === p.id && s.status === 'Cancelada' && isSameDay(new Date(s.date + 'T12:00:00'), d));
         if (hasCancelled) return;
 
-        const weeksDiff = Math.abs(differenceInWeeks(startOfDay(d), startOfDay(pCreatedAt)));
+        const weeksDiff = Math.abs(differenceInWeeks(startOfDay(d), startOfDay(pRecurrenceStart)));
         let shouldCount = false;
         if (!p.recurrence || p.recurrence === 'Semanal') shouldCount = true;
         else if (p.recurrence === 'Quinzenal') shouldCount = weeksDiff % 2 === 0;
@@ -824,6 +824,7 @@ Como posso te ajudar hoje?`
         photo: `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.name}`,
         amount: parseFloat(data.amount) || 0,
         recurrence: data.recurrence || 'Semanal',
+        recurrenceStart: data.firstSessionDate || new Date().toISOString().split('T')[0],
         modality: data.modality || 'Online',
         meetingLink: data.meetingLink || '',
         ownerId: user.uid,
@@ -1093,9 +1094,9 @@ Como posso te ajudar hoje?`
           
           if (hasRecorded || hasCancelled) return;
 
-          const pCreatedAt = new Date((p as any).createdAt || p.birthDate || '2024-01-01');
-          if (startOfDay(day) < startOfDay(pCreatedAt)) return;
-          const weeksDiff = Math.abs(differenceInWeeks(startOfDay(day), startOfDay(pCreatedAt)));
+          const pRecurrenceStart = p.recurrenceStart ? new Date(p.recurrenceStart + 'T12:00:00') : new Date((p as any).createdAt || p.birthDate || '2024-01-01');
+          if (startOfDay(day) < startOfDay(pRecurrenceStart)) return;
+          const weeksDiff = Math.abs(differenceInWeeks(startOfDay(day), startOfDay(pRecurrenceStart)));
           
           let shouldRender = false;
           if (!p.recurrence || p.recurrence === 'Semanal') shouldRender = true;
@@ -1648,14 +1649,16 @@ Como posso te ajudar hoje?`
       const oldPatient = patients.find(p => p.id === id);
       const isDayChanged = oldPatient && oldPatient.sessionDay !== data.sessionDay;
       const isTimeChanged = oldPatient && oldPatient.sessionTime !== data.sessionTime;
+      const isRecurrenceChanged = oldPatient && oldPatient.recurrence !== data.recurrence;
+      const isRecurrenceStartChanged = oldPatient && oldPatient.recurrenceStart !== data.recurrenceStart;
 
       await updateDoc(patientRef, {
         ...data,
         updatedAt: new Date().toISOString()
       });
 
-      // If default schedule day/time changed, update future scheduled sessions
-      if ((isDayChanged || isTimeChanged) && data.sessionDay) {
+      // If default schedule day/time, recurrence or recurrence start date changed, update/align future scheduled sessions
+      if (isDayChanged || isTimeChanged || isRecurrenceChanged || isRecurrenceStartChanged) {
         const todayStr = new Date().toISOString().split('T')[0];
         const patientSessionsToUpdate = sessions.filter(s => 
           s.patientId === id && 
@@ -1664,7 +1667,8 @@ Como posso te ajudar hoje?`
         );
         
         const daysOfWeek = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
-        const newDayIndex = daysOfWeek.indexOf(data.sessionDay);
+        const targetDayName = data.sessionDay || (oldPatient?.sessionDay || '');
+        const newDayIndex = daysOfWeek.indexOf(targetDayName);
         
         if (newDayIndex !== -1) {
           for (const s of patientSessionsToUpdate) {
@@ -1672,22 +1676,46 @@ Como posso te ajudar hoje?`
             const currentDayIndex = currentDate.getDay();
             const diffDays = newDayIndex - currentDayIndex;
             
-            const newDate = new Date(currentDate);
-            newDate.setDate(currentDate.getDate() + diffDays);
-            const newDateStr = newDate.toISOString().split('T')[0];
-            
-            await updateDoc(doc(db, 'sessions', s.id), {
-              date: newDateStr,
-              time: data.sessionTime || s.time,
-              updatedAt: new Date().toISOString()
-            });
-            
-            if (s.googleEventId) {
-              await updateSessionInGoogleCalendar({
-                ...s,
+            const adjustedDate = new Date(currentDate);
+            adjustedDate.setDate(currentDate.getDate() + diffDays);
+            const newDateStr = adjustedDate.toISOString().split('T')[0];
+
+            // Calculate if this adjusted date matches the new recurrence pattern
+            const newRecurrence = data.recurrence || (oldPatient?.recurrence || 'Semanal');
+            const newRecurrenceStart = data.recurrenceStart 
+              ? new Date(data.recurrenceStart + 'T12:00:00') 
+              : new Date(oldPatient?.createdAt || oldPatient?.birthDate || '2024-01-01');
+
+            let shouldKeep = false;
+            if (newRecurrence === 'Nenhuma') {
+              shouldKeep = false;
+            } else if (startOfDay(adjustedDate) >= startOfDay(newRecurrenceStart)) {
+              const weeksDiff = Math.abs(differenceInWeeks(startOfDay(adjustedDate), startOfDay(newRecurrenceStart)));
+              if (newRecurrence === 'Semanal') shouldKeep = true;
+              else if (newRecurrence === 'Quinzenal') shouldKeep = weeksDiff % 2 === 0;
+              else if (newRecurrence === 'Mensal') shouldKeep = weeksDiff % 4 === 0;
+            }
+
+            if (shouldKeep) {
+              await updateDoc(doc(db, 'sessions', s.id), {
                 date: newDateStr,
-                time: data.sessionTime || s.time
+                time: data.sessionTime || s.time,
+                updatedAt: new Date().toISOString()
               });
+              
+              if (s.googleEventId) {
+                await updateSessionInGoogleCalendar({
+                  ...s,
+                  date: newDateStr,
+                  time: data.sessionTime || s.time
+                });
+              }
+            } else {
+              // Delete future scheduled physical session that doesn't fit the new recurrence pattern
+              if (s.googleEventId) {
+                await deleteSessionFromGoogleCalendar(s.googleEventId);
+              }
+              await deleteDoc(doc(db, 'sessions', s.id));
             }
           }
         }
@@ -5338,6 +5366,49 @@ Relato:
                           )}
                         </div>
 
+                        {editForm && editForm.recurrence && editForm.recurrence !== 'Nenhuma' && (
+                          <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui col-span-2 lg:col-span-2">
+                            <span className="text-xs text-text-muted">Data de Início da Recorrência</span>
+                            {isEditing ? (
+                              <div className="space-y-1">
+                                <input 
+                                  type="date" 
+                                  value={editForm.recurrenceStart || (editForm.createdAt ? editForm.createdAt.split('T')[0] : '')} 
+                                  onChange={(e) => {
+                                    const date = new Date(e.target.value + 'T12:00:00');
+                                    const days = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+                                    setEditForm({
+                                      ...editForm, 
+                                      recurrenceStart: e.target.value,
+                                      sessionDay: days[date.getDay()]
+                                    });
+                                  }} 
+                                  className="text-xs font-bold text-text-main bg-transparent outline-none cursor-pointer w-full focus:border-primary"
+                                />
+                                <p className="text-[10px] text-primary font-bold uppercase tracking-tighter opacity-70">
+                                  Define o dia da semana e o ciclo de {editForm.recurrence.toLowerCase()}.
+                                </p>
+                              </div>
+                            ) : (
+                              <span className="text-xs font-bold text-text-main">
+                                {(() => {
+                                  try {
+                                    if (patient.recurrenceStart) {
+                                      return format(new Date(patient.recurrenceStart + 'T12:00:00'), "dd/MM/yyyy");
+                                    }
+                                    if (patient.createdAt) {
+                                      return format(new Date(patient.createdAt), "dd/MM/yyyy");
+                                    }
+                                  } catch (e) {
+                                    console.error(e);
+                                  }
+                                  return 'Não definida';
+                                })()}
+                              </span>
+                            )}
+                          </div>
+                        )}
+
                         <div className="col-span-2 lg:col-span-4 flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
                           <span className="text-xs text-text-muted">Link de Atendimento (ex: Google Meet, Zoom)</span>
                           {isEditing ? (
@@ -7271,10 +7342,10 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
           const capitalized = dayName.charAt(0).toUpperCase() + dayName.slice(1);
           if (capitalized !== p.sessionDay) return;
           
-          const pCreatedAt = new Date(p.createdAt || p.birthDate || '2024-01-01');
-          if (startOfDay(d) < startOfDay(pCreatedAt)) return;
+          const pRecurrenceStart = p.recurrenceStart ? new Date(p.recurrenceStart + 'T12:00:00') : new Date(p.createdAt || p.birthDate || '2024-01-01');
+          if (startOfDay(d) < startOfDay(pRecurrenceStart)) return;
 
-          const weeksDiff = Math.abs(differenceInWeeks(startOfDay(d), startOfDay(pCreatedAt)));
+          const weeksDiff = Math.abs(differenceInWeeks(startOfDay(d), startOfDay(pRecurrenceStart)));
           let isRecurrenceDay = false;
           if (p.recurrence === 'Semanal') isRecurrenceDay = true;
           else if (p.recurrence === 'Quinzenal') isRecurrenceDay = weeksDiff % 2 === 0;
@@ -8007,9 +8078,9 @@ function CalendarView({
         
         if (hasRecorded || hasCancelled) return;
 
-        const pCreatedAt = new Date(p.createdAt || p.birthDate || '2024-01-01');
-        if (startOfDay(day) < startOfDay(pCreatedAt)) return;
-        const weeksDiff = Math.abs(differenceInWeeks(startOfDay(day), startOfDay(pCreatedAt)));
+        const pRecurrenceStart = p.recurrenceStart ? new Date(p.recurrenceStart + 'T12:00:00') : new Date(p.createdAt || p.birthDate || '2024-01-01');
+        if (startOfDay(day) < startOfDay(pRecurrenceStart)) return;
+        const weeksDiff = Math.abs(differenceInWeeks(startOfDay(day), startOfDay(pRecurrenceStart)));
         
         let shouldRender = false;
         if (!p.recurrence || p.recurrence === 'Semanal') shouldRender = true;
@@ -8038,7 +8109,8 @@ function CalendarView({
 
   const calculateSessionNumber = (patient: any, targetDay: Date) => {
     const baseCount = parseInt(patient.sessions) || 0;
-    const start = startOfDay(new Date(patient.createdAt || '2024-01-01'));
+    const pRecurrenceStart = patient.recurrenceStart ? new Date(patient.recurrenceStart + 'T12:00:00') : new Date(patient.createdAt || '2024-01-01');
+    const start = startOfDay(pRecurrenceStart);
     const end = startOfDay(targetDay);
     
     if (end < start) return baseCount;
