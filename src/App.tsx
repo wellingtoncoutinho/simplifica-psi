@@ -1879,9 +1879,9 @@ Como posso te ajudar hoje?`
       { id: 'agenda', label: 'Agenda', icon: CalendarIcon },
       { id: 'prontuarios', label: 'Prontuários', icon: FileText },
       { id: 'financeiro', label: 'Financeiro', icon: DollarSign },
+      { id: 'import-transcript', label: 'Importar Transcrição', icon: FileDown },
     ];
     if (user?.email && user.email.toLowerCase().trim() === 'wellcoutinho99@gmail.com') {
-      items.push({ id: 'import-transcript', label: 'Importar Transcrição', icon: FileDown });
       items.push({ id: 'admin', label: 'Painel Admin', icon: ShieldCheck });
     }
     return items;
@@ -5747,7 +5747,7 @@ Relato:
                             </div>
                             
                             {/* Banner Extensão do Google Meet */}
-                            {auth.currentUser && (
+                            {auth.currentUser && auth.currentUser.email?.toLowerCase().trim() === 'wellcoutinho99@gmail.com' && (
                               <div className="p-4 rounded-2xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all">
                                 <div className="flex items-center gap-3 text-left">
                                   <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
@@ -9239,7 +9239,7 @@ function ImportTranscriptView({
 
   const currentUser = auth.currentUser;
   const isMaster = currentUser?.email?.toLowerCase().trim() === 'wellcoutinho99@gmail.com';
-  const hasReachedLimit = interactionCount >= 4 && !isMaster;
+  const hasReachedLimit = false; // Removido o limite para todos os usuários conforme solicitado
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -9511,7 +9511,11 @@ function ImportTranscriptView({
           <ChevronRight className="rotate-180" size={24} />
         </button>
         <div>
-          <h2 className="text-2xl font-bold uppercase text-text-main">📥 Importar Transcrição do Google Meet</h2>
+          <h2 className="text-2xl font-bold uppercase text-text-main">
+            {currentUser?.email?.toLowerCase().trim() === 'wellcoutinho99@gmail.com'
+              ? "📥 Importar Transcrição do Google Meet"
+              : "📥 Importar Transcrição"}
+          </h2>
           <p className="text-xs text-text-muted mt-0.5">Vincule a chamada capturada ao prontuário de um paciente</p>
         </div>
       </div>
@@ -9546,9 +9550,9 @@ function ImportTranscriptView({
                 <Sparkles size={14} /> Copiloto de IA
                 <span className={cn(
                   "text-[9px] px-1.5 py-0.5 rounded-full lowercase tracking-normal font-bold",
-                  hasReachedLimit ? "bg-red-500/20 text-red-500" : "bg-primary/20 text-primary"
+                  "bg-primary/20 text-primary"
                 )}>
-                  {isMaster ? `${interactionCount}/∞` : `${interactionCount}/4`}
+                  {interactionCount}/∞
                 </span>
               </button>
             </div>
@@ -9561,11 +9565,13 @@ function ImportTranscriptView({
                   value={transcriptText}
                   onChange={(e) => setTranscriptText(e.target.value)}
                   className="w-full flex-1 bg-surface-muted/50 border border-border-ui rounded-2xl p-4 text-xs leading-relaxed text-text-main font-mono outline-none resize-none focus:border-primary/50 transition-all focus:ring-1 focus:ring-primary/20 min-h-[300px]"
-                  placeholder="Cole a transcrição bruta do Meet aqui ou edite-a livremente..."
+                  placeholder="Cole a transcrição bruta da sessão aqui ou edite-a livremente..."
                 />
                 {!transcriptText && (
                   <p className="text-[10px] text-text-muted mt-2 pl-1 animate-pulse">
-                    💡 Aguardando extensão... Cole a transcrição manualmente ou envie os dados pela extensão do Google Meet.
+                    {currentUser?.email?.toLowerCase().trim() === 'wellcoutinho99@gmail.com'
+                      ? "💡 Aguardando extensão... Cole a transcrição manualmente ou envie os dados pela extensão do Google Meet."
+                      : "💡 Cole a transcrição bruta da sessão manualmente para iniciar."}
                   </p>
                 )}
               </div>
@@ -9578,22 +9584,16 @@ function ImportTranscriptView({
                 {/* Badge de interações */}
                 <div className={cn(
                   "p-3 rounded-2xl mb-4 text-xs font-medium flex items-center justify-between transition-all duration-300",
-                  hasReachedLimit 
-                    ? "bg-red-500/10 border border-red-500/25 text-red-500"
-                    : "bg-primary/5 border border-primary/20 text-primary"
+                  "bg-primary/5 border border-primary/20 text-primary"
                 )}>
                   <div className="flex items-center gap-2">
-                    <Sparkles size={14} className={cn(hasReachedLimit ? "" : "animate-pulse")} />
+                    <Sparkles size={14} className="animate-pulse" />
                     <span>
-                      {hasReachedLimit 
-                        ? "Limite de 4 interações de IA atingido para esta sessão."
-                        : isMaster 
-                          ? `Uso do Copiloto: ${interactionCount} interações utilizadas (Acesso Ilimitado)` 
-                          : `Uso do Copiloto: ${interactionCount} de 4 interações utilizadas`}
+                      Uso do Copiloto: {interactionCount} interações utilizadas (Acesso Ilimitado)
                     </span>
                   </div>
                   <span className="text-[10px] font-bold uppercase">
-                    {isMaster ? "Ilimitado" : `${4 - interactionCount} restantes`}
+                    Ilimitado
                   </span>
                 </div>
 
