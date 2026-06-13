@@ -446,7 +446,8 @@ Como posso te ajudar hoje?`
         const masterEmails = [
           'juniorcoutinho58@gmail.com',
           'wellingtoncoutinho58@gmail.com',
-          'acessoriavitrinni@gmail.com'
+          'acessoriavitrinni@gmail.com',
+          'wellcoutinho99@gmail.com'
         ];
         const userEmail = user.email ? user.email.toLowerCase().trim() : '';
 
