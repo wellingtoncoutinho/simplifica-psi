@@ -231,7 +231,7 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
         </div>
 
         {/* Infinite Premium Scrolling Ticker */}
-        <div className="w-full overflow-hidden py-4 border-y border-[#2E3C2B]/5 bg-[#FAF9F6]/30 relative my-6">
+        <div className="w-full overflow-hidden py-4 border-y border-[#2E3C2B]/5 bg-[#FAF9F6]/30 relative my-6 pointer-events-none select-none">
           {/* Subtle gradient fades at the edges */}
           <div className="absolute left-0 top-0 bottom-0 w-16 sm:w-32 bg-gradient-to-r from-[#FAF9F6] to-transparent z-10 pointer-events-none" />
           <div className="absolute right-0 top-0 bottom-0 w-16 sm:w-32 bg-gradient-to-l from-[#FAF9F6] to-transparent z-10 pointer-events-none" />
@@ -274,11 +274,11 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
         </div>
 
         {/* Hero Visual Mockup - Dashboard White Mode with Olá Roberta mask */}
-        <div className="pt-8 max-w-5xl mx-auto relative">
+        <div className="pt-8 max-w-5xl mx-auto relative pointer-events-none select-none">
           <div className="absolute inset-0 bg-gradient-to-t from-[#FAF9F6] via-transparent to-transparent z-10 pointer-events-none" />
           
           {/* Main Desktop Mockup */}
-          <div className="bg-white/60 p-4 sm:p-6 rounded-[32px] sm:rounded-[48px] border border-white/60 shadow-2xl relative overflow-hidden">
+          <div className="bg-white/60 p-4 sm:p-6 rounded-[32px] sm:rounded-[48px] border border-white/60 shadow-2xl relative overflow-hidden pointer-events-none select-none">
             <div className="bg-[#FAF8F5] rounded-[24px] overflow-hidden border border-[#2E3C2B]/5 shadow-inner relative">
               <div className="h-10 border-b border-[#2E3C2B]/5 px-4 flex items-center justify-between bg-white/70">
                 <div className="flex items-center gap-2">
@@ -294,7 +294,8 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
                 <img 
                   src="/assets/2.png" 
                   alt="SimplePsi Dashboard Geral Real" 
-                  className="w-full h-auto object-cover block" 
+                  className="w-full h-auto object-cover block pointer-events-none select-none" 
+                  draggable={false}
                 />
                 
                 {/* Pixel-perfect CSS name mask covering Wellington with Roberta */}
@@ -556,13 +557,14 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
         <div className="flex flex-col lg:flex-row items-center gap-16">
           
           {/* Visual left: Lista de abordagens print */}
-          <div className="flex-1 w-full">
-            <div className="bg-white/60 p-3 rounded-[32px] border border-white/60 shadow-xl relative overflow-hidden">
+          <div className="flex-1 w-full pointer-events-none select-none">
+            <div className="bg-white/60 p-3 rounded-[32px] border border-white/60 shadow-xl relative overflow-hidden pointer-events-none select-none">
               <div className="bg-[#FAF8F5] rounded-[24px] overflow-hidden border border-[#2E3C2B]/5 shadow-inner">
                 <img 
                   src="/assets/1.png" 
                   alt="Seletor Clínico de Abordagem do SimplePsi" 
-                  className="w-full h-auto object-cover hover:scale-[1.02] transition-transform duration-500 block" 
+                  className="w-full h-auto object-cover hover:scale-[1.02] transition-transform duration-500 block pointer-events-none select-none" 
+                  draggable={false}
                 />
               </div>
               <div className="absolute bottom-6 right-6 bg-[#5F7D5C] text-white px-4 py-2 rounded-xl shadow-lg text-[10px] font-bold uppercase tracking-widest animate-pulse">
@@ -814,15 +816,16 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
                 </div>
 
                 {/* Image Block */}
-                <div className="w-full lg:w-1/2">
+                <div className="w-full lg:w-1/2 pointer-events-none select-none">
                   <div className="w-full relative group">
                     <div className="absolute inset-0 bg-gradient-to-tr from-[#5F7D5C]/10 to-transparent pointer-events-none rounded-[36px] -m-1" />
-                    <div className="bg-white/50 p-3 border border-[#2E3C2B]/5 rounded-[36px] shadow-xl hover:shadow-2xl transition-all duration-300">
+                    <div className="bg-white/50 p-3 border border-[#2E3C2B]/5 rounded-[36px] shadow-xl hover:shadow-2xl transition-all duration-300 pointer-events-none select-none">
                       <div className="w-full rounded-[24px] overflow-hidden border border-[#2E3C2B]/5 shadow-sm bg-[#FAF8F5]">
                         <img
                           src={feature.img}
                           alt={feature.tag}
-                          className="w-full h-auto object-cover transform hover:scale-[1.01] transition-transform duration-500"
+                          className="w-full h-auto object-cover transform hover:scale-[1.01] transition-transform duration-500 pointer-events-none select-none"
+                          draggable={false}
                         />
                       </div>
                     </div>
