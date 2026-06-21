@@ -122,88 +122,22 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
       {/* Premium Ambient Background (Floating Glowing Orbs) at -z-10 */}
       <div className="absolute inset-y-0 left-[-20%] right-[-20%] pointer-events-none -z-10">
         {/* Top Left Orb - Sage Green */}
-        <motion.div 
-          animate={{
-            x: [0, 50, -30, 0],
-            y: [0, -60, 40, 0],
-          }}
-          transition={{
-            duration: 22,
-            repeat: Infinity,
-            ease: "easeInOut"
-          }}
-          className="absolute top-28 left-[-10%] w-[350px] h-[350px] sm:w-[500px] sm:h-[500px] rounded-full bg-[radial-gradient(circle,rgba(95,125,92,0.42)_0%,transparent_70%)] will-change-transform" 
-        />
+        <div className="absolute top-28 left-[-10%] w-[350px] h-[350px] sm:w-[500px] sm:h-[500px] rounded-full bg-[radial-gradient(circle,rgba(95,125,92,0.42)_0%,transparent_70%)] will-change-transform animate-orb-1" />
         
         {/* Mid Right Orb - Clay/Terracotta */}
-        <motion.div 
-          animate={{
-            x: [0, -50, 30, 0],
-            y: [0, 60, -40, 0],
-          }}
-          transition={{
-            duration: 26,
-            repeat: Infinity,
-            ease: "easeInOut"
-          }}
-          className="absolute top-[600px] right-[-10%] w-[300px] h-[300px] sm:w-[450px] sm:h-[450px] rounded-full bg-[radial-gradient(circle,rgba(179,109,83,0.35)_0%,transparent_70%)] will-change-transform" 
-        />
+        <div className="absolute top-[600px] right-[-10%] w-[300px] h-[300px] sm:w-[450px] sm:h-[450px] rounded-full bg-[radial-gradient(circle,rgba(179,109,83,0.35)_0%,transparent_70%)] will-change-transform animate-orb-2" />
         
         {/* Mid Left Orb - Eucalyptus/Sage */}
-        <motion.div 
-          animate={{
-            x: [0, 40, -40, 0],
-            y: [0, 50, -30, 0],
-          }}
-          transition={{
-            duration: 24,
-            repeat: Infinity,
-            ease: "easeInOut"
-          }}
-          className="absolute top-[1600px] left-[-8%] w-[280px] h-[280px] sm:w-[400px] sm:h-[400px] rounded-full bg-[radial-gradient(circle,rgba(138,166,130,0.35)_0%,transparent_70%)] will-change-transform" 
-        />
+        <div className="absolute top-[1600px] left-[-8%] w-[280px] h-[280px] sm:w-[400px] sm:h-[400px] rounded-full bg-[radial-gradient(circle,rgba(138,166,130,0.35)_0%,transparent_70%)] will-change-transform animate-orb-3" />
         
         {/* Lower Right Orb - Clay/Terracotta */}
-        <motion.div 
-          animate={{
-            x: [0, -60, 40, 0],
-            y: [0, -50, 50, 0],
-          }}
-          transition={{
-            duration: 28,
-            repeat: Infinity,
-            ease: "easeInOut"
-          }}
-          className="absolute top-[2600px] right-[-8%] w-[320px] h-[320px] sm:w-[480px] sm:h-[480px] rounded-full bg-[radial-gradient(circle,rgba(197,137,113,0.38)_0%,transparent_70%)] will-change-transform" 
-        />
+        <div className="absolute top-[2600px] right-[-8%] w-[320px] h-[320px] sm:w-[480px] sm:h-[480px] rounded-full bg-[radial-gradient(circle,rgba(197,137,113,0.38)_0%,transparent_70%)] will-change-transform animate-orb-1" />
         
         {/* Near Bottom Orb - Sage Green */}
-        <motion.div 
-          animate={{
-            x: [0, 40, -30, 0],
-            y: [0, -60, 30, 0],
-          }}
-          transition={{
-            duration: 30,
-            repeat: Infinity,
-            ease: "easeInOut"
-          }}
-          className="absolute bottom-[800px] left-[-10%] w-[300px] h-[300px] sm:w-[450px] sm:h-[450px] rounded-full bg-[radial-gradient(circle,rgba(95,125,92,0.40)_0%,transparent_70%)] will-change-transform" 
-        />
+        <div className="absolute bottom-[800px] left-[-10%] w-[300px] h-[300px] sm:w-[450px] sm:h-[450px] rounded-full bg-[radial-gradient(circle,rgba(95,125,92,0.40)_0%,transparent_70%)] will-change-transform animate-orb-2" />
         
         {/* Footer Orb - Clay */}
-        <motion.div 
-          animate={{
-            x: [0, -30, 30, 0],
-            y: [0, 40, -20, 0],
-          }}
-          transition={{
-            duration: 20,
-            repeat: Infinity,
-            ease: "easeInOut"
-          }}
-          className="absolute bottom-[-100px] right-[-10%] w-[280px] h-[280px] sm:w-[400px] sm:h-[400px] rounded-full bg-[radial-gradient(circle,rgba(179,109,83,0.28)_0%,transparent_70%)] will-change-transform" 
-        />
+        <div className="absolute bottom-[-100px] right-[-10%] w-[280px] h-[280px] sm:w-[400px] sm:h-[400px] rounded-full bg-[radial-gradient(circle,rgba(179,109,83,0.28)_0%,transparent_70%)] will-change-transform animate-orb-3" />
       </div>
 
       {/* Elegant Floating Nav */}
