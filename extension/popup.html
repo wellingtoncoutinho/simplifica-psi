@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    :root {
+      --bg-main: #0b0c10;
+      --bg-card: #1f2833;
+      --primary: #7c3aed;
+      --primary-hover: #6d28d9;
+      --text-main: #c5c6c7;
+      --text-bright: #ffffff;
+      --text-muted: #667085;
+      --border-color: #2d3748;
+      --red: #ef4444;
+      --green: #10b981;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    }
+
+    body {
+      width: 320px;
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      padding: 16px;
+      font-size: 13px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-b: 1px solid var(--border-color);
+      padding-bottom: 12px;
+      margin-bottom: 16px;
+    }
+
+    .logo-container {
+      width: 32px;
+      height: 32px;
+      background-color: rgba(124, 58, 237, 0.15);
+      border: 1px solid rgba(124, 58, 237, 0.3);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      color: var(--primary);
+    }
+
+    h1 {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-bright);
+    }
+
+    h1 span {
+      color: var(--primary);
+    }
+
+    /* Painel de status */
+    .status-panel {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .status-badge {
+      padding: 3px 8px;
+      border-radius: 20px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .status-badge.inactive {
+      background-color: rgba(239, 68, 68, 0.1);
+      color: var(--red);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+    }
+
+    .status-badge.active {
+      background-color: rgba(16, 185, 129, 0.1);
+      color: var(--green);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 0.7; }
+      50% { opacity: 1; }
+      100% { opacity: 0.7; }
+    }
+
+    .stat-label {
+      font-weight: 600;
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .stat-val {
+      font-weight: bold;
+      color: var(--text-bright);
+    }
+
+    /* Painel de Preferências */
+    .pref-panel {
+      background-color: rgba(31, 40, 51, 0.4);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 10px 12px;
+      margin-bottom: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .pref-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 11px;
+    }
+
+    .pref-row input {
+      accent-color: var(--primary);
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+    }
+
+    .pref-text {
+      color: var(--text-main);
+    }
+
+    /* Caixa de visualização */
+    .preview-box {
+      width: 100%;
+      height: 100px;
+      background-color: rgba(0, 0, 0, 0.2);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 8px 10px;
+      font-size: 11px;
+      overflow-y: auto;
+      margin-bottom: 12px;
+      white-space: pre-wrap;
+      color: var(--text-main);
+    }
+
+    .preview-placeholder {
+      color: var(--text-muted);
+      font-style: italic;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      text-align: center;
+    }
+
+    /* Botões */
+    .btn-group {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    button {
+      flex: 1;
+      padding: 10px;
+      border-radius: 8px;
+      border: none;
+      font-weight: bold;
+      cursor: pointer;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .btn-primary {
+      background-color: var(--primary);
+      color: var(--text-bright);
+      box-shadow: 0 4px 6px rgba(124, 58, 237, 0.15);
+    }
+
+    .btn-primary:hover {
+      background-color: var(--primary-hover);
+    }
+
+    .btn-secondary {
+      background-color: var(--bg-card);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+    }
+
+    .btn-secondary:hover {
+      background-color: #2e3b4e;
+    }
+
+    .btn-danger {
+      background-color: rgba(239, 68, 68, 0.1);
+      color: var(--red);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+    }
+
+    .btn-danger:hover {
+      background-color: rgba(239, 68, 68, 0.2);
+    }
+
+    .btn-send {
+      width: 100%;
+      background-color: var(--primary);
+      color: var(--text-bright);
+      padding: 11px;
+      border-radius: 10px;
+      font-size: 11.5px;
+      margin-bottom: 10px;
+    }
+
+    .btn-send:hover {
+      background-color: var(--primary-hover);
+    }
+
+    /* Alert de Erro/Sucesso */
+    .alert {
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 10.5px;
+      margin-bottom: 12px;
+      display: none;
+      text-align: left;
+    }
+
+    .alert-error {
+      background-color: rgba(239, 68, 68, 0.1);
+      color: var(--red);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+    }
+
+    .alert-success {
+      background-color: rgba(16, 185, 129, 0.1);
+      color: var(--green);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+    }
+
+    /* Nota de LGPD */
+    .lgpd-footer {
+      font-size: 9.5px;
+      color: var(--text-muted);
+      text-align: center;
+      line-height: 1.4;
+      border-t: 1px solid var(--border-color);
+      padding-top: 8px;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo-container">Ψ</div>
+    <div>
+      <h1>Simple Psi <span>Meet</span></h1>
+    </div>
+  </header>
+
+  <div class="status-panel">
+    <div class="status-row">
+      <span class="stat-label">Gravador do Meet</span>
+      <span id="status-badge" class="status-badge inactive">Pausado</span>
+    </div>
+    <div class="status-row">
+      <span class="stat-label">Palavras capturadas</span>
+      <span id="word-count" class="stat-val">0</span>
+    </div>
+  </div>
+
+  <!-- Painel de Preferências Premium (ocultado para ser sempre automático) -->
+  <div class="pref-panel" style="display: none;">
+    <label class="pref-row">
+      <input type="checkbox" id="chk-auto-start" checked />
+      <span class="pref-text">▶️ Auto-iniciar ao entrar na chamada</span>
+    </label>
+    <label class="pref-row">
+      <input type="checkbox" id="chk-hide-captions" checked />
+      <span class="pref-text">👁️ Ocultar legendas na tela da chamada</span>
+    </label>
+  </div>
+
+  <div id="preview" class="preview-box">
+    <div class="preview-placeholder">Nenhuma fala capturada ainda. Inicie a captura e certifique-se de que a legenda do Google Meet está ativa.</div>
+  </div>
+
+  <div class="btn-group">
+    <button id="btn-toggle" class="btn-primary">
+      <span id="toggle-icon">▶</span> <span id="toggle-text">Capturar</span>
+    </button>
+    <button id="btn-clear" class="btn-danger">
+      🗑️ Limpar
+    </button>
+  </div>
+
+  <button id="btn-send" class="btn-send">
+    🚀 Enviar para o Simple Psi
+  </button>
+
+  <div id="alert-box" class="alert alert-error"></div>
+
+  <div class="lgpd-footer">
+    🔒 <strong>Processamento Local Seguro:</strong> Nenhum áudio ou texto é salvo externamente. Obtenha o consentimento prévio do seu paciente conforme a LGPD e o CFP.
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

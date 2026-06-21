@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "Simple Psi - Google Meet CC Recorder",
+  "version": "1.0.0",
+  "description": "Transcreve suas sessões do Google Meet e as envia com segurança para o Simple Psi.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://meet.google.com/*",
+    "http://localhost:3000/*",
+    "http://localhost:3001/*",
+    "http://localhost:3002/*",
+    "http://localhost:5173/*",
+    "https://simplepsi.com.br/*",
+    "https://*.simplepsi.com.br/*",
+    "https://simplepsi.com/*",
+    "https://*.simplepsi.com/*",
+    "https://*.vercel.app/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["content_meet.js"]
+    },
+    {
+      "matches": [
+        "http://localhost:3000/*",
+        "http://localhost:3001/*",
+        "http://localhost:3002/*",
+        "http://localhost:5173/*",
+        "https://simplepsi.com.br/*",
+        "https://*.simplepsi.com.br/*",
+        "https://simplepsi.com/*",
+        "https://*.simplepsi.com/*",
+        "https://*.vercel.app/*"
+      ],
+      "js": ["content_simplepsi.js"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": "icon.png"
+  },
+  "icons": {
+    "128": "icon.png"
+  }
+}

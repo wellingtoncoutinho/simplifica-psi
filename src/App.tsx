@@ -160,7 +160,9 @@ import {
   setDoc,
   serverTimestamp,
   orderBy,
-  getDoc
+  getDoc,
+  writeBatch,
+  getDocs
 } from 'firebase/firestore';
 import { onAuthStateChanged, User, GoogleAuthProvider } from 'firebase/auth';
 import { Joyride, EventData, STATUS, Step, TooltipRenderProps } from 'react-joyride';
@@ -376,7 +378,11 @@ Como posso te ajudar hoje?`
     clinicalApproach: localStorage.getItem('prof_approach') || 'tcc',
     trialStartDate: localStorage.getItem('prof_trial_start') || null,
     isTrial: localStorage.getItem('prof_is_trial') === 'true',
-    tccAiUsage: JSON.parse(localStorage.getItem('prof_tcc_ai_usage') || '[]') as string[]
+    tccAiUsage: JSON.parse(localStorage.getItem('prof_tcc_ai_usage') || '[]') as string[],
+    cpfCnpj: localStorage.getItem('prof_cpf_cnpj') || '',
+    address: localStorage.getItem('prof_address') || '',
+    phone: localStorage.getItem('prof_phone') || '',
+    signatureText: localStorage.getItem('prof_signature_text') || ''
   });
 
   // Helper to calculate trial remaining days
@@ -504,7 +510,11 @@ Como posso te ajudar hoje?`
                 clinicalApproach: data.clinicalApproach || 'tcc',
                 trialStartDate: data.trialStartDate || null,
                 isTrial: false,
-                tccAiUsage: data.tccAiUsage || []
+                tccAiUsage: data.tccAiUsage || [],
+                cpfCnpj: data.cpfCnpj || '',
+                address: data.address || '',
+                phone: data.phone || '',
+                signatureText: data.signatureText || ''
               });
             }
             setUser(user);
@@ -524,7 +534,11 @@ Como posso te ajudar hoje?`
                 clinicalApproach: data.clinicalApproach || 'tcc',
                 trialStartDate: data.trialStartDate || null,
                 isTrial: data.isTrial || false,
-                tccAiUsage: data.tccAiUsage || []
+                tccAiUsage: data.tccAiUsage || [],
+                cpfCnpj: data.cpfCnpj || '',
+                address: data.address || '',
+                phone: data.phone || '',
+                signatureText: data.signatureText || ''
               });
               setUser(user);
               setAuthError(null);
@@ -586,7 +600,11 @@ Como posso te ajudar hoje?`
           clinicalApproach: data.clinicalApproach || 'tcc',
           trialStartDate: data.trialStartDate || null,
           isTrial: data.isTrial || false,
-          tccAiUsage: data.tccAiUsage || []
+          tccAiUsage: data.tccAiUsage || [],
+          cpfCnpj: data.cpfCnpj || '',
+          address: data.address || '',
+          phone: data.phone || '',
+          signatureText: data.signatureText || ''
         });
         // Also update localStorage as backup/cache
         localStorage.setItem('prof_name', data.name || '');
@@ -597,6 +615,10 @@ Como posso te ajudar hoje?`
         localStorage.setItem('prof_trial_start', data.trialStartDate || '');
         localStorage.setItem('prof_is_trial', data.isTrial ? 'true' : 'false');
         localStorage.setItem('prof_tcc_ai_usage', JSON.stringify(data.tccAiUsage || []));
+        localStorage.setItem('prof_cpf_cnpj', data.cpfCnpj || '');
+        localStorage.setItem('prof_address', data.address || '');
+        localStorage.setItem('prof_phone', data.phone || '');
+        localStorage.setItem('prof_signature_text', data.signatureText || '');
       }
     });
 
@@ -1829,7 +1851,6 @@ Como posso te ajudar hoje?`
 
     console.log('Attempting to permanently delete patient and all related data:', id);
     try {
-      const { writeBatch, collection, query, where, getDocs } = await import('firebase/firestore');
       const batch = writeBatch(db);
 
       // 1. Delete patient document
@@ -2382,6 +2403,10 @@ Como posso te ajudar hoje?`
                   localStorage.setItem('prof_crp', data.crp);
                   localStorage.setItem('prof_logo', data.logo);
                   localStorage.setItem('prof_approach', data.clinicalApproach || 'tcc');
+                  localStorage.setItem('prof_cpf_cnpj', data.cpfCnpj || '');
+                  localStorage.setItem('prof_address', data.address || '');
+                  localStorage.setItem('prof_phone', data.phone || '');
+                  localStorage.setItem('prof_signature_text', data.signatureText || '');
                   setProfileSettings(data);
                   setIsSettingsOpen(false);
                 }
@@ -3408,11 +3433,11 @@ function PatientDetailsView({
   onDeletePatient: (id: string) => void,
   profileSettings?: any,
   currentUserEmail?: string,
-  defaultSubTab?: 'perfil' | 'prontuario' | 'anamnese' | 'smartnotes' | 'biblioteca' | 'tratamento'
+  defaultSubTab?: 'perfil' | 'prontuario' | 'anamnese' | 'smartnotes' | 'biblioteca' | 'tratamento' | 'reembolso'
 }) {
   const patient = patients.find(p => p.id === patientId);
   const user = auth.currentUser;
-  const [activeSubTab, setActiveSubTab] = useState<'perfil' | 'prontuario' | 'anamnese' | 'smartnotes' | 'biblioteca' | 'tratamento'>(defaultSubTab);
+  const [activeSubTab, setActiveSubTab] = useState<'perfil' | 'prontuario' | 'anamnese' | 'smartnotes' | 'biblioteca' | 'tratamento' | 'reembolso'>(defaultSubTab);
   const [isAddingEvolution, setIsAddingEvolution] = useState(false);
   const [newEvolutionNote, setNewEvolutionNote] = useState("");
   const [isRecording, setIsRecording] = useState(false);
@@ -3420,6 +3445,223 @@ function PatientDetailsView({
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+
+  // States for Reimbursement tab
+  const [patientSessions, setPatientSessions] = useState<any[]>([]);
+  const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set());
+  const [copiedReceiptText, setCopiedReceiptText] = useState(false);
+
+  // Load sessions from Firestore for this patient
+  useEffect(() => {
+    if (activeSubTab === 'reembolso' && user) {
+      const q = query(
+        collection(db, 'sessions'),
+        where('ownerId', '==', user.uid),
+        where('patientId', '==', patientId)
+      );
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Sort by date descending and time descending
+        list.sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time));
+        setPatientSessions(list);
+      }, (err) => {
+        console.error("Erro ao carregar sessões do paciente:", err);
+      });
+      return unsubscribe;
+    }
+  }, [activeSubTab, patientId, user]);
+
+  const generateReceiptDescription = () => {
+    const selected = patientSessions.filter(s => selectedSessionIds.has(s.id));
+    const sorted = [...selected].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
+    if (sorted.length === 0) return "";
+    
+    const count = sorted.length;
+    const datesStr = sorted.map(s => s.date.split('-').reverse().join('/')).join(', ');
+    const totalAmount = sorted.reduce((acc, s) => acc + (s.amount || 0), 0);
+    const types = Array.from(new Set(sorted.map(s => s.type)));
+    const modalityStr = types.join(' e ');
+    
+    return `Referente a ${count} ${count === 1 ? 'sessão' : 'sessões'} de atendimento psicoterapêutico clínico individual, realizada${count === 1 ? '' : 's'} nas seguinte${count === 1 ? 's' : 's'} data${count === 1 ? 's' : 's'}: ${datesStr}, na modalidade ${modalityStr.toLowerCase()} (atendimento de psicologia clínica), no valor total de ${formatCurrency(totalAmount)}.`;
+  };
+
+  const handleGenerateTherapistReportPDF = () => {
+    try {
+      const selected = patientSessions.filter(s => selectedSessionIds.has(s.id));
+      const sorted = [...selected].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
+      if (sorted.length === 0) {
+        alert("Selecione pelo menos uma sessão.");
+        return;
+      }
+
+      const doc = new jsPDF();
+      let startY = 20;
+
+      // Header logo
+      if (profileSettings?.logo) {
+        try {
+          doc.addImage(profileSettings.logo, 'JPEG', 14, 10, 30, 30);
+          startY = 50;
+        } catch (e) {
+          console.error("Erro ao adicionar logo:", e);
+        }
+      }
+
+      // Psychologist details on the top right
+      if (profileSettings?.name || profileSettings?.crp) {
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "normal");
+        const rightX = 196;
+        let lineY = 15;
+        if (profileSettings.name) {
+          doc.text(`Psicólogo(a): ${profileSettings.name}`, rightX, lineY, { align: 'right' });
+          lineY += 5;
+        }
+        if (profileSettings.crp) {
+          doc.text(`CRP: ${profileSettings.crp}`, rightX, lineY, { align: 'right' });
+          lineY += 5;
+        }
+        if (profileSettings.cpfCnpj) {
+          doc.text(`CPF/CNPJ: ${profileSettings.cpfCnpj}`, rightX, lineY, { align: 'right' });
+          lineY += 5;
+        }
+        if (profileSettings.phone) {
+          doc.text(`Tel: ${profileSettings.phone}`, rightX, lineY, { align: 'right' });
+          lineY += 5;
+        }
+      }
+
+      // Title
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "bold");
+      doc.text("RELATÓRIO DE COMPARECIMENTO (REEMBOLSO)", 14, startY);
+
+      // Section 1: Therapist Info
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text("DADOS DO PRESTADOR DE SERVIÇOS", 14, startY + 15);
+      
+      autoTable(doc, {
+        startY: startY + 20,
+        theme: 'grid',
+        body: [
+          ['Nome do Profissional', profileSettings?.name || ''],
+          ['Conselho de Classe', `CRP - Registro: ${profileSettings?.crp || ''}`],
+          ['CPF/CNPJ', profileSettings?.cpfCnpj || ''],
+          ['Telefone / Contato', profileSettings?.phone || ''],
+          ['Endereço do Consultório', profileSettings?.address || '']
+        ],
+        columnStyles: {
+          0: { cellWidth: 50, fontStyle: 'bold' },
+          1: { cellWidth: 'auto' }
+        }
+      });
+
+      const finalY1 = (doc as any).lastAutoTable.finalY || startY + 50;
+
+      // Section 2: Patient Info
+      doc.setFont("helvetica", "bold");
+      doc.text("IDENTIFICAÇÃO DO PACIENTE", 14, finalY1 + 15);
+      
+      autoTable(doc, {
+        startY: finalY1 + 20,
+        theme: 'grid',
+        body: [
+          ['Nome do Paciente', patient.name || ''],
+          ['CPF do Paciente', patient.cpf || ''],
+          ['Data de Nascimento', patient.birthDate || ''],
+          ['Responsável (se menor)', '']
+        ],
+        columnStyles: {
+          0: { cellWidth: 50, fontStyle: 'bold' },
+          1: { cellWidth: 'auto' }
+        }
+      });
+
+      const finalY2 = (doc as any).lastAutoTable.finalY || finalY1 + 50;
+
+      // Section 3: Declaration statement
+      doc.setFont("helvetica", "bold");
+      doc.text("DECLARAÇÃO DE SESSÕES REALIZADAS", 14, finalY2 + 15);
+
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      const declText = `Declaramos para os devidos fins de reembolso de plano de saúde que o(a) paciente acima identificado(a) realizou sessões de psicoterapia clínica individual, sob nossa responsabilidade profissional, nas datas e modalidades especificadas na tabela abaixo:`;
+      const splitDecl = doc.splitTextToSize(declText, 180);
+      doc.text(splitDecl, 14, finalY2 + 22);
+
+      const textLinesCount = splitDecl.length;
+      const finalYDeclaration = finalY2 + 22 + (textLinesCount * 5);
+
+      // Section 4: Sessions Schedule table
+      const sessionsRows = sorted.map((s, idx) => {
+        const dateStr = s.date.split('-').reverse().join('/');
+        const loc = s.type === 'Presencial' 
+          ? `Presencial - no consultório: ${profileSettings?.address || 'Consultório'}` 
+          : 'A distância / Online';
+        return [
+          String(idx + 1),
+          dateStr,
+          s.time,
+          s.type,
+          loc,
+          formatCurrency(s.amount || 0)
+        ];
+      });
+
+      autoTable(doc, {
+        startY: finalYDeclaration + 5,
+        theme: 'striped',
+        head: [['Nº', 'Data', 'Horário', 'Modalidade', 'Local de Atendimento', 'Valor Cobrado']],
+        body: sessionsRows,
+        headStyles: { fillColor: [63, 81, 181], textColor: [255, 255, 255] },
+        columnStyles: {
+          0: { cellWidth: 10, align: 'center' },
+          1: { cellWidth: 25 },
+          2: { cellWidth: 20 },
+          3: { cellWidth: 25 },
+          4: { cellWidth: 'auto' },
+          5: { cellWidth: 25, align: 'right' }
+        }
+      });
+
+      const finalY3 = (doc as any).lastAutoTable.finalY || finalYDeclaration + 50;
+
+      // Section 5: Signature block
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.text(`Relatório gerado em: ${new Date().toLocaleDateString('pt-BR')}`, 14, finalY3 + 15);
+
+      // Draw signature line
+      doc.setDrawColor(180, 180, 180);
+      doc.line(120, finalY3 + 35, 190, finalY3 + 35);
+      
+      const signatureName = profileSettings?.signatureText || profileSettings?.name || 'Psicólogo(a)';
+      doc.setFont("helvetica", "bold");
+      doc.text(signatureName, 155, finalY3 + 40, { align: "center" });
+      doc.setFont("helvetica", "normal");
+      doc.text(`CRP: ${profileSettings?.crp || ''}`, 155, finalY3 + 45, { align: "center" });
+
+      // Save PDF to library
+      const pdfBlob = doc.output('blob');
+      const fileName = `Relatorio_Reembolso_${patient.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+      const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+      
+      onUpload(file, 'anexo').then(() => {
+        alert("Relatório de Reembolso gerado e salvo na Biblioteca de Documentos com sucesso!");
+      }).catch(err => {
+        console.error("Erro ao salvar relatório na biblioteca:", err);
+        alert("Relatório gerado com sucesso, mas ocorreu um erro ao salvá-lo na Biblioteca de Documentos.");
+      });
+
+      // Save to local computer downloads
+      doc.save(fileName);
+
+    } catch (err) {
+      console.error(err);
+      alert("Ocorreu um erro ao gerar o PDF do Relatório.");
+    }
+  };
 
   const [showExtensionModal, setShowExtensionModal] = useState(false);
   const [hasAcceptedExtensionTerms, setHasAcceptedExtensionTerms] = useState(() => localStorage.getItem("simplepsi_meet_extension_consent") === "true");
@@ -5107,6 +5349,7 @@ Relato:
                 icon: CheckCircle2 
               },
               { id: 'smartnotes', label: 'Resumo', icon: BarChart3 },
+              { id: 'reembolso', label: 'Reembolso', icon: Receipt },
             ].map(item => (
              <button
                 key={item.id}
@@ -7071,6 +7314,169 @@ Relato:
                     </div>
                   </motion.div>
                 )}
+
+                {activeSubTab === 'reembolso' && (
+                  <motion.div
+                    key="reembolso"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="space-y-6 text-left"
+                  >
+                    {/* Header */}
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
+                        <Receipt size={20} />
+                      </div>
+                      <div>
+                        <h3 className="text-lg sm:text-xl font-bold text-text-main">Auxiliar de Reembolso</h3>
+                        <p className="text-xs text-text-muted mt-1">Gere relatórios de comparecimento e copie textos de descrição para o recibo do plano de saúde.</p>
+                      </div>
+                    </div>
+
+                    {/* Alertas de Dados Faltando */}
+                    <div className="space-y-3">
+                      {/* Profissional */}
+                      {(!profileSettings?.cpfCnpj || !profileSettings?.address || !profileSettings?.phone) && (
+                        <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-2xl text-xs space-y-2">
+                          <p className="font-bold uppercase tracking-wider">⚠️ Dados do Profissional Incompletos</p>
+                          <p className="text-[11px] text-yellow-600 dark:text-yellow-400">
+                            Para gerar o Relatório do Terapeuta oficial para reembolso, você precisa cadastrar seu **CPF/CNPJ, Endereço e Telefone** nas configurações de perfil.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Paciente */}
+                      {!patient.cpf && (
+                        <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-2xl text-xs space-y-2">
+                          <p className="font-bold uppercase tracking-wider">⚠️ CPF do Paciente não Cadastrado</p>
+                          <p className="text-[11px] text-yellow-600 dark:text-yellow-400">
+                            O CPF do paciente é obrigatório para reembolso. Vá na aba "Perfil" e adicione o CPF do paciente.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Seleção de Sessões */}
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                        <h4 className="text-xs font-bold text-text-main uppercase tracking-widest">1. Selecione as Sessões Realizadas</h4>
+                        <div className="flex gap-2 text-[10px]">
+                          <button 
+                            onClick={() => {
+                              const allIds = patientSessions.filter(s => s.status !== 'Cancelada').map(s => s.id);
+                              setSelectedSessionIds(new Set(allIds));
+                            }}
+                            className="text-primary font-bold hover:underline cursor-pointer bg-transparent border-0"
+                          >
+                            Selecionar Todas
+                          </button>
+                          <span className="text-text-muted">|</span>
+                          <button 
+                            onClick={() => setSelectedSessionIds(new Set())}
+                            className="text-text-muted font-bold hover:underline cursor-pointer bg-transparent border-0"
+                          >
+                            Limpar
+                          </button>
+                        </div>
+                      </div>
+
+                      {patientSessions.filter(s => s.status !== 'Cancelada').length === 0 ? (
+                        <div className="py-10 text-center text-xs text-text-muted border border-dashed border-border-ui rounded-2xl">
+                          Nenhum agendamento não-cancelado encontrado para este paciente.
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
+                          {patientSessions.filter(s => s.status !== 'Cancelada').map((session, index) => {
+                            const isSelected = selectedSessionIds.has(session.id);
+                            const formattedDate = session.date.split('-').reverse().join('/');
+                            
+                            return (
+                              <div 
+                                key={session.id}
+                                onClick={() => {
+                                  const newSet = new Set(selectedSessionIds);
+                                  if (newSet.has(session.id)) {
+                                    newSet.delete(session.id);
+                                  } else {
+                                    newSet.add(session.id);
+                                  }
+                                  setSelectedSessionIds(newSet);
+                                }}
+                                className={cn(
+                                  "p-3 rounded-xl border transition-all cursor-pointer flex items-center gap-3",
+                                  isSelected 
+                                    ? "bg-primary/10 border-primary text-primary" 
+                                    : "bg-surface-muted border-border-ui text-text-main hover:border-primary/40"
+                                )}
+                              >
+                                <input 
+                                  type="checkbox" 
+                                  checked={isSelected}
+                                  onChange={() => {}} // Handled by div click
+                                  className="rounded border-border-ui text-primary focus:ring-primary"
+                                />
+                                <div className="text-left flex-1 min-w-0">
+                                  <p className="text-xs font-bold truncate">Sessão {patientSessions.filter(s => s.status !== 'Cancelada').length - index}</p>
+                                  <p className="text-[10px] text-text-muted mt-0.5">{formattedDate} às {session.time} • {session.type}</p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-xs font-mono font-bold">{formatCurrency(session.amount || 0)}</p>
+                                  <p className={`text-[8px] font-bold uppercase tracking-wider ${session.paid ? 'text-green-500' : 'text-yellow-500'}`}>
+                                    {session.paid ? 'Pago' : 'Pendente'}
+                                  </p>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Resultados / Ações */}
+                    {selectedSessionIds.size > 0 && (
+                      <div className="space-y-6 pt-4 border-t border-white/5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        {/* Ação 1: Texto de Descrição do Recibo */}
+                        <div className="space-y-2">
+                          <h4 className="text-xs font-bold text-text-main uppercase tracking-widest">2. Descrição para o seu Recibo (Copiar)</h4>
+                          <p className="text-[10px] text-text-muted">Use este texto no campo de descrição dos serviços prestados do seu recibo externo (ex: Receita Federal, Nota Fiscal, etc.):</p>
+                          <div className="relative mt-2">
+                            <textarea 
+                              readOnly 
+                              value={generateReceiptDescription()} 
+                              className="w-full bg-surface-muted border border-border-ui rounded-xl p-3 text-xs text-text-main outline-none min-h-[90px] font-mono leading-relaxed"
+                            />
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(generateReceiptDescription());
+                                setCopiedReceiptText(true);
+                                setTimeout(() => setCopiedReceiptText(false), 2000);
+                              }}
+                              className="absolute bottom-3 right-3 bg-primary text-white px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase hover:opacity-90 transition-all flex items-center gap-1 shadow-md cursor-pointer"
+                            >
+                              {copiedReceiptText ? <CheckCircle2 size={10} /> : <Copy size={10} />}
+                              {copiedReceiptText ? 'Copiado!' : 'Copiar Texto'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Ação 2: Relatório do Terapeuta PDF */}
+                        <div className="space-y-2 pt-2 text-left">
+                          <h4 className="text-xs font-bold text-text-main uppercase tracking-widest">3. Relatório do Terapeuta (PDF)</h4>
+                          <p className="text-[10px] text-text-muted">Gere o documento oficial exigido pelo plano contendo a declaração de acompanhamento e o cronograma de sessões assinados digitalmente.</p>
+                          
+                          <button
+                            onClick={handleGenerateTherapistReportPDF}
+                            className="bg-primary text-white px-6 py-3.5 rounded-2xl text-xs font-bold uppercase hover:opacity-90 transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/20 cursor-pointer"
+                          >
+                            <FileDown size={16} />
+                            <span>Gerar Relatório do Terapeuta</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
               </AnimatePresence>
            </section>
         </div>
@@ -8816,7 +9222,7 @@ function ProfileSettingsModal({ initialData, onClose, onSave, googleAccessToken,
           </button>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-4 max-h-[50vh] overflow-y-auto pr-1 custom-scrollbar">
           <div className="space-y-2">
             <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Nome do Profissional</label>
             <input 
@@ -8858,6 +9264,42 @@ function ProfileSettingsModal({ initialData, onClose, onSave, googleAccessToken,
               <option value="act" className="bg-background-dark">ACT (Terapia de Aceitação e Compromisso)</option>
               <option value="dbt" className="bg-background-dark">DBT (Terapia Dialética Comportamental)</option>
             </select>
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">CPF ou CNPJ (Reembolso)</label>
+            <input 
+              value={formData.cpfCnpj || ''} 
+              onChange={e => setFormData({...formData, cpfCnpj: e.target.value})} 
+              placeholder="Ex: 000.000.000-00"
+              className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Endereço do Consultório (Reembolso)</label>
+            <input 
+              value={formData.address || ''} 
+              onChange={e => setFormData({...formData, address: e.target.value})} 
+              placeholder="Ex: Av. Paulista, 1000 - Sala 50"
+              className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Telefone Comercial (Reembolso)</label>
+            <input 
+              value={formData.phone || ''} 
+              onChange={e => setFormData({...formData, phone: e.target.value})} 
+              placeholder="Ex: (11) 99999-9999"
+              className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Nome para Assinatura em Relatórios</label>
+            <input 
+              value={formData.signatureText || ''} 
+              onChange={e => setFormData({...formData, signatureText: e.target.value})} 
+              placeholder="Ex: João da Silva - Psicólogo Clínico"
+              className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
+            />
           </div>
           <div className="space-y-2">
             <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Logo da Clínica (Opcional)</label>

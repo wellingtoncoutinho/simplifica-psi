@@ -42,7 +42,7 @@ service cloud.firestore {
     }
 
     function isValidSession(data) {
-      return data.patientId is string && isValidId(data.patientId)
+      return data.patientId is string && (isValidId(data.patientId) || data.patientId == '')
         && data.date is string && data.date.size() <= 20
         && data.time is string && data.time.size() <= 10
         && data.ownerId == request.auth.uid
