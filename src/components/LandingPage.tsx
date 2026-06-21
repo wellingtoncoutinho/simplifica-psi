@@ -39,16 +39,23 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
     window.location.href = 'https://pay.hotmart.com/P105903618L';
   };
 
-  // Monitor scroll to show sticky CTA on mobile
+  // Monitor scroll to show sticky CTA on mobile (optimized high-performance scroll handling)
   useEffect(() => {
+    let ticking = false;
     const handleScroll = () => {
-      if (window.scrollY > 500) {
-        setShowStickyCta(true);
-      } else {
-        setShowStickyCta(false);
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          if (window.scrollY > 500) {
+            setShowStickyCta(true);
+          } else {
+            setShowStickyCta(false);
+          }
+          ticking = false;
+        });
+        ticking = true;
       }
     };
-    window.addEventListener('scroll', handleScroll);
+    window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
@@ -119,26 +126,7 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
         <span>ÚLTIMAS HORAS: DE <span className="line-through opacity-75">R$ 597</span> POR APENAS R$ 297 COM ACESSO VITALÍCIO</span>
       </div>
 
-      {/* Premium Ambient Background (Floating Glowing Orbs) at -z-10 */}
-      <div className="absolute inset-y-0 left-[-20%] right-[-20%] pointer-events-none -z-10">
-        {/* Top Left Orb - Sage Green */}
-        <div className="absolute top-28 left-[-10%] w-[350px] h-[350px] sm:w-[500px] sm:h-[500px] rounded-full bg-[radial-gradient(circle,rgba(95,125,92,0.42)_0%,transparent_70%)] will-change-transform animate-orb-1" />
-        
-        {/* Mid Right Orb - Clay/Terracotta */}
-        <div className="absolute top-[600px] right-[-10%] w-[300px] h-[300px] sm:w-[450px] sm:h-[450px] rounded-full bg-[radial-gradient(circle,rgba(179,109,83,0.35)_0%,transparent_70%)] will-change-transform animate-orb-2" />
-        
-        {/* Mid Left Orb - Eucalyptus/Sage */}
-        <div className="absolute top-[1600px] left-[-8%] w-[280px] h-[280px] sm:w-[400px] sm:h-[400px] rounded-full bg-[radial-gradient(circle,rgba(138,166,130,0.35)_0%,transparent_70%)] will-change-transform animate-orb-3" />
-        
-        {/* Lower Right Orb - Clay/Terracotta */}
-        <div className="absolute top-[2600px] right-[-8%] w-[320px] h-[320px] sm:w-[480px] sm:h-[480px] rounded-full bg-[radial-gradient(circle,rgba(197,137,113,0.38)_0%,transparent_70%)] will-change-transform animate-orb-1" />
-        
-        {/* Near Bottom Orb - Sage Green */}
-        <div className="absolute bottom-[800px] left-[-10%] w-[300px] h-[300px] sm:w-[450px] sm:h-[450px] rounded-full bg-[radial-gradient(circle,rgba(95,125,92,0.40)_0%,transparent_70%)] will-change-transform animate-orb-2" />
-        
-        {/* Footer Orb - Clay */}
-        <div className="absolute bottom-[-100px] right-[-10%] w-[280px] h-[280px] sm:w-[400px] sm:h-[400px] rounded-full bg-[radial-gradient(circle,rgba(179,109,83,0.28)_0%,transparent_70%)] will-change-transform animate-orb-3" />
-      </div>
+
 
       {/* Elegant Floating Nav */}
       <nav className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex items-center justify-between relative z-40">
