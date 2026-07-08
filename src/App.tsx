@@ -1561,10 +1561,34 @@ Como posso te ajudar hoje?`
           date: data.date,
           time: data.time,
           type: data.type || 'Presencial',
-          status: data.status || 'Agendada',
+          status: data.status === 'Recorrente' ? 'Agendada' : (data.status || 'Agendada'),
           amount: parseFloat(data.amount) || parseFloat(oldDoc?.amount as any) || 0,
           updatedAt: new Date().toISOString()
         };
+
+        // If the date or time changed, we should cancel the original slot if it was a recurrence day
+        // to prevent ghost/recurrent sessions from showing up again on the old date.
+        if (oldDoc && (oldDoc.date !== data.date || oldDoc.time !== data.time)) {
+          const p = patients.find(pat => pat.id === oldDoc.patientId);
+          if (p && p.sessionDay) {
+            const oldDateObj = new Date(oldDoc.date + 'T12:00:00');
+            const oldDayName = format(oldDateObj, 'eeee', { locale: ptBR });
+            const capitalizedOldDayName = oldDayName.charAt(0).toUpperCase() + oldDayName.slice(1);
+            
+            if (p.sessionDay === capitalizedOldDayName) {
+              await addDoc(collection(db, 'sessions'), {
+                patientId: oldDoc.patientId,
+                date: oldDoc.date,
+                time: oldDoc.time,
+                status: 'Cancelada',
+                ownerId: user.uid,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+              });
+            }
+          }
+        }
+
         await updateDoc(sessionRef, updatedData);
         setLastAction({ type: 'update', ids: [data.id], oldData: oldDoc });
 
@@ -1609,7 +1633,7 @@ Como posso te ajudar hoje?`
         time: data.time,
         duration: data.duration || '50min',
         type: data.type || 'Presencial',
-        status: data.status || 'Agendada',
+        status: data.status === 'Recorrente' ? 'Agendada' : (data.status || 'Agendada'),
         amount: parseFloat(data.amount) || 0,
         cost: 0,
         paid: data.paid || false,
@@ -1755,6 +1779,7 @@ Como posso te ajudar hoje?`
       if (id.toString().startsWith('virtual-')) {
         await setDoc(doc(db, 'sessions', id), {
           ...data,
+          status: data.status === 'Recorrente' ? 'Agendada' : (data.status || 'Agendada'),
           ownerId: user.uid,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
@@ -1762,10 +1787,14 @@ Como posso te ajudar hoje?`
         return;
       }
       const sessionRef = doc(db, 'sessions', id);
-      await updateDoc(sessionRef, {
+      const updatedData = {
         ...data,
         updatedAt: new Date().toISOString()
-      });
+      };
+      if (updatedData.status === 'Recorrente') {
+        updatedData.status = 'Agendada';
+      }
+      await updateDoc(sessionRef, updatedData);
 
       // Google Agenda Sync
       if (data.googleEventId) {
@@ -3460,7 +3489,7 @@ function PatientDetailsView({
         where('patientId', '==', patientId)
       );
       const unsubscribe = onSnapshot(q, (snapshot) => {
-        const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
         // Sort by date descending and time descending
         list.sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time));
         setPatientSessions(list);
@@ -3616,12 +3645,12 @@ function PatientDetailsView({
         body: sessionsRows,
         headStyles: { fillColor: [63, 81, 181], textColor: [255, 255, 255] },
         columnStyles: {
-          0: { cellWidth: 10, align: 'center' },
+          0: { cellWidth: 10, halign: 'center' },
           1: { cellWidth: 25 },
           2: { cellWidth: 20 },
           3: { cellWidth: 25 },
           4: { cellWidth: 'auto' },
-          5: { cellWidth: 25, align: 'right' }
+          5: { cellWidth: 25, halign: 'right' }
         }
       });
 
@@ -7815,6 +7844,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
   const handleSaveExpense = () => {
     if (!expenseForm.description || !expenseForm.amount) return alert('Preencha todos os campos');
     onAddTransaction({
+      patientId: '',
       description: expenseForm.description,
       amount: parseFloat(expenseForm.amount),
       date: expenseForm.date,
@@ -8956,7 +8986,7 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
     originalTime: initialData?.originalTime || initialData?.time || '09:00',
     type: initialData?.type || 'Online',
     recurrence: initialData?.recurrence || 'none',
-    status: initialData?.status || 'Agendada',
+    status: initialData?.status === 'Recorrente' ? 'Agendada' : (initialData?.status || 'Agendada'),
     amount: initialData?.amount || ''
   });
 

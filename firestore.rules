@@ -55,7 +55,7 @@ service cloud.firestore {
     }
 
     function isValidTransaction(data) {
-      return data.patientId is string && isValidId(data.patientId)
+      return (data.get('type', 'Receita') == 'Despesa' || (data.patientId is string && isValidId(data.patientId)))
         && data.amount is number
         && data.date is string && data.date.size() <= 20
         && data.ownerId == request.auth.uid
