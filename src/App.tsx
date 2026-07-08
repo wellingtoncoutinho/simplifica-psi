@@ -1701,6 +1701,8 @@ Como posso te ajudar hoje?`
 
       await updateDoc(patientRef, {
         ...data,
+        amount: parseFloat(data.amount) || 0,
+        sessions: parseInt(data.sessions) || 0,
         updatedAt: new Date().toISOString()
       });
 
@@ -4464,7 +4466,7 @@ function PatientDetailsView({
         emergencyRelation: patient.emergencyRelation || '',
         emergencyPhone: patient.emergencyPhone || '',
         amount: patient.amount || '',
-        sessions: patient.sessions || '0',
+        sessions: typeof patient.sessions === 'number' ? patient.sessions : (parseInt(patient.sessions) || 0),
         status: patient.status || 'Ativo',
         paymentNotes: patient.paymentNotes || ''
       });
