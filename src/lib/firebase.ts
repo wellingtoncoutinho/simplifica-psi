@@ -19,6 +19,9 @@ export const googleProvider = new GoogleAuthProvider();
 
 export const googleCalendarProvider = new GoogleAuthProvider();
 googleCalendarProvider.addScope('https://www.googleapis.com/auth/calendar.events');
+googleCalendarProvider.setCustomParameters({
+  prompt: 'consent select_account'
+});
 
 export const signInWithGoogle = () => signInWithPopup(auth, googleProvider);
 export const signInWithGoogleCalendar = () => signInWithPopup(auth, googleCalendarProvider);

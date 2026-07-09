@@ -1241,18 +1241,6 @@ Como posso te ajudar hoje?`
 
   const handleConnectGoogleCalendar = async () => {
     try {
-      const userConfirmed = window.confirm(
-        "🔒 Segurança e Integração da Google Agenda\n\n" +
-        "Para sincronizar as consultas do SimplePsi com a sua Google Agenda em tempo real, o Google solicitará permissão para gerenciar eventos de calendário.\n\n" +
-        "Como a nossa plataforma é exclusiva e utiliza sua conta pessoal direta, a Google poderá exibir um aviso de 'App não verificado' ou 'Site suspeito'. Isso é normal para apps privados que ainda não concluíram a verificação empresarial completa da Google.\n\n" +
-        "Para prosseguir com segurança:\n" +
-        "1. Clique em 'Avançado' (no canto inferior esquerdo da tela de consentimento da Google).\n" +
-        "2. Clique no link 'Acessar SimplePsi (não seguro)'.\n\n" +
-        "Garantimos 100% de sigilo ético e que nenhuma outra informação da sua conta Google será lida. Deseja iniciar a conexão manual agora?"
-      );
-      
-      if (!userConfirmed) return;
-
       const result = await signInWithGoogleCalendar();
       const credential = GoogleAuthProvider.credentialFromResult(result);
       if (credential && credential.accessToken) {
@@ -1276,7 +1264,11 @@ Como posso te ajudar hoje?`
       }
     } catch (err: any) {
       console.error(err);
-      alert("Erro ao conectar com Google Agenda: " + (err.message || err));
+      if (err.code === 'auth/popup-blocked') {
+        alert("A janela de conexão foi bloqueada pelo seu navegador. Por favor, libere pop-ups para este site e tente novamente.");
+      } else {
+        alert("Erro ao conectar com Google Agenda: " + (err.message || err));
+      }
     }
   };
 
@@ -9376,20 +9368,35 @@ function ProfileSettingsModal({ initialData, onClose, onSave, googleAccessToken,
             </div>
 
             {formData.isGoogleCalendarEnabled && (
-              <div className="glass-card p-3.5 rounded-xl border border-white/5 bg-white/5 flex items-center justify-between gap-4 mt-2">
-                <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${googleAccessToken ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
-                  <span className="text-[10px] font-bold text-text-main uppercase tracking-wider">
-                    {googleAccessToken ? 'CONECTADO' : 'NÃO CONECTADO'}
-                  </span>
+              <div className="space-y-2 mt-2">
+                <div className="glass-card p-3.5 rounded-xl border border-white/5 bg-white/5 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${googleAccessToken ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
+                    <span className="text-[10px] font-bold text-text-main uppercase tracking-wider">
+                      {googleAccessToken ? 'CONECTADO' : 'NÃO CONECTADO'}
+                    </span>
+                  </div>
+                  <button
+                    onClick={onConnectGoogleCalendar}
+                    type="button"
+                    className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all"
+                  >
+                    {googleAccessToken ? 'Reconectar' : 'Conectar Google'}
+                  </button>
                 </div>
-                <button
-                  onClick={onConnectGoogleCalendar}
-                  type="button"
-                  className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all"
-                >
-                  {googleAccessToken ? 'Reconectar' : 'Conectar Google'}
-                </button>
+                <div className="p-3.5 bg-primary/5 rounded-xl border border-primary/10 text-left">
+                  <p className="text-[9px] text-text-muted leading-relaxed">
+                    🔒 <strong>Segurança e Consentimento da Google Agenda:</strong>
+                  </p>
+                  <p className="text-[9px] text-text-muted leading-relaxed mt-1">
+                    Ao conectar, a Google poderá exibir uma mensagem de <em>"App não verificado"</em> ou <em>"Site suspeito"</em> por ser uma integração direta e privada. Para prosseguir:
+                  </p>
+                  <ol className="text-[9px] text-text-muted leading-relaxed mt-1 list-decimal list-inside space-y-0.5">
+                    <li>Clique em <strong>Avançado</strong> (canto inferior esquerdo da tela de consentimento).</li>
+                    <li>Selecione <strong>Acessar SimplePsi (não seguro)</strong>.</li>
+                    <li>Certifique-se de <strong>marcar a caixinha</strong> de permissão para ler e gravar eventos da sua agenda para que a sincronização funcione.</li>
+                  </ol>
+                </div>
               </div>
             )}
           </div>
