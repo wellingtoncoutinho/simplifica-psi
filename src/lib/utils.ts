@@ -16,3 +16,11 @@ export const formatCurrency = (value: number) => {
     currency: 'BRL',
   }).format(value);
 };
+
+export const getWhatsAppLink = (phone?: string) => {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, '');
+  if (!digits) return null;
+  const sanitized = digits.length === 10 || digits.length === 11 ? '55' + digits : digits;
+  return `https://wa.me/${sanitized}`;
+};

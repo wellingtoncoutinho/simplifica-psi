@@ -627,9 +627,17 @@ export async function seedDemoData(userEmail: string, userId: string) {
 
     // Write patients and capture IDs
     const createdPatients: any[] = [];
+    let idx = 0;
     for (const pat of mockPatients) {
-      const pDoc = await addDoc(patientsRef, pat);
-      createdPatients.push({ id: pDoc.id, ...pat });
+      const dateOffset = new Date(Date.now() - (mockPatients.length - idx) * 24 * 60 * 60 * 1000);
+      const patWithDates = {
+        ...pat,
+        createdAt: dateOffset.toISOString(),
+        updatedAt: dateOffset.toISOString()
+      };
+      const pDoc = await addDoc(patientsRef, patWithDates);
+      createdPatients.push({ id: pDoc.id, ...patWithDates });
+      idx++;
     }
     console.log("Pacientes semeados com sucesso:", createdPatients.length);
 

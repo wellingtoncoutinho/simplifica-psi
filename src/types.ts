@@ -20,6 +20,11 @@ export interface Patient {
   emergencyRelation?: string;
   emergencyPhone?: string;
   paymentNotes?: string;
+  paymentPeriodicity?: 'Mensal' | 'Quinzenal' | 'Semanal' | 'Por Sessão';
+  paymentValue?: number;
+  paymentDay1?: number;
+  paymentDay2?: number;
+  paymentWeekday?: string;
   // Campos de Anamnese
   mainComplaint?: string;
   familyHistory?: string;
@@ -60,6 +65,38 @@ export interface Patient {
         title: string;
         formulation: TccFormulation;
       }>;
+    };
+    psicanaliseData?: {
+      manifestDemand?: string;
+      latentDemand?: string;
+      defenses?: string;
+      transference?: string;
+      structuralPosition?: string;
+    };
+    psychoanalysisData?: {
+      manifestDemand?: string;
+      latentDemand?: string;
+      defenses?: string;
+      transference?: string;
+      structuralPosition?: string;
+    };
+    gestaltData?: {
+      figureAndGround?: string;
+      contactCycleBlocks?: string;
+      awarenessLevel?: string;
+      supportSystem?: string;
+    };
+    actData?: {
+      fusion?: string;
+      experientialAvoidance?: string;
+      values?: string;
+      committedAction?: string;
+    };
+    humanistaData?: {
+      existentialThemes?: string;
+      phenomenologicalFocus?: string;
+      selfCongruence?: string;
+      therapeuticInsights?: string;
     };
     treatmentPlan?: Array<{
       id: string;

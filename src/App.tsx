@@ -101,6 +101,7 @@ import {
   Sun,
   LogOut,
   ChevronRight,
+  ChevronDown,
   ChevronLeft,
   MoreVertical,
   Plus,
@@ -137,7 +138,7 @@ import {
   ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, formatCurrency } from './lib/utils';
+import { cn, formatCurrency, getWhatsAppLink } from './lib/utils';
 import LandingPage from './components/LandingPage';
 import PaywallScreen from './components/PaywallScreen';
 import AdminPanel from './components/AdminPanel';
@@ -717,6 +718,26 @@ Como posso te ajudar hoje?`
       }
     }
   }, [loading, user, profileSettings]);
+  const hasRunSilentSync = useRef(false);
+
+  useEffect(() => {
+    if (user && profileSettings.isGoogleCalendarEnabled && patients.length > 0 && !hasRunSilentSync.current) {
+      const token = localStorage.getItem('google_calendar_access_token');
+      const expiresAtStr = localStorage.getItem('google_calendar_expires_at');
+      const expiresAt = expiresAtStr ? parseInt(expiresAtStr) : 0;
+      const now = new Date().getTime();
+
+      // Se temos o token e ele ainda está válido por pelo menos 2 minutos, sincronizamos silenciosamente
+      if (token && now < expiresAt - 2 * 60 * 1000) {
+        hasRunSilentSync.current = true;
+        console.log("Iniciando sincronização silenciosa no carregamento do app...");
+        const timer = setTimeout(() => {
+          syncAllFutureSessionsToGoogle(token, true);
+        }, 5000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [user, profileSettings.isGoogleCalendarEnabled, patients]);
 
   const filteredPatients = useMemo(() => {
     return patients.filter(p => 
@@ -1147,7 +1168,7 @@ Como posso te ajudar hoje?`
     return slots;
   };
 
-  const syncAllFutureSessionsToGoogle = async (accessToken: string) => {
+  const syncAllFutureSessionsToGoogle = async (accessToken: string, silent = false) => {
     try {
       if (!user) return;
       
@@ -1161,14 +1182,16 @@ Como posso te ajudar hoje?`
       const pendingSlots = futureSlots.filter(s => !s.googleEventId);
       const existingSlots = futureSlots.filter(s => !!s.googleEventId);
 
-      // Diagnostic Alert
-      alert(`SimplePsi - Diagnóstico de Sincronização:\n\n` +
-            `- Total de Pacientes: ${totalPatients}\n` +
-            `- Pacientes com dia/hora fixos: ${activePatientsWithSchedule}\n` +
-            `- Consultas detectadas nos próximos 30 dias: ${futureSlots.length}\n` +
-            `- Consultas novas (não enviadas ao Google): ${pendingSlots.length}\n` +
-            `- Consultas já vinculadas (serão atualizadas): ${existingSlots.length}\n\n` +
-            `Ao clicar em OK, iniciaremos a sincronização e reconciliação de todas as consultas no seu Google Agenda.`);
+      if (!silent) {
+        // Diagnostic Alert
+        alert(`SimplePsi - Diagnóstico de Sincronização:\n\n` +
+              `- Total de Pacientes: ${totalPatients}\n` +
+              `- Pacientes com dia/hora fixos: ${activePatientsWithSchedule}\n` +
+              `- Consultas detectadas nos próximos 30 dias: ${futureSlots.length}\n` +
+              `- Consultas novas (não enviadas ao Google): ${pendingSlots.length}\n` +
+              `- Consultas já vinculadas (serão atualizadas): ${existingSlots.length}\n\n` +
+              `Ao clicar em OK, iniciaremos a sincronização e reconciliação de todas as consultas no seu Google Agenda.`);
+      }
 
       if (futureSlots.length === 0) {
         console.log("Nenhuma consulta futura pendente de sincronização.");
@@ -1228,14 +1251,18 @@ Como posso te ajudar hoje?`
         }
       }
 
-      alert(`Resultado da Sincronização & Reconciliação:\n\n` +
-            `- Consultas sincronizadas/atualizadas com sucesso: ${successCount}\n` +
-            `- Consultas com falha: ${failCount}` +
-            (failCount > 0 ? `\n- Último erro relatado: ${lastErrorMessage}` : ''));
+      if (!silent) {
+        alert(`Resultado da Sincronização & Reconciliação:\n\n` +
+              `- Consultas sincronizadas/atualizadas com sucesso: ${successCount}\n` +
+              `- Consultas com falha: ${failCount}` +
+              (failCount > 0 ? `\n- Último erro relatado: ${lastErrorMessage}` : ''));
+      }
 
     } catch (err: any) {
       console.error("Erro na sincronização em lote:", err);
-      alert("Erro crítico na sincronização: " + (err.message || err));
+      if (!silent) {
+        alert("Erro crítico na sincronização: " + (err.message || err));
+      }
     }
   };
 
@@ -1244,7 +1271,9 @@ Como posso te ajudar hoje?`
       const result = await signInWithGoogleCalendar();
       const credential = GoogleAuthProvider.credentialFromResult(result);
       if (credential && credential.accessToken) {
+        const expiresAt = new Date().getTime() + 3500 * 1000; // ~1 hour
         localStorage.setItem('google_calendar_access_token', credential.accessToken);
+        localStorage.setItem('google_calendar_expires_at', expiresAt.toString());
         setGoogleAccessToken(credential.accessToken);
         
         // Turn on the toggle in profiles document too!
@@ -1314,18 +1343,43 @@ Como posso te ajudar hoje?`
     }
   };
 
-  const getCalendarAuthHeaders = () => {
+  const ensureValidCalendarToken = async (): Promise<string | null> => {
     const token = localStorage.getItem('google_calendar_access_token');
-    return token ? {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    } : null;
+    const expiresAtStr = localStorage.getItem('google_calendar_expires_at');
+    const expiresAt = expiresAtStr ? parseInt(expiresAtStr) : 0;
+    const now = new Date().getTime();
+    
+    // If we have a token and it is NOT expired (with 2 min buffer), return it
+    if (token && now < expiresAt - 2 * 60 * 1000) {
+      return token;
+    }
+    
+    // Otherwise, we need to refresh it by opening the Google Calendar sign in popup
+    try {
+      console.log("Token do Google Agenda expirado ou ausente. Solicitando novo token...");
+      const result = await signInWithGoogleCalendar();
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential && credential.accessToken) {
+        const newExpiresAt = new Date().getTime() + 3500 * 1000; // ~1 hour
+        localStorage.setItem('google_calendar_access_token', credential.accessToken);
+        localStorage.setItem('google_calendar_expires_at', newExpiresAt.toString());
+        setGoogleAccessToken(credential.accessToken);
+        return credential.accessToken;
+      }
+    } catch (err) {
+      console.error("Erro ao renovar token do Google Agenda:", err);
+    }
+    return null;
   };
 
   const syncSessionToGoogleCalendar = async (sessionData: any, sessionId: string, bypassEnabledCheck = false): Promise<boolean> => {
     if (!profileSettings.isGoogleCalendarEnabled && !bypassEnabledCheck) return false;
-    const headers = getCalendarAuthHeaders();
-    if (!headers) return false;
+    const token = await ensureValidCalendarToken();
+    if (!token) return false;
+    const headers = {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    };
 
     try {
       const p = patients.find(pat => pat.id === sessionData.patientId);
@@ -1378,8 +1432,12 @@ Como posso te ajudar hoje?`
   const updateSessionInGoogleCalendar = async (sessionData: any, bypassEnabledCheck = false): Promise<boolean> => {
     if (!profileSettings.isGoogleCalendarEnabled && !bypassEnabledCheck) return false;
     if (!sessionData.googleEventId) return false;
-    const headers = getCalendarAuthHeaders();
-    if (!headers) return false;
+    const token = await ensureValidCalendarToken();
+    if (!token) return false;
+    const headers = {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    };
 
     try {
       const p = patients.find(pat => pat.id === sessionData.patientId);
@@ -1421,8 +1479,12 @@ Como posso te ajudar hoje?`
 
   const deleteSessionFromGoogleCalendar = async (googleEventId: string) => {
     if (!profileSettings.isGoogleCalendarEnabled || !googleEventId) return;
-    const headers = getCalendarAuthHeaders();
-    if (!headers) return;
+    const token = await ensureValidCalendarToken();
+    if (!token) return;
+    const headers = {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    };
 
     try {
       const response = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${googleEventId}`, {
@@ -2620,6 +2682,123 @@ function DashboardView({
   onGoToPacientes: () => void,
   onDeletePatient: (id: string) => void
 }) {
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [selectedDayPayments, setSelectedDayPayments] = useState<any[]>([]);
+  const [selectedDayLabel, setSelectedDayLabel] = useState<string>('');
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+
+  const monthStart = startOfMonth(currentDate);
+  const monthEnd = endOfMonth(monthStart);
+  const startDate = startOfWeek(monthStart, { weekStartsOn: 0 }); // Sunday
+  const endDate = endOfWeek(monthEnd, { weekStartsOn: 0 }); // Saturday
+  
+  const dayCells = useMemo(() => {
+    return eachDayOfInterval({ start: startDate, end: endDate });
+  }, [startDate, endDate]);
+
+  const daysInMonth = useMemo(() => {
+    return eachDayOfInterval({ start: monthStart, end: monthEnd });
+  }, [monthStart, monthEnd]);
+
+  // Compute all scheduled payments in the selected month
+  const monthPayments = useMemo(() => {
+    const list: Array<{
+      date: Date;
+      patient: any;
+      amount: number;
+      periodicity: string;
+    }> = [];
+
+    const weekdaysNames = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+    const monthStartStr = format(monthStart, 'yyyy-MM-dd');
+    const monthEndStr = format(monthEnd, 'yyyy-MM-dd');
+
+    const getWeekdayOccurrencesInMonth = (weekdayName: string) => {
+      return daysInMonth.filter(d => weekdaysNames[d.getDay()] === weekdayName).length;
+    };
+
+    patients.forEach(p => {
+      if (p.status === 'Inativo') return;
+      if (!p.paymentPeriodicity) return;
+
+      const amountPerSession = parseFloat(p.amount) || 0;
+
+      // 1. Determine session count in this month
+      const activeSessions = sessions.filter(s => s.patientId === p.id && s.date >= monthStartStr && s.date <= monthEndStr && s.status !== 'Cancelada');
+      let sessionCount = 0;
+      if (activeSessions.length > 0) {
+        sessionCount = activeSessions.length;
+      } else {
+        // Fallback to occurrences of sessionDay in the month, or 4 if not set
+        const targetSessionDay = p.sessionDay || 'Segunda-feira';
+        sessionCount = getWeekdayOccurrencesInMonth(targetSessionDay) || 4;
+      }
+
+      // 2. Add payments based on periodicity
+      if (p.paymentPeriodicity === 'Mensal') {
+        const targetDay = p.paymentDay1 || 5;
+        const monthDaysCount = monthEnd.getDate();
+        
+        let dayNum = targetDay;
+        if (targetDay > monthDaysCount) {
+          dayNum = monthDaysCount;
+        }
+        const payDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), dayNum);
+        const payValue = 4 * amountPerSession;
+        list.push({ date: payDate, patient: p, amount: payValue, periodicity: 'Mensal' });
+
+      } else if (p.paymentPeriodicity === 'Quinzenal') {
+        const targetDay1 = p.paymentDay1 || 5;
+        const targetDay2 = p.paymentDay2 || 20;
+        const monthDaysCount = monthEnd.getDate();
+        const payValue = 2 * amountPerSession;
+
+        // First payment
+        let dayNum1 = targetDay1;
+        if (targetDay1 > monthDaysCount) dayNum1 = monthDaysCount;
+        const payDate1 = new Date(currentDate.getFullYear(), currentDate.getMonth(), dayNum1);
+        list.push({ date: payDate1, patient: p, amount: payValue, periodicity: 'Quinzenal' });
+
+        // Second payment
+        let dayNum2 = targetDay2;
+        if (targetDay2 > monthDaysCount) dayNum2 = monthDaysCount;
+        const payDate2 = new Date(currentDate.getFullYear(), currentDate.getMonth(), dayNum2);
+        list.push({ date: payDate2, patient: p, amount: payValue, periodicity: 'Quinzenal' });
+
+      } else if (p.paymentPeriodicity === 'Semanal') {
+        const targetWeekday = p.paymentWeekday || p.sessionDay || 'Segunda-feira';
+        const paymentDays = daysInMonth.filter(d => weekdaysNames[d.getDay()] === targetWeekday);
+        const payValue = 1 * amountPerSession;
+
+        paymentDays.forEach(day => {
+          list.push({ date: day, patient: p, amount: payValue, periodicity: 'Semanal' });
+        });
+
+      } else if (p.paymentPeriodicity === 'Por Sessão') {
+        if (activeSessions.length > 0) {
+          activeSessions.forEach(s => {
+            const payDate = new Date(s.date + 'T12:00:00');
+            list.push({ date: payDate, patient: p, amount: amountPerSession, periodicity: 'Por Sessão' });
+          });
+        } else {
+          const targetSessionDay = p.sessionDay || 'Segunda-feira';
+          const fallbackDays = daysInMonth.filter(d => weekdaysNames[d.getDay()] === targetSessionDay);
+          fallbackDays.forEach(day => {
+            list.push({ date: day, patient: p, amount: amountPerSession, periodicity: 'Por Sessão' });
+          });
+        }
+      }
+    });
+
+    list.sort((a, b) => a.date.getTime() - b.date.getTime());
+    return list;
+  }, [daysInMonth, patients, sessions, monthEnd, monthStart, currentDate]);
+
+  const totalForecast = useMemo(() => {
+    return monthPayments.reduce((sum, p) => sum + p.amount, 0);
+  }, [monthPayments]);
+
   const validSessions = useMemo(() => {
     return sessions.filter(s => s.isTriage || patients.some(p => p.id === s.patientId));
   }, [sessions, patients]);
@@ -2641,9 +2820,78 @@ function DashboardView({
     return calculateIncomePrediction(startOfMonth(new Date()), endOfMonth(new Date()), sessions, patients);
   }, [sessions, patients]);
 
+  const getFutureAgendaSlots = (daysCount: number) => {
+    const slots: any[] = [];
+    const today = new Date();
+    
+    for (let i = 0; i < daysCount; i++) {
+      const day = new Date();
+      day.setDate(today.getDate() + i);
+      const dayName = format(day, 'eeee', { locale: ptBR });
+      const capitalizedDayName = dayName.charAt(0).toUpperCase() + dayName.slice(1);
+      const dateStr = format(day, 'yyyy-MM-dd');
+      
+      // 1. Recorded Sessions from Firestore
+      const recorded = sessions.filter(s => s.status !== 'Cancelada' && s.date === dateStr);
+      recorded.forEach(s => {
+        slots.push({
+          id: s.id,
+          patientId: s.patientId,
+          patientName: s.isTriage ? s.triageName : (patients.find(p => p.id === s.patientId)?.name || 'Paciente'),
+          date: s.date,
+          time: s.time,
+          type: s.type,
+          duration: s.duration || '50min',
+          status: s.status,
+          isTriage: s.isTriage,
+          googleEventId: s.googleEventId
+        });
+      });
+
+      // 2. Recurrent Sessions from Patients
+      patients.forEach(p => {
+        if (p.status === 'Inativo') return;
+        if (p.sessionDay === capitalizedDayName && p.sessionTime && p.sessionDay !== '' && p.sessionDay !== 'Nenhum') {
+          // Skip if there's already a recorded session for this patient today
+          const hasRecorded = recorded.some(s => s.patientId === p.id);
+          const hasCancelled = sessions.some(s => s.patientId === p.id && s.status === 'Cancelada' && s.date === dateStr);
+          
+          if (hasRecorded || hasCancelled) return;
+
+          const pRecurrenceStart = p.recurrenceStart ? new Date(p.recurrenceStart + 'T12:00:00') : new Date((p as any).createdAt || p.birthDate || '2024-01-01');
+          if (startOfDay(day) < startOfDay(pRecurrenceStart)) return;
+          const weeksDiff = Math.abs(differenceInWeeks(startOfDay(day), startOfDay(pRecurrenceStart)));
+          
+          let shouldRender = false;
+          if (!p.recurrence || p.recurrence === 'Semanal') shouldRender = true;
+          else if (p.recurrence === 'Quinzenal') shouldRender = weeksDiff % 2 === 0;
+          else if (p.recurrence === 'Mensal') shouldRender = weeksDiff % 4 === 0;
+
+          if (shouldRender) {
+            slots.push({
+              id: `virtual-${p.id}-${dateStr}`,
+              patientId: p.id,
+              patientName: p.name,
+              date: dateStr,
+              time: p.sessionTime,
+              type: p.modality || 'Online',
+              duration: '50min',
+              status: 'Recorrente',
+              isTriage: false,
+              sessionValue: p.amount || 0
+            });
+          }
+        }
+      });
+    }
+    
+    return slots;
+  };
+
   const upcomingAgenda = useMemo(() => {
     const now = new Date();
-    return validSessions
+    const futureSlots = getFutureAgendaSlots(30);
+    return futureSlots
       .filter(s => {
         const d = new Date(s.date + 'T' + (s.time || '00:00'));
         return d >= now && s.status !== 'Cancelada';
@@ -2653,7 +2901,7 @@ function DashboardView({
         if (dateCompare !== 0) return dateCompare;
         return a.time.localeCompare(b.time);
       });
-  }, [validSessions]);
+  }, [sessions, patients]);
 
   const alerts = useMemo(() => {
     const list: any[] = [];
@@ -2669,8 +2917,12 @@ function DashboardView({
           const [d, m] = p.birthDate.split('/');
           bDay = parseInt(d);
           bMonth = parseInt(m) - 1;
+        } else if (p.birthDate.includes('-')) {
+          const [y, m, d] = p.birthDate.split('-');
+          bDay = parseInt(d);
+          bMonth = parseInt(m) - 1;
         } else {
-          const d = new Date(p.birthDate);
+          const d = new Date(p.birthDate + 'T12:00:00');
           bDay = d.getDate();
           bMonth = d.getMonth();
         }
@@ -2753,7 +3005,7 @@ function DashboardView({
           <div className="space-y-4">
              <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Próximos Horários</p>
              {upcomingAgenda.slice(0, 3).map(session => {
-               const p = filteredPatients.find(pat => pat.id === session.patientId);
+               const p = patients.find(pat => pat.id === session.patientId);
                const sessionDate = new Date(session.date + 'T12:00:00');
                const modality = session.type || p?.modality || 'Presencial';
                return (
@@ -2767,7 +3019,23 @@ function DashboardView({
                       <p className="text-[10px] text-text-muted">{format(sessionDate, 'dd/MM/yyyy')}</p>
                     </div>
                     <div className="flex-1">
-                      <p className="font-medium text-text-main uppercase">{p?.name || session.triageName || 'PACIENTE'}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium text-text-main uppercase">{p?.name || session.triageName || 'PACIENTE'}</p>
+                        {p?.phone && getWhatsAppLink(p.phone) && (
+                          <a 
+                            href={getWhatsAppLink(p.phone)!} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-green-500 hover:text-green-400 p-1 transition-colors flex items-center justify-center rounded-lg hover:bg-green-500/10 cursor-pointer"
+                            title="Conversar no WhatsApp"
+                          >
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                              <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.717-1.458L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.863-9.864.001-2.63-1.023-5.101-2.883-6.962C16.59 1.878 14.12 .853 11.493.853 6.059.853 1.633 5.272 1.63 10.718c-.001 1.639.429 3.236 1.247 4.678L1.87 20.89l5.656-1.482c1.399.763 2.94 1.168 4.542 1.171z M17.07 14.543c-.275-.138-1.62-.8-1.873-.892-.253-.093-.437-.138-.62.138-.184.276-.713.892-.873 1.077-.16.184-.32.207-.595.069-.275-.138-1.163-.429-2.215-1.366-.817-.729-1.37-1.629-1.53-1.905-.16-.276-.017-.424.12-.562.124-.125.276-.322.414-.483.138-.161.184-.276.276-.46.09-.184.046-.345-.023-.483-.069-.138-.62-1.494-.85-2.046-.223-.538-.45-.465-.62-.474-.16-.008-.344-.01-.527-.01-.184 0-.483.069-.736.345-.253.276-.966.943-.966 2.3 0 1.356.988 2.666 1.126 2.85.138.184 1.944 2.969 4.71 4.16.657.283 1.17.453 1.57.58.66.21 1.26.18 1.73.11.53-.08 1.62-.66 1.85-1.3.23-.64.23-1.19.16-1.3-.07-.11-.25-.18-.53-.32z"/>
+                            </svg>
+                          </a>
+                        )}
+                      </div>
                       <div className="flex gap-2 mt-1">
                         <span className={cn(
                           "text-[10px] px-2 py-0.5 rounded-full border",
@@ -2839,6 +3107,267 @@ function DashboardView({
         </section>
       </div>
 
+      {/* Calendário de Recebimentos de Pacientes */}
+      <section className="glass-card rounded-3xl p-6 space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-green-500/10 text-green-400 flex items-center justify-center flex-shrink-0">
+              <DollarSign size={20} />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold flex items-center gap-2 text-text-main">
+                Calendário de Recebimentos
+              </h3>
+              <p className="text-xs text-text-muted mt-0.5">Acompanhe a escala e datas de pagamento configuradas para seus pacientes.</p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Seletor de Mês */}
+            <div className="flex items-center gap-1.5 bg-surface-muted p-1 rounded-xl border border-white/5 shadow-sm">
+              <button 
+                onClick={() => {
+                  setCurrentDate(prev => subMonths(prev, 1));
+                  setSelectedDayPayments([]);
+                  setSelectedDayLabel('');
+                  setSelectedDate(null);
+                }} 
+                className="p-1.5 rounded-lg hover:bg-border-ui text-text-muted hover:text-text-main transition-all"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span className="text-[10px] font-bold uppercase tracking-wider min-w-[90px] text-center text-text-main">
+                {format(currentDate, 'MMMM yyyy', { locale: ptBR })}
+              </span>
+              <button 
+                onClick={() => {
+                  setCurrentDate(prev => addMonths(prev, 1));
+                  setSelectedDayPayments([]);
+                  setSelectedDayLabel('');
+                  setSelectedDate(null);
+                }} 
+                className="p-1.5 rounded-lg hover:bg-border-ui text-text-muted hover:text-text-main transition-all"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
+
+            {/* Alternador de Modo de Visualização */}
+            <div className="flex bg-surface-muted p-1 rounded-xl border border-white/5 shadow-sm">
+              <button 
+                onClick={() => setViewMode('grid')} 
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all", 
+                  viewMode === 'grid' ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text-main"
+                )}
+              >
+                Grade
+              </button>
+              <button 
+                onClick={() => setViewMode('list')} 
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all", 
+                  viewMode === 'list' ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text-main"
+                )}
+              >
+                Lista
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Resumo/Previsão Financeira */}
+        <div className="p-4 rounded-2xl bg-green-500/5 border border-green-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-0.5">
+            <p className="text-[10px] text-green-400 uppercase tracking-widest font-bold">Previsão de Entrada (Este Mês)</p>
+            <p className="text-sm text-text-muted">Projeção calculada com base na frequência e valores combinados.</p>
+          </div>
+          <div className="text-left sm:text-right">
+            <span className="text-xl font-bold text-green-400">{formatCurrency(totalForecast)}</span>
+            <p className="text-[9px] text-text-muted uppercase tracking-wider mt-0.5">{monthPayments.length} vencimentos previstos</p>
+          </div>
+        </div>
+
+        {viewMode === 'grid' ? (
+          /* Visualização de Grade Mensal */
+          <div className="space-y-4">
+            <div className="grid grid-cols-7 gap-1.5 text-center text-[10px] font-bold uppercase tracking-widest text-text-muted border-b border-white/5 pb-2">
+              {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => (
+                <div key={d}>{d}</div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-7 gap-1.5">
+              {dayCells.map((day, idx) => {
+                const inMonth = isSameMonth(day, currentDate);
+                const dayDateStr = format(day, 'yyyy-MM-dd');
+                const dayPayments = monthPayments.filter(p => format(p.date, 'yyyy-MM-dd') === dayDateStr);
+                const isSelected = selectedDate && isSameDay(day, selectedDate) && inMonth;
+
+                return (
+                  <div 
+                    key={idx}
+                    onClick={() => {
+                      if (!inMonth) return;
+                      if (dayPayments.length > 0) {
+                        setSelectedDayPayments(dayPayments);
+                        setSelectedDayLabel(format(day, "dd 'de' MMMM", { locale: ptBR }));
+                        setSelectedDate(day);
+                      } else {
+                        setSelectedDayPayments([]);
+                        setSelectedDayLabel('');
+                        setSelectedDate(null);
+                      }
+                    }}
+                    className={cn(
+                      "p-2 border rounded-2xl min-h-[60px] sm:min-h-[75px] flex flex-col justify-between transition-all select-none relative",
+                      !inMonth ? "opacity-15 bg-transparent border-transparent" : "bg-surface-muted/30 border-white/5 cursor-pointer hover:bg-surface-muted/65",
+                      isToday(day) && "border-primary bg-primary/5 shadow-inner shadow-primary/5",
+                      isSelected && "border-green-500 bg-green-500/5 shadow-inner shadow-green-500/5"
+                    )}
+                  >
+                    <span className={cn(
+                      "text-[10px] font-bold", 
+                      isToday(day) ? "text-primary" : "text-text-muted"
+                    )}>
+                      {day.getDate()}
+                    </span>
+
+                    {dayPayments.length > 0 && inMonth && (
+                      <div className="flex flex-col gap-0.5 w-full">
+                        {/* Desktop: Mostrar Nomes e Valores */}
+                        <div className="hidden md:flex flex-col gap-0.5 w-full">
+                          {dayPayments.slice(0, 2).map((p, pIdx) => (
+                            <span 
+                              key={pIdx}
+                              className="text-[7.5px] font-medium leading-tight bg-green-500/10 text-green-400 border border-green-500/10 px-1 rounded truncate w-full"
+                            >
+                              {p.patient.name.split(' ')[0]}
+                            </span>
+                          ))}
+                          {dayPayments.length > 2 && (
+                            <span className="text-[7px] text-text-muted text-center font-bold">+{dayPayments.length - 2}</span>
+                          )}
+                        </div>
+
+                        {/* Mobile: Mostrar apenas Bolinha Verde */}
+                        <div className="md:hidden flex items-center justify-center pt-1.5">
+                          <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Painel Detalhado de Recebimento do Dia Selecionado */}
+            <AnimatePresence mode="wait">
+              {selectedDayPayments.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 10 }}
+                  className="p-4 bg-background border border-border-ui rounded-2xl text-left space-y-3"
+                >
+                  <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                    <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
+                      Recebimentos para: <span className="text-text-main font-black">{selectedDayLabel}</span>
+                    </p>
+                    <button 
+                      onClick={() => {
+                        setSelectedDayPayments([]);
+                        setSelectedDayLabel('');
+                        setSelectedDate(null);
+                      }}
+                      className="text-[9px] text-text-muted hover:text-text-main font-bold uppercase tracking-wider"
+                    >
+                      Fechar
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {selectedDayPayments.map((p, idx) => (
+                      <div 
+                        key={idx}
+                        onClick={() => onPatientSelect(p.patient.id)}
+                        className="p-3 bg-surface-muted hover:bg-white/5 border border-border-ui rounded-xl flex items-center justify-between cursor-pointer group transition-all"
+                      >
+                        <div className="overflow-hidden">
+                          <p className="text-xs font-bold text-text-main group-hover:text-primary transition-colors truncate">{p.patient.name}</p>
+                          <p className="text-[9px] text-text-muted uppercase tracking-wider mt-0.5">{p.periodicity}</p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 ml-2">
+                          {p.patient.phone && getWhatsAppLink(p.patient.phone) && (
+                            <a 
+                              href={getWhatsAppLink(p.patient.phone)!} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-green-500 hover:text-green-400 p-1.5 transition-colors flex items-center justify-center rounded-lg hover:bg-green-500/10 cursor-pointer"
+                              title="Conversar no WhatsApp"
+                            >
+                              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                                <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.717-1.458L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.863-9.864.001-2.63-1.023-5.101-2.883-6.962C16.59 1.878 14.12 .853 11.493.853 6.059.853 1.633 5.272 1.63 10.718c-.001 1.639.429 3.236 1.247 4.678L1.87 20.89l5.656-1.482c1.399.763 2.94 1.168 4.542 1.171z M17.07 14.543c-.275-.138-1.62-.8-1.873-.892-.253-.093-.437-.138-.62.138-.184.276-.713.892-.873 1.077-.16.184-.32.207-.595.069-.275-.138-1.163-.429-2.215-1.366-.817-.729-1.37-1.629-1.53-1.905-.16-.276-.017-.424.12-.562.124-.125.276-.322.414-.483.138-.161.184-.276.276-.46.09-.184.046-.345-.023-.483-.069-.138-.62-1.494-.85-2.046-.223-.538-.45-.465-.62-.474-.16-.008-.344-.01-.527-.01-.184 0-.483.069-.736.345-.253.276-.966.943-.966 2.3 0 1.356.988 2.666 1.126 2.85.138.184 1.944 2.969 4.71 4.16.657.283 1.17.453 1.57.58.66.21 1.26.18 1.73.11.53-.08 1.62-.66 1.85-1.3.23-.64.23-1.19.16-1.3-.07-.11-.25-.18-.53-.32z"/>
+                              </svg>
+                            </a>
+                          )}
+                          <span className="text-xs font-bold text-green-400 shrink-0">{formatCurrency(p.amount)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        ) : (
+          /* Visualização de Lista / Fila Cronológica */
+          <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1 no-scrollbar">
+            {monthPayments.map((p, idx) => (
+              <div 
+                key={idx}
+                onClick={() => onPatientSelect(p.patient.id)}
+                className="p-4 bg-surface-muted hover:bg-white/5 border border-border-ui rounded-2xl flex items-center justify-between gap-4 transition-all cursor-pointer group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-green-500/10 text-green-400 flex items-center justify-center font-bold text-xs shrink-0">
+                    {p.date.getDate()}
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-text-main group-hover:text-primary transition-colors">{p.patient.name}</p>
+                    <p className="text-[9px] text-text-muted uppercase tracking-widest mt-0.5">
+                      {p.periodicity} • {format(p.date, 'eeee', { locale: ptBR })}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  {p.patient.phone && getWhatsAppLink(p.patient.phone) && (
+                    <a 
+                      href={getWhatsAppLink(p.patient.phone)!} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-green-500 hover:text-green-400 p-1.5 transition-colors flex items-center justify-center rounded-lg hover:bg-green-500/10 cursor-pointer"
+                      title="Conversar no WhatsApp"
+                    >
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                        <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.717-1.458L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.863-9.864.001-2.63-1.023-5.101-2.883-6.962C16.59 1.878 14.12 .853 11.493.853 6.059.853 1.633 5.272 1.63 10.718c-.001 1.639.429 3.236 1.247 4.678L1.87 20.89l5.656-1.482c1.399.763 2.94 1.168 4.542 1.171z M17.07 14.543c-.275-.138-1.62-.8-1.873-.892-.253-.093-.437-.138-.62.138-.184.276-.713.892-.873 1.077-.16.184-.32.207-.595.069-.275-.138-1.163-.429-2.215-1.366-.817-.729-1.37-1.629-1.53-1.905-.16-.276-.017-.424.12-.562.124-.125.276-.322.414-.483.138-.161.184-.276.276-.46.09-.184.046-.345-.023-.483-.069-.138-.62-1.494-.85-2.046-.223-.538-.45-.465-.62-.474-.16-.008-.344-.01-.527-.01-.184 0-.483.069-.736.345-.253.276-.966.943-.966 2.3 0 1.356.988 2.666 1.126 2.85.138.184 1.944 2.969 4.71 4.16.657.283 1.17.453 1.57.58.66.21 1.26.18 1.73.11.53-.08 1.62-.66 1.85-1.3.23-.64.23-1.19.16-1.3-.07-.11-.25-.18-.53-.32z"/>
+                      </svg>
+                    </a>
+                  )}
+                  <p className="text-xs font-bold text-green-400 font-mono">{formatCurrency(p.amount)}</p>
+                </div>
+              </div>
+            ))}
+            
+            {monthPayments.length === 0 && (
+              <div className="py-12 text-center bg-card/30 rounded-2xl border border-dashed border-border-ui">
+                <p className="text-xs text-text-muted">Nenhum recebimento previsto para este mês.</p>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
     </motion.div>
   );
 }
@@ -2915,7 +3444,7 @@ function AddPatientModal({ onClose, onSave, initialName = '', initialDay = 'Segu
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Data de Nasc.</label>
-                      <input type="text" placeholder="DD/MM/AAAA" value={formData.birthDate} onChange={(e) => setFormData({...formData, birthDate: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
+                      <input type="date" value={formData.birthDate} onChange={(e) => setFormData({...formData, birthDate: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -3176,15 +3705,39 @@ function PatientsListView({
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'ativos' | 'inativos'>('ativos');
+  const [sortBy, setSortBy] = useState<'alfabetica' | 'recentes' | 'atividade'>('alfabetica');
+  const [isSortDropdownOpen, setIsSortDropdownOpen] = useState(false);
 
-  // Close menu when clicking outside
+  // Close menus when clicking outside
   useEffect(() => {
-    const handleClickOutside = () => setOpenMenuId(null);
+    const handleClickOutside = () => {
+      setOpenMenuId(null);
+      setIsSortDropdownOpen(false);
+    };
     window.addEventListener('click', handleClickOutside);
     return () => window.removeEventListener('click', handleClickOutside);
   }, []);
 
-  const displayPatients = filteredPatients.filter(p => activeTab === 'ativos' ? p.status !== 'Inativo' : p.status === 'Inativo');
+  const displayPatients = useMemo(() => {
+    const list = filteredPatients.filter(p => activeTab === 'ativos' ? p.status !== 'Inativo' : p.status === 'Inativo');
+    
+    return [...list].sort((a, b) => {
+      if (sortBy === 'alfabetica') {
+        return a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' });
+      } else if (sortBy === 'recentes') {
+        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (dateB !== dateA) return dateB - dateA;
+        return a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' });
+      } else if (sortBy === 'atividade') {
+        const dateA = a.updatedAt ? new Date(a.updatedAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+        const dateB = b.updatedAt ? new Date(b.updatedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+        if (dateB !== dateA) return dateB - dateA;
+        return a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' });
+      }
+      return 0;
+    });
+  }, [filteredPatients, activeTab, sortBy]);
 
   return (
     <motion.div 
@@ -3196,25 +3749,87 @@ function PatientsListView({
         <div>
           <h2 className="text-2xl font-bold">Pacientes</h2>
           <p className="text-text-muted text-sm">Gerencie sua lista de pacientes e históricos.</p>
-          <div className="flex flex-wrap gap-2 mt-4">
-            <button 
-              onClick={() => setActiveTab('ativos')}
-              className={cn(
-                "px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all",
-                activeTab === 'ativos' ? "bg-primary text-white shadow-lg shadow-primary/20" : "bg-surface-muted text-text-muted hover:text-text-main"
-              )}
-            >
-              Ativos
-            </button>
-            <button 
-              onClick={() => setActiveTab('inativos')}
-              className={cn(
-                "px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all",
-                activeTab === 'inativos' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "bg-surface-muted text-text-muted hover:text-text-main"
-              )}
-            >
-              Inativos
-            </button>
+          <div className="flex flex-wrap items-center gap-3 mt-4">
+            <div className="flex gap-2">
+              <button 
+                onClick={() => setActiveTab('ativos')}
+                className={cn(
+                  "px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all",
+                  activeTab === 'ativos' ? "bg-primary text-white shadow-lg shadow-primary/20" : "bg-surface-muted text-text-muted hover:text-text-main"
+                )}
+              >
+                Ativos
+              </button>
+              <button 
+                onClick={() => setActiveTab('inativos')}
+                className={cn(
+                  "px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all",
+                  activeTab === 'inativos' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "bg-surface-muted text-text-muted hover:text-text-main"
+                )}
+              >
+                Inativos
+              </button>
+            </div>
+
+            <div className="relative flex items-center gap-1.5">
+              <span className="text-[10px] text-text-muted font-bold uppercase tracking-widest ml-1">Ordenar:</span>
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsSortDropdownOpen(!isSortDropdownOpen);
+                }}
+                className="px-3.5 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest bg-surface-muted text-text-main hover:bg-surface-muted-dark transition-all flex items-center gap-1.5 border border-white/5 shadow-sm"
+              >
+                <span>
+                  {sortBy === 'alfabetica' && 'Alfabética'}
+                  {sortBy === 'recentes' && 'Mais Recentes'}
+                  {sortBy === 'atividade' && 'Última Atividade'}
+                </span>
+                <ChevronDown size={11} className={cn("transition-transform duration-200 text-text-muted", isSortDropdownOpen && "rotate-180")} />
+              </button>
+              
+              <AnimatePresence>
+                {isSortDropdownOpen && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                    className="absolute top-full left-0 mt-1.5 w-44 bg-card border border-border-ui rounded-2xl shadow-xl z-30 py-1 overflow-hidden"
+                  >
+                    <button 
+                      onClick={() => { setSortBy('alfabetica'); setIsSortDropdownOpen(false); }}
+                      className={cn(
+                        "w-full text-left px-3.5 py-2 text-[11px] transition-colors flex items-center justify-between font-medium",
+                        sortBy === 'alfabetica' ? "bg-primary/10 text-primary font-bold" : "text-text-main hover:bg-surface-muted"
+                      )}
+                    >
+                      <span>Ordem Alfabética</span>
+                      {sortBy === 'alfabetica' && <Check size={12} />}
+                    </button>
+                    <button 
+                      onClick={() => { setSortBy('recentes'); setIsSortDropdownOpen(false); }}
+                      className={cn(
+                        "w-full text-left px-3.5 py-2 text-[11px] transition-colors flex items-center justify-between font-medium",
+                        sortBy === 'recentes' ? "bg-primary/10 text-primary font-bold" : "text-text-main hover:bg-surface-muted"
+                      )}
+                    >
+                      <span>Mais Recentes</span>
+                      {sortBy === 'recentes' && <Check size={12} />}
+                    </button>
+                    <button 
+                      onClick={() => { setSortBy('atividade'); setIsSortDropdownOpen(false); }}
+                      className={cn(
+                        "w-full text-left px-3.5 py-2 text-[11px] transition-colors flex items-center justify-between font-medium",
+                        sortBy === 'atividade' ? "bg-primary/10 text-primary font-bold" : "text-text-main hover:bg-surface-muted"
+                      )}
+                    >
+                      <span>Última Atividade</span>
+                      {sortBy === 'atividade' && <Check size={12} />}
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         </div>
         <button 
@@ -3287,6 +3902,20 @@ function PatientsListView({
                       >
                         <FileText size={18} />
                       </button>
+                      {patient.phone && getWhatsAppLink(patient.phone) && (
+                        <a 
+                          href={getWhatsAppLink(patient.phone)!}
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="p-1 rounded-lg hover:bg-green-500/10 text-green-500 hover:text-green-400 transition-all flex items-center justify-center cursor-pointer"
+                          title="Falar no WhatsApp"
+                        >
+                          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                            <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.717-1.458L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.863-9.864.001-2.63-1.023-5.101-2.883-6.962C16.59 1.878 14.12 .853 11.493.853 6.059.853 1.633 5.272 1.63 10.718c-.001 1.639.429 3.236 1.247 4.678L1.87 20.89l5.656-1.482c1.399.763 2.94 1.168 4.542 1.171z M17.07 14.543c-.275-.138-1.62-.8-1.873-.892-.253-.093-.437-.138-.62.138-.184.276-.713.892-.873 1.077-.16.184-.32.207-.595.069-.275-.138-1.163-.429-2.215-1.366-.817-.729-1.37-1.629-1.53-1.905-.16-.276-.017-.424.12-.562.124-.125.276-.322.414-.483.138-.161.184-.276.276-.46.09-.184.046-.345-.023-.483-.069-.138-.62-1.494-.85-2.046-.223-.538-.45-.465-.62-.474-.16-.008-.344-.01-.527-.01-.184 0-.483.069-.736.345-.253.276-.966.943-.966 2.3 0 1.356.988 2.666 1.126 2.85.138.184 1.944 2.969 4.71 4.16.657.283 1.17.453 1.57.58.66.21 1.26.18 1.73.11.53-.08 1.62-.66 1.85-1.3.23-.64.23-1.19.16-1.3-.07-.11-.25-.18-.53-.32z"/>
+                          </svg>
+                        </a>
+                      )}
                       <div className="relative">
                         <button 
                           onClick={(e) => {
@@ -3381,6 +4010,19 @@ function PatientsListView({
                 >
                   <FileText size={14} /> Prontuário
                 </button>
+                {patient.phone && getWhatsAppLink(patient.phone) && (
+                  <a 
+                    href={getWhatsAppLink(patient.phone)!}
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-green-500/10 text-green-500 hover:bg-green-500/20 transition-all text-[10px] font-bold uppercase tracking-widest cursor-pointer"
+                  >
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                      <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.717-1.458L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.863-9.864.001-2.63-1.023-5.101-2.883-6.962C16.59 1.878 14.12 .853 11.493.853 6.059.853 1.633 5.272 1.63 10.718c-.001 1.639.429 3.236 1.247 4.678L1.87 20.89l5.656-1.482c1.399.763 2.94 1.168 4.542 1.171z M17.07 14.543c-.275-.138-1.62-.8-1.873-.892-.253-.093-.437-.138-.62.138-.184.276-.713.892-.873 1.077-.16.184-.32.207-.595.069-.275-.138-1.163-.429-2.215-1.366-.817-.729-1.37-1.629-1.53-1.905-.16-.276-.017-.424.12-.562.124-.125.276-.322.414-.483.138-.161.184-.276.276-.46.09-.184.046-.345-.023-.483-.069-.138-.62-1.494-.85-2.046-.223-.538-.45-.465-.62-.474-.16-.008-.344-.01-.527-.01-.184 0-.483.069-.736.345-.253.276-.966.943-.966 2.3 0 1.356.988 2.666 1.126 2.85.138.184 1.944 2.969 4.71 4.16.657.283 1.17.453 1.57.58.66.21 1.26.18 1.73.11.53-.08 1.62-.66 1.85-1.3.23-.64.23-1.19.16-1.3-.07-.11-.25-.18-.53-.32z"/>
+                    </svg> Chat
+                  </a>
+                )}
                 <button 
                   onClick={() => setOpenMenuId(openMenuId === patient.id ? null : patient.id)}
                   className="w-10 h-10 flex items-center justify-center rounded-xl bg-surface-muted text-text-muted"
@@ -3431,6 +4073,30 @@ function DocCard({ doc, onDelete }: { doc: any, onDelete: (id: string) => void }
       </a>
     </div>
   );
+}
+
+function formatBirthDate(birthDate: string): string {
+  if (!birthDate) return 'Não informada';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) {
+    const [y, m, d] = birthDate.split('-');
+    return `${d}/${m}/${y}`;
+  }
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(birthDate)) {
+    return birthDate;
+  }
+  if (birthDate.includes('/')) {
+    return birthDate;
+  }
+  try {
+    const date = new Date(birthDate + 'T12:00:00');
+    if (!isNaN(date.getTime())) {
+      const d = String(date.getDate()).padStart(2, '0');
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const y = date.getFullYear();
+      return `${d}/${m}/${y}`;
+    }
+  } catch (e) {}
+  return birthDate;
 }
 
 function PatientDetailsView({ 
@@ -3725,6 +4391,7 @@ function PatientDetailsView({
   const [localPsychoanalysisData, setLocalPsychoanalysisData] = useState<any>(null);
   const [localGestaltData, setLocalGestaltData] = useState<any>(null);
   const [localActData, setLocalActData] = useState<any>(null);
+  const [localHumanistData, setLocalHumanistData] = useState<any>(null);
   const [localTreatmentNotes, setLocalTreatmentNotes] = useState<string>('');
   const [activeBeliefId, setActiveBeliefId] = useState<string | null>(null);
   const [isGeneratingTccAi, setIsGeneratingTccAi] = useState(false);
@@ -3787,7 +4454,7 @@ function PatientDetailsView({
       setTempNextSessionPlan(patient.clinicalData?.nextSessionPlan || "");
       setLocalTreatmentNotes(patient.clinicalData?.treatmentNotes || "");
       
-      setLocalPsychoanalysisData(patient.clinicalData?.psychoanalysisData || {
+      setLocalPsychoanalysisData(patient.clinicalData?.psicanaliseData || patient.clinicalData?.psychoanalysisData || {
         manifestDemand: '',
         latentDemand: '',
         defenses: '',
@@ -3805,6 +4472,12 @@ function PatientDetailsView({
         experientialAvoidance: '',
         values: '',
         committedAction: ''
+      });
+      setLocalHumanistData(patient.clinicalData?.humanistaData || {
+        existentialThemes: '',
+        phenomenologicalFocus: '',
+        selfCongruence: '',
+        therapeuticInsights: ''
       });
     }
   }, [patient, lastPatientId]);
@@ -3840,6 +4513,10 @@ function PatientDetailsView({
   const handleUpdateActField = (field: string, value: any) => {
     if (!localActData) return;
     setLocalActData((prev: any) => ({ ...prev, [field]: value }));
+  };
+  const handleUpdateHumanistField = (field: string, value: any) => {
+    if (!localHumanistData) return;
+    setLocalHumanistData((prev: any) => ({ ...prev, [field]: value }));
   };
 
   const commitLocalApproachData = (approachKey: string, data: any) => {
@@ -4089,6 +4766,10 @@ function PatientDetailsView({
         schemaString = `{"fusion": "...", "experientialAvoidance": "...", "values": "...", "committedAction": "..."}`;
         schemaKeys = ['fusion', 'experientialAvoidance', 'values', 'committedAction'];
         modelPrompt = `Analise o caso clínico sob a ótica da Terapia de Aceitação e Compromisso (ACT). Foque nos componentes do Hexaflex: fusão cognitiva, evitação experiencial, valores e ações comprometidas.`;
+      } else if (approachKey === 'humanista') {
+        schemaString = `{"existentialThemes": "...", "phenomenologicalFocus": "...", "selfCongruence": "...", "therapeuticInsights": "..."}`;
+        schemaKeys = ['existentialThemes', 'phenomenologicalFocus', 'selfCongruence', 'therapeuticInsights'];
+        modelPrompt = `Analise o histórico e as evoluções clínicas sob a ótica da Abordagem Centrada na Pessoa (ACP) e da Psicologia Existencialista. Identifique e analise o caso clínico fundamentando-se nos referenciais teóricos de Carl Rogers, Søren Kierkegaard, Martin Heidegger e Jean-Paul Sartre. Preencha os campos estruturais considerando: temas existenciais de angústia, isolamento, liberdade e morte; o foco fenomenológico na percepção e vivência imediata no momento presente; a congruência do self (aceitação e autoatualização de Rogers); e os direcionamentos clínicos para as sessões futuras.`;
       }
 
       const prompt = `
@@ -4143,6 +4824,9 @@ function PatientDetailsView({
       } else if (approachKey === 'act') {
         updatedData = { ...localActData, ...parsedData };
         setLocalActData(updatedData);
+      } else if (approachKey === 'humanista') {
+        updatedData = { ...localHumanistData, ...parsedData };
+        setLocalHumanistData(updatedData);
       }
 
       onUpdatePatient({
@@ -4454,13 +5138,22 @@ function PatientDetailsView({
         cpf: patient.cpf || patient.document || '',
         birthDate: patient.birthDate || '',
         profession: patient.profession || patient.occupation || '',
+        gender: patient.gender || '',
+        address: patient.address || '',
+        phone: patient.phone || '',
+        email: patient.email || '',
         emergencyName: patient.emergencyName || '',
         emergencyRelation: patient.emergencyRelation || '',
         emergencyPhone: patient.emergencyPhone || '',
         amount: patient.amount || '',
         sessions: typeof patient.sessions === 'number' ? patient.sessions : (parseInt(patient.sessions) || 0),
         status: patient.status || 'Ativo',
-        paymentNotes: patient.paymentNotes || ''
+        paymentNotes: patient.paymentNotes || '',
+        paymentPeriodicity: patient.paymentPeriodicity || 'Por Sessão',
+        paymentValue: patient.paymentValue !== undefined && patient.paymentValue !== null ? patient.paymentValue : (patient.amount || ''),
+        paymentDay1: patient.paymentDay1 !== undefined && patient.paymentDay1 !== null ? patient.paymentDay1 : 5,
+        paymentDay2: patient.paymentDay2 !== undefined && patient.paymentDay2 !== null ? patient.paymentDay2 : 20,
+        paymentWeekday: patient.paymentWeekday || patient.sessionDay || 'Segunda-feira'
       });
     }
   }, [patient]);
@@ -5360,6 +6053,7 @@ Relato:
                        profileSettings?.clinicalApproach === 'psicanalise' ? 'Estruturação Analítica' :
                        profileSettings?.clinicalApproach === 'gestalt' ? 'Mapa Gestáltico' :
                        profileSettings?.clinicalApproach === 'act' ? 'Matriz ACT' :
+                       profileSettings?.clinicalApproach === 'humanista' ? 'Análise Existencial / ACP' :
                        'Anamnese', 
                 icon: FileText 
               },
@@ -5422,26 +6116,25 @@ Relato:
                             <h3 className="text-xl sm:text-2xl font-bold text-text-main uppercase">{patient.name}</h3>
                           )}
                           
-                          {isEditing ? (
-                            <input 
-                              value={editForm.email} 
-                              onChange={(e) => setEditForm({...editForm, email: e.target.value})}
-                              className="text-xs sm:text-sm text-text-muted bg-surface-muted border border-border-ui rounded-lg px-2 py-1 outline-none focus:border-primary w-full mt-1"
-                            />
-                          ) : (
-                            <p className="text-xs sm:text-sm text-text-muted truncate max-w-[180px] sm:max-w-none">{patient.email}</p>
-                          )}
+                          <p className="text-xs sm:text-sm text-text-muted truncate max-w-[180px] sm:max-w-none">{isEditing ? editForm.email : patient.email}</p>
 
                           <div className="flex flex-wrap gap-2 mt-2">
-                            {isEditing ? (
-                              <input 
-                                value={editForm.phone} 
-                                onChange={(e) => setEditForm({...editForm, phone: e.target.value})}
-                                className="text-xs bg-surface-muted px-2 py-1 rounded-lg border border-border-ui outline-none focus:border-primary w-28"
-                              />
-                            ) : (
-                              <span className="text-[10px] sm:text-xs bg-surface-muted px-2 py-0.5 sm:px-3 sm:py-1 rounded-full border border-border-ui">{patient.phone}</span>
-                            )}
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] sm:text-xs bg-surface-muted px-2 py-0.5 sm:px-3 sm:py-1 rounded-full border border-border-ui">{isEditing ? editForm.phone : patient.phone}</span>
+                              {(isEditing ? editForm.phone : patient.phone) && getWhatsAppLink(isEditing ? editForm.phone : patient.phone) && (
+                                <a 
+                                  href={getWhatsAppLink(isEditing ? editForm.phone : patient.phone)!}
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="p-1 bg-green-500/10 text-green-500 rounded-full border border-green-500/20 hover:bg-green-500/20 transition-all flex items-center justify-center cursor-pointer"
+                                  title="Conversar no WhatsApp"
+                                >
+                                  <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+                                    <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.717-1.458L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.863-9.864.001-2.63-1.023-5.101-2.883-6.962C16.59 1.878 14.12 .853 11.493.853 6.059.853 1.633 5.272 1.63 10.718c-.001 1.639.429 3.236 1.247 4.678L1.87 20.89l5.656-1.482c1.399.763 2.94 1.168 4.542 1.171z M17.07 14.543c-.275-.138-1.62-.8-1.873-.892-.253-.093-.437-.138-.62.138-.184.276-.713.892-.873 1.077-.16.184-.32.207-.595.069-.275-.138-1.163-.429-2.215-1.366-.817-.729-1.37-1.629-1.53-1.905-.16-.276-.017-.424.12-.562.124-.125.276-.322.414-.483.138-.161.184-.276.276-.46.09-.184.046-.345-.023-.483-.069-.138-.62-1.494-.85-2.046-.223-.538-.45-.465-.62-.474-.16-.008-.344-.01-.527-.01-.184 0-.483.069-.736.345-.253.276-.966.943-.966 2.3 0 1.356.988 2.666 1.126 2.85.138.184 1.944 2.969 4.71 4.16.657.283 1.17.453 1.57.58.66.21 1.26.18 1.73.11.53-.08 1.62-.66 1.85-1.3.23-.64.23-1.19.16-1.3-.07-.11-.25-.18-.53-.32z"/>
+                                  </svg>
+                                </a>
+                              )}
+                            </div>
                             {isEditing ? (
                               <select 
                                 value={editForm.status || 'Ativo'}
@@ -5477,7 +6170,9 @@ Relato:
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                       <div className="space-y-4">
                         <h4 className="text-xs font-bold text-primary uppercase tracking-widest">Informações Pessoais</h4>
-                        <div className="space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          
+                          {/* CPF */}
                           <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
                             <span className="text-xs text-text-muted">CPF</span>
                             {isEditing ? (
@@ -5485,12 +6180,14 @@ Relato:
                                 placeholder="000.000.000-00"
                                 value={editForm.cpf} 
                                 onChange={(e) => setEditForm({...editForm, cpf: e.target.value})}
-                                className="text-xs font-bold text-text-main bg-transparent outline-none"
+                                className="text-xs font-bold text-text-main bg-transparent outline-none w-full"
                               />
                             ) : (
                               <span className="text-xs font-bold text-text-main">{patient.cpf || patient.document || 'Não informado'}</span>
                             )}
                           </div>
+
+                          {/* Data de Nasc */}
                           <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
                             <span className="text-xs text-text-muted">Data de Nasc.</span>
                             {isEditing ? (
@@ -5498,14 +6195,31 @@ Relato:
                                 type="date"
                                 value={editForm.birthDate} 
                                 onChange={(e) => setEditForm({...editForm, birthDate: e.target.value})}
-                                className="text-xs font-bold text-text-main bg-transparent outline-none"
+                                className="text-xs font-bold text-text-main bg-transparent outline-none w-full cursor-pointer"
                               />
                             ) : (
                               <span className="text-xs font-bold text-text-main">
-                                {patient.birthDate ? new Date(patient.birthDate).toLocaleDateString('pt-BR') : 'Não informada'}
+                                {formatBirthDate(patient.birthDate)}
                               </span>
                             )}
                           </div>
+
+                          {/* Gênero/Pronome */}
+                          <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
+                            <span className="text-xs text-text-muted">Gênero/Pronome</span>
+                            {isEditing ? (
+                              <input 
+                                placeholder="Ex: Feminino, Ela/Dela"
+                                value={editForm.gender} 
+                                onChange={(e) => setEditForm({...editForm, gender: e.target.value})}
+                                className="text-xs font-bold text-text-main bg-transparent outline-none w-full"
+                              />
+                            ) : (
+                              <span className="text-xs font-bold text-text-main">{patient.gender || 'Não informado'}</span>
+                            )}
+                          </div>
+
+                          {/* Profissão */}
                           <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
                             <span className="text-xs text-text-muted">Profissão</span>
                             {isEditing ? (
@@ -5513,12 +6227,58 @@ Relato:
                                 placeholder="Ex: Designer Gráfico"
                                 value={editForm.profession} 
                                 onChange={(e) => setEditForm({...editForm, profession: e.target.value})}
-                                className="text-xs font-bold text-text-main bg-transparent outline-none"
+                                className="text-xs font-bold text-text-main bg-transparent outline-none w-full"
                               />
                             ) : (
                               <span className="text-xs font-bold text-text-main">{patient.profession || patient.occupation || 'Não informada'}</span>
                             )}
                           </div>
+
+                          {/* Telefone */}
+                          <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
+                            <span className="text-xs text-text-muted">Telefone</span>
+                            {isEditing ? (
+                              <input 
+                                placeholder="(00) 00000-0000"
+                                value={editForm.phone} 
+                                onChange={(e) => setEditForm({...editForm, phone: e.target.value})}
+                                className="text-xs font-bold text-text-main bg-transparent outline-none w-full"
+                              />
+                            ) : (
+                              <span className="text-xs font-bold text-text-main">{patient.phone || 'Não informado'}</span>
+                            )}
+                          </div>
+
+                          {/* E-mail */}
+                          <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
+                            <span className="text-xs text-text-muted">E-mail</span>
+                            {isEditing ? (
+                              <input 
+                                placeholder="email@exemplo.com"
+                                value={editForm.email} 
+                                onChange={(e) => setEditForm({...editForm, email: e.target.value})}
+                                className="text-xs font-bold text-text-main bg-transparent outline-none w-full"
+                              />
+                            ) : (
+                              <span className="text-xs font-bold text-text-main truncate">{patient.email || 'Não informado'}</span>
+                            )}
+                          </div>
+
+                          {/* Endereço */}
+                          <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui sm:col-span-2">
+                            <span className="text-xs text-text-muted">Endereço</span>
+                            {isEditing ? (
+                              <input 
+                                placeholder="Rua, Número, Bairro, Cidade - UF"
+                                value={editForm.address} 
+                                onChange={(e) => setEditForm({...editForm, address: e.target.value})}
+                                className="text-xs font-bold text-text-main bg-transparent outline-none w-full"
+                              />
+                            ) : (
+                              <span className="text-xs font-bold text-text-main">{patient.address || 'Não informado'}</span>
+                            )}
+                          </div>
+
                         </div>
                       </div>
                       <div className="space-y-4">
@@ -5715,8 +6475,10 @@ Relato:
                     </div>
 
                     <div className="pt-8 border-t border-border-ui space-y-4">
-                      <h4 className="text-xs font-bold text-primary uppercase tracking-widest">Valor e Histórico</h4>
-                      <div className="grid grid-cols-2 gap-4">
+                      <h4 className="text-xs font-bold text-primary uppercase tracking-widest">Informações Financeiras e de Pagamento</h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        
+                        {/* Valor da Sessão */}
                         <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
                           <span className="text-xs text-text-muted">Valor da Sessão (R$)</span>
                           {isEditing ? (
@@ -5724,45 +6486,146 @@ Relato:
                               type="number"
                               value={editForm.amount || ''} 
                               onChange={(e) => setEditForm({...editForm, amount: e.target.value})}
-                              className="text-xs font-bold text-text-main bg-transparent outline-none"
+                              className="text-xs font-bold text-text-main bg-transparent outline-none w-full"
                             />
                           ) : (
                             <span className="text-xs font-bold text-text-main">{patient.amount ? `R$ ${patient.amount}` : 'Não informado'}</span>
                           )}
                         </div>
+
+                        {/* Frequência de Pagamento */}
                         <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
-                          <span className="text-xs text-text-muted">Sessões realizadas antes do cadastro no sistema</span>
+                          <span className="text-xs text-text-muted">Frequência de Pagamento</span>
                           {isEditing ? (
-                            <input 
-                              type="number"
-                              value={editForm.sessions || '0'} 
-                              onChange={(e) => setEditForm({...editForm, sessions: e.target.value})}
-                              className="text-xs font-bold text-text-main bg-transparent outline-none"
-                            />
+                            <select 
+                              value={editForm.paymentPeriodicity || 'Por Sessão'} 
+                              onChange={(e) => setEditForm({...editForm, paymentPeriodicity: e.target.value})} 
+                              className="text-xs font-bold text-text-main bg-transparent outline-none cursor-pointer w-full"
+                            >
+                              <option value="Mensal">Mensal</option>
+                              <option value="Quinzenal">Quinzenal</option>
+                              <option value="Semanal">Semanal</option>
+                              <option value="Por Sessão">Por Sessão (Avulso)</option>
+                            </select>
                           ) : (
-                            <span className="text-xs font-bold text-text-main">{patient.sessions || '0'}</span>
+                            <span className="text-xs font-bold text-text-main">
+                              {patient.paymentPeriodicity || 'Por Sessão'}
+                            </span>
                           )}
                         </div>
+
+
+                        {/* Configuração de datas dependendo da Frequência */}
+                        
+                        {/* Se MENSAL */}
+                        {(isEditing ? editForm.paymentPeriodicity : patient.paymentPeriodicity) === 'Mensal' && (
+                          <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui sm:col-span-2">
+                            <span className="text-xs text-text-muted">Dia do Vencimento do Mês (1 a 31)</span>
+                            {isEditing ? (
+                              <select 
+                                value={editForm.paymentDay1 || 5} 
+                                onChange={(e) => setEditForm({...editForm, paymentDay1: parseInt(e.target.value)})}
+                                className="text-xs font-bold text-text-main bg-transparent outline-none cursor-pointer w-full"
+                              >
+                                {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
+                                  <option key={day} value={day}>Dia {day}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span className="text-xs font-bold text-text-main">
+                                Todo dia {patient.paymentDay1 || 5}
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Se QUINZENAL */}
+                        {(isEditing ? editForm.paymentPeriodicity : patient.paymentPeriodicity) === 'Quinzenal' && (
+                          <>
+                            <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
+                              <span className="text-xs text-text-muted">Primeiro Dia de Vencimento (1 a 31)</span>
+                              {isEditing ? (
+                                <select 
+                                  value={editForm.paymentDay1 || 5} 
+                                  onChange={(e) => setEditForm({...editForm, paymentDay1: parseInt(e.target.value)})}
+                                  className="text-xs font-bold text-text-main bg-transparent outline-none cursor-pointer w-full"
+                                >
+                                  {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
+                                    <option key={day} value={day}>Dia {day}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span className="text-xs font-bold text-text-main">
+                                  Dia {patient.paymentDay1 || 5}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
+                              <span className="text-xs text-text-muted">Segundo Dia de Vencimento (1 a 31)</span>
+                              {isEditing ? (
+                                <select 
+                                  value={editForm.paymentDay2 || 20} 
+                                  onChange={(e) => setEditForm({...editForm, paymentDay2: parseInt(e.target.value)})}
+                                  className="text-xs font-bold text-text-main bg-transparent outline-none cursor-pointer w-full"
+                                >
+                                  {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
+                                    <option key={day} value={day}>Dia {day}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span className="text-xs font-bold text-text-main">
+                                  Dia {patient.paymentDay2 || 20}
+                                </span>
+                              )}
+                            </div>
+                          </>
+                        )}
+
+                        {/* Se SEMANAL */}
+                        {(isEditing ? editForm.paymentPeriodicity : patient.paymentPeriodicity) === 'Semanal' && (
+                          <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui sm:col-span-2">
+                            <span className="text-xs text-text-muted">Dia da Semana do Pagamento</span>
+                            {isEditing ? (
+                              <select 
+                                value={editForm.paymentWeekday || 'Segunda-feira'} 
+                                onChange={(e) => setEditForm({...editForm, paymentWeekday: e.target.value})}
+                                className="text-xs font-bold text-text-main bg-transparent outline-none cursor-pointer w-full"
+                              >
+                                <option value="Segunda-feira">Segunda-feira</option>
+                                <option value="Terça-feira">Terça-feira</option>
+                                <option value="Quarta-feira">Quarta-feira</option>
+                                <option value="Quinta-feira">Quinta-feira</option>
+                                <option value="Sexta-feira">Sexta-feira</option>
+                                <option value="Sábado">Sábado</option>
+                                <option value="Domingo">Domingo</option>
+                              </select>
+                            ) : (
+                              <span className="text-xs font-bold text-text-main">
+                                Toda {patient.paymentWeekday || 'Segunda-feira'}
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Notas de Pagamento */}
+                        <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui sm:col-span-2">
+                          <span className="text-xs text-text-muted font-bold uppercase tracking-wider">Notas e Observações de Pagamento</span>
+                          {isEditing ? (
+                            <textarea 
+                              placeholder="Adicione observações sobre a cobrança (Ex: Paga por Pix todo dia 5)"
+                              value={editForm.paymentNotes || ''} 
+                              onChange={(e) => setEditForm({...editForm, paymentNotes: e.target.value})}
+                              className="text-xs font-bold text-text-main bg-transparent outline-none w-full min-h-[60px] resize-none"
+                            />
+                          ) : (
+                            <p className="text-xs font-bold text-text-main whitespace-pre-wrap">{patient.paymentNotes || 'Nenhuma observação interna.'}</p>
+                          )}
+                        </div>
+
                       </div>
                     </div>
 
-                    <div className="pt-8 border-t border-border-ui space-y-4">
-                      <h4 className="text-xs font-bold text-primary uppercase tracking-widest">Informações de Pagamento (Notas Internas)</h4>
-                      <div className="p-4 rounded-2xl bg-surface-muted border border-border-ui">
-                        {isEditing ? (
-                          <textarea 
-                            placeholder="Ex: Paga todo dia 05 e 20, valor diferenciado, etc..."
-                            value={editForm.paymentNotes} 
-                            onChange={(e) => setEditForm({...editForm, paymentNotes: e.target.value})}
-                            className="w-full text-sm text-text-main bg-transparent outline-none min-h-[100px] resize-none"
-                          />
-                        ) : (
-                          <p className="text-sm text-text-main whitespace-pre-wrap">
-                            {patient.paymentNotes || 'Nenhuma informação de pagamento registrada.'}
-                          </p>
-                        )}
-                      </div>
-                    </div>
+
 
                     <div className="pt-8 border-t border-border-ui space-y-8">
                       <div className="flex items-center justify-between">
@@ -6750,6 +7613,101 @@ Relato:
                           </div>
                         </div>
                       </div>
+                    ) : profileSettings?.clinicalApproach === 'humanista' ? (
+                      /* RENDER HUMANISTA / EXISTENCIAL / ACP */
+                      <div className="space-y-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center">
+                              <Sparkles size={20} />
+                            </div>
+                            <div>
+                              <h3 className="text-xl font-bold text-text-main">Análise Existencial / ACP</h3>
+                              <p className="text-xs text-text-muted">Conceitualização fundamentada em Rogers, Sartre, Heidegger e Kierkegaard</p>
+                            </div>
+                          </div>
+                          
+                           <div className="flex items-center gap-3">
+                            <button 
+                              onClick={() => handleGenerateApproachWithAi('humanista')}
+                              disabled={isGeneratingApproachAi}
+                              className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2"
+                            >
+                              {isGeneratingApproachAi ? "Processando..." : "✨ Gerar com IA"}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="bg-white/80 backdrop-blur-xl border border-white/40 rounded-3xl p-6 shadow-sm">
+                            <h4 className="text-sm font-bold text-text-main mb-4 flex items-center gap-2">
+                              <span className="w-8 h-8 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center font-mono text-xs">1</span>
+                              Temas Existenciais
+                            </h4>
+                            <div className="space-y-2">
+                              <label className="text-xs font-semibold text-text-main flex items-center gap-2">Tensões, Liberdade, Vazio & Sentido (Kierkegaard, Heidegger, Sartre)</label>
+                              <textarea 
+                                className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 min-h-[140px] resize-none"
+                                value={localHumanistData?.existentialThemes || ''}
+                                onChange={e => handleUpdateHumanistField('existentialThemes', e.target.value)}
+                                onBlur={() => commitLocalApproachData('humanista', localHumanistData)}
+                                placeholder="Descreva as tensões existenciais e angústias trazidas pelo cliente..."
+                              />
+                            </div>
+                          </div>
+
+                          <div className="bg-white/80 backdrop-blur-xl border border-white/40 rounded-3xl p-6 shadow-sm">
+                            <h4 className="text-sm font-bold text-text-main mb-4 flex items-center gap-2">
+                              <span className="w-8 h-8 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center font-mono text-xs">2</span>
+                              Foco Fenomenológico
+                            </h4>
+                            <div className="space-y-2">
+                              <label className="text-xs font-semibold text-text-main flex items-center gap-2">Experiência Imediata & Percepção Subjetiva do Cliente</label>
+                              <textarea 
+                                className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 min-h-[140px] resize-none"
+                                value={localHumanistData?.phenomenologicalFocus || ''}
+                                onChange={e => handleUpdateHumanistField('phenomenologicalFocus', e.target.value)}
+                                onBlur={() => commitLocalApproachData('humanista', localHumanistData)}
+                                placeholder="A percepção do aqui-e-agora sob o ponto de vista exclusivo do cliente..."
+                              />
+                            </div>
+                          </div>
+
+                          <div className="bg-white/80 backdrop-blur-xl border border-white/40 rounded-3xl p-6 shadow-sm">
+                            <h4 className="text-sm font-bold text-text-main mb-4 flex items-center gap-2">
+                              <span className="w-8 h-8 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center font-mono text-xs">3</span>
+                              Congruência do Self
+                            </h4>
+                            <div className="space-y-2">
+                              <label className="text-xs font-semibold text-text-main flex items-center gap-2">Autoatualização, Aceitação Incondicional & Congruência (Carl Rogers)</label>
+                              <textarea 
+                                className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 min-h-[140px] resize-none"
+                                value={localHumanistData?.selfCongruence || ''}
+                                onChange={e => handleUpdateHumanistField('selfCongruence', e.target.value)}
+                                onBlur={() => commitLocalApproachData('humanista', localHumanistData)}
+                                placeholder="Análise do self, congruência da experiência vivida e autoatualização..."
+                              />
+                            </div>
+                          </div>
+
+                          <div className="bg-white/80 backdrop-blur-xl border border-white/40 rounded-3xl p-6 shadow-sm">
+                            <h4 className="text-sm font-bold text-text-main mb-4 flex items-center gap-2">
+                              <span className="w-8 h-8 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center font-mono text-xs">4</span>
+                              Direcionamentos Clínicos
+                            </h4>
+                            <div className="space-y-2">
+                              <label className="text-xs font-semibold text-text-main flex items-center gap-2">Insights Existenciais e Acolhimento Terapêutico</label>
+                              <textarea 
+                                className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 min-h-[140px] resize-none"
+                                value={localHumanistData?.therapeuticInsights || ''}
+                                onChange={e => handleUpdateHumanistField('therapeuticInsights', e.target.value)}
+                                onBlur={() => commitLocalApproachData('humanista', localHumanistData)}
+                                placeholder="Direcionamento sugerido para as próximas sessões..."
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     ) : (
                       /* RENDER STANDARD ANAMNESE */
                       <>
@@ -7500,6 +8458,7 @@ Relato:
                     )}
                   </motion.div>
                 )}
+
               </AnimatePresence>
            </section>
         </div>
@@ -7671,6 +8630,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
 }) {
   const [filter, setFilter] = useState<'all' | 'paid' | 'pending'>('all');
   const [currentFinanceDate, setCurrentFinanceDate] = useState(new Date());
+  const [selectedPatientId, setSelectedPatientId] = useState<string>('all');
   const [isAddingExpense, setIsAddingExpense] = useState(false);
   const [expenseForm, setExpenseForm] = useState({ description: '', amount: '', date: new Date().toISOString().split('T')[0] });
   const [historyModalOpen, setHistoryModalOpen] = useState<'receita' | 'giro' | 'despesa' | 'lucro' | null>(null);
@@ -7761,61 +8721,76 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
   const displaySessions = useMemo(() => {
     const start = startOfWeek(currentFinanceDate, { weekStartsOn: 0 });
     const end = endOfWeek(currentFinanceDate, { weekStartsOn: 0 });
+    const currentWeekEnd = endOfWeek(new Date(), { weekStartsOn: 0 });
 
     let list = [...sessions.filter(s => s.status !== 'Cancelada')];
     
     patients.filter(p => p.status !== 'Inativo').forEach(p => {
+      if (selectedPatientId !== 'all' && p.id !== selectedPatientId) return;
+
       if (p.sessionDay && p.recurrence && p.recurrence !== 'Nenhuma') {
-        const daysInInterval = eachDayOfInterval({ start, end });
-        daysInInterval.forEach(d => {
-          const dayName = format(d, 'eeee', { locale: ptBR });
-          const capitalized = dayName.charAt(0).toUpperCase() + dayName.slice(1);
-          if (capitalized !== p.sessionDay) return;
-          
-          const pRecurrenceStart = p.recurrenceStart ? new Date(p.recurrenceStart + 'T12:00:00') : new Date(p.createdAt || p.birthDate || '2024-01-01');
-          if (startOfDay(d) < startOfDay(pRecurrenceStart)) return;
+        const genStart = selectedPatientId === 'all' ? start : new Date(p.recurrenceStart || p.createdAt || '2024-01-01');
+        const genEnd = selectedPatientId === 'all' ? end : currentWeekEnd;
 
-          const weeksDiff = Math.abs(differenceInWeeks(startOfDay(d), startOfDay(pRecurrenceStart)));
-          let isRecurrenceDay = false;
-          if (p.recurrence === 'Semanal') isRecurrenceDay = true;
-          else if (p.recurrence === 'Quinzenal') isRecurrenceDay = weeksDiff % 2 === 0;
-          else if (p.recurrence === 'Mensal') isRecurrenceDay = weeksDiff % 4 === 0;
+        if (genStart <= genEnd) {
+          const daysInInterval = eachDayOfInterval({ start: genStart, end: genEnd });
+          daysInInterval.forEach(d => {
+            const dayName = format(d, 'eeee', { locale: ptBR });
+            const capitalized = dayName.charAt(0).toUpperCase() + dayName.slice(1);
+            if (capitalized !== p.sessionDay) return;
+            
+            const pRecurrenceStart = p.recurrenceStart ? new Date(p.recurrenceStart + 'T12:00:00') : new Date(p.createdAt || p.birthDate || '2024-01-01');
+            if (startOfDay(d) < startOfDay(pRecurrenceStart)) return;
 
-          if (!isRecurrenceDay) return;
+            const weeksDiff = Math.abs(differenceInWeeks(startOfDay(d), startOfDay(pRecurrenceStart)));
+            let isRecurrenceDay = false;
+            if (p.recurrence === 'Semanal') isRecurrenceDay = true;
+            else if (p.recurrence === 'Quinzenal') isRecurrenceDay = weeksDiff % 2 === 0;
+            else if (p.recurrence === 'Mensal') isRecurrenceDay = weeksDiff % 4 === 0;
 
-          const hasRecorded = list.some(s => s.patientId === p.id && isSameDay(new Date(s.date + 'T12:00:00'), d));
-          const hasCancelled = sessions.some(s => s.patientId === p.id && s.status === 'Cancelada' && isSameDay(new Date(s.date + 'T12:00:00'), d));
+            if (!isRecurrenceDay) return;
 
-          if (!hasRecorded && !hasCancelled) {
-            list.push({
-              id: `virtual-${p.id}-${format(d, 'yyyy-MM-dd')}`,
-              patientId: p.id,
-              date: format(d, 'yyyy-MM-dd'),
-              time: p.sessionTime || '09:00',
-              duration: '50min',
-              type: p.modality || 'Online',
-              status: 'Agendada',
-              paid: false,
-              amount: p.amount || 0
-            });
-          }
-        });
+            const hasRecorded = list.some(s => s.patientId === p.id && isSameDay(new Date(s.date + 'T12:00:00'), d));
+            const hasCancelled = sessions.some(s => s.patientId === p.id && s.status === 'Cancelada' && isSameDay(new Date(s.date + 'T12:00:00'), d));
+
+            if (!hasRecorded && !hasCancelled) {
+              list.push({
+                id: `virtual-${p.id}-${format(d, 'yyyy-MM-dd')}`,
+                patientId: p.id,
+                date: format(d, 'yyyy-MM-dd'),
+                time: p.sessionTime || '09:00',
+                duration: '50min',
+                type: p.modality || 'Online',
+                status: 'Agendada',
+                paid: false,
+                amount: p.amount || 0
+              });
+            }
+          });
+        }
       }
     });
 
+    if (selectedPatientId !== 'all') {
+      list = list.filter(s => s.patientId === selectedPatientId);
+    }
+
     list = list.filter(s => {
       const d = new Date(s.date + 'T12:00:00');
-      const isSelectedWeek = d >= start && d <= end;
-      const isCurrentWeek = isSameDay(startOfWeek(new Date(), { weekStartsOn: 0 }), start);
-      const isPastOrCurrent = d <= end;
-      const isUnpaid = !s.paid;
       
-      if (isCurrentWeek) {
-        // Mostrar se for desta semana OU se for uma sessão pendente passada/atual.
-        return isSelectedWeek || (isUnpaid && isPastOrCurrent);
+      if (selectedPatientId === 'all') {
+        const isSelectedWeek = d >= start && d <= end;
+        const isCurrentWeek = isSameDay(startOfWeek(new Date(), { weekStartsOn: 0 }), start);
+        const isPastOrCurrent = d <= end;
+        const isUnpaid = !s.paid;
+        
+        if (isCurrentWeek) {
+          return isSelectedWeek || (isUnpaid && isPastOrCurrent);
+        } else {
+          return isSelectedWeek;
+        }
       } else {
-        // Se for outra semana, mostrar apenas as consultas dessa semana.
-        return isSelectedWeek;
+        return d <= currentWeekEnd;
       }
     });
 
@@ -7829,7 +8804,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
     if (filter === 'pending') list = list.filter(s => !s.paid);
     
     return list;
-  }, [sessions, patients, filter, currentFinanceDate]);
+  }, [sessions, patients, filter, currentFinanceDate, selectedPatientId]);
 
   const displayExpenses = useMemo(() => {
     return transactions.filter(t => t.type === 'Despesa').sort((a, b) => b.date.localeCompare(a.date));
@@ -8124,35 +9099,53 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
 
       <section className="glass-card rounded-[32px] overflow-hidden border border-white/5 shadow-2xl">
         <div className="p-8 border-b border-white/5 flex flex-col md:flex-row items-center justify-between gap-4 bg-white/5">
-          <h4 className="font-bold text-lg text-text-main uppercase tracking-widest">Controle de Atendimentos</h4>
-          
-          <div className="flex items-center gap-4 bg-surface-muted/50 p-2 rounded-2xl border border-white/5">
-            <button 
-              onClick={() => setCurrentFinanceDate(prev => subWeeks(prev, 1))}
-              className="p-2 hover:bg-white/5 rounded-xl text-text-muted hover:text-text-main transition-colors"
-              title="Semana Anterior"
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+            <h4 className="font-bold text-lg text-text-main uppercase tracking-widest">Controle de Atendimentos</h4>
+            <select
+              value={selectedPatientId}
+              onChange={(e) => setSelectedPatientId(e.target.value)}
+              className="text-xs font-bold bg-surface-muted border border-border-ui rounded-xl px-4 py-2 text-text-main outline-none focus:border-primary appearance-none cursor-pointer"
             >
-              <ChevronLeft size={20} />
-            </button>
-            <span className="text-xs font-bold text-text-main uppercase tracking-wider font-mono">
-              Semana: {format(startOfWeek(currentFinanceDate, { weekStartsOn: 0 }), 'dd/MM/yyyy')} - {format(endOfWeek(currentFinanceDate, { weekStartsOn: 0 }), 'dd/MM/yyyy')}
-            </span>
-            <button 
-              onClick={() => setCurrentFinanceDate(prev => addWeeks(prev, 1))}
-              className="p-2 hover:bg-white/5 rounded-xl text-text-muted hover:text-text-main transition-colors"
-              title="Próxima Semana"
-            >
-              <ChevronRight size={20} />
-            </button>
-            {!isSameDay(startOfWeek(new Date(), { weekStartsOn: 0 }), startOfWeek(currentFinanceDate, { weekStartsOn: 0 })) && (
-              <button 
-                onClick={() => setCurrentFinanceDate(new Date())}
-                className="text-[9px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl bg-primary/20 text-primary border border-primary/20 hover:bg-primary/30 transition-all ml-2"
-              >
-                Hoje
-              </button>
-            )}
+              <option value="all">TODOS OS PACIENTES</option>
+              {patients.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
           </div>
+          
+          {selectedPatientId === 'all' ? (
+            <div className="flex items-center gap-4 bg-surface-muted/50 p-2 rounded-2xl border border-white/5">
+              <button 
+                onClick={() => setCurrentFinanceDate(prev => subWeeks(prev, 1))}
+                className="p-2 hover:bg-white/5 rounded-xl text-text-muted hover:text-text-main transition-colors"
+                title="Semana Anterior"
+              >
+                <ChevronLeft size={20} />
+              </button>
+              <span className="text-xs font-bold text-text-main uppercase tracking-wider font-mono">
+                Semana: {format(startOfWeek(currentFinanceDate, { weekStartsOn: 0 }), 'dd/MM/yyyy')} - {format(endOfWeek(currentFinanceDate, { weekStartsOn: 0 }), 'dd/MM/yyyy')}
+              </span>
+              <button 
+                onClick={() => setCurrentFinanceDate(prev => addWeeks(prev, 1))}
+                className="p-2 hover:bg-white/5 rounded-xl text-text-muted hover:text-text-main transition-colors"
+                title="Próxima Semana"
+              >
+                <ChevronRight size={20} />
+              </button>
+              {!isSameDay(startOfWeek(new Date(), { weekStartsOn: 0 }), startOfWeek(currentFinanceDate, { weekStartsOn: 0 })) && (
+                <button 
+                  onClick={() => setCurrentFinanceDate(new Date())}
+                  className="text-[9px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl bg-primary/20 text-primary border border-primary/20 hover:bg-primary/30 transition-all ml-2"
+                >
+                  Hoje
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="text-[10px] font-bold text-primary uppercase tracking-widest bg-primary/10 border border-primary/20 px-4 py-2 rounded-xl">
+              Histórico Completo
+            </div>
+          )}
 
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2">
@@ -8493,6 +9486,7 @@ function CalendarView({
       daySessions.push({
         ...s,
         patientName: s.isTriage ? s.triageName : (p?.name || 'Paciente'),
+        patientPhone: p?.phone || '',
         dayName: capitalizedDayName,
         // For recorded sessions, use the number stored or calculate it
         sessionNumber: s.sessionNumber || (p ? calculateSessionNumber(p, day) : 1)
@@ -8522,6 +9516,7 @@ function CalendarView({
             id: `virtual-${p.id}-${dateStr}`,
             patientId: p.id,
             patientName: p.name,
+            patientPhone: p.phone || '',
             time: p.sessionTime,
             type: p.modality || 'Online',
             status: 'Recorrente',
@@ -8718,7 +9713,23 @@ function CalendarView({
                       )}
                     >
                       <div className="flex justify-between items-start gap-1">
-                        <span className="truncate flex-1 uppercase tracking-tight">{session.patientName || 'Paciente'}</span>
+                        <div className="flex items-center gap-1 min-w-0 flex-1">
+                          <span className="truncate uppercase tracking-tight">{session.patientName || 'Paciente'}</span>
+                          {session.patientPhone && getWhatsAppLink(session.patientPhone) && (
+                            <a 
+                              href={getWhatsAppLink(session.patientPhone)!} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-green-500 hover:text-green-400 p-0.5 transition-colors flex items-center justify-center rounded hover:bg-green-500/10 cursor-pointer shrink-0"
+                              title="Conversar no WhatsApp"
+                            >
+                              <svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor">
+                                <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.717-1.458L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.863-9.864.001-2.63-1.023-5.101-2.883-6.962C16.59 1.878 14.12 .853 11.493.853 6.059.853 1.633 5.272 1.63 10.718c-.001 1.639.429 3.236 1.247 4.678L1.87 20.89l5.656-1.482c1.399.763 2.94 1.168 4.542 1.171z M17.07 14.543c-.275-.138-1.62-.8-1.873-.892-.253-.093-.437-.138-.62.138-.184.276-.713.892-.873 1.077-.16.184-.32.207-.595.069-.275-.138-1.163-.429-2.215-1.366-.817-.729-1.37-1.629-1.53-1.905-.16-.276-.017-.424.12-.562.124-.125.276-.322.414-.483.138-.161.184-.276.276-.46.09-.184.046-.345-.023-.483-.069-.138-.62-1.494-.85-2.046-.223-.538-.45-.465-.62-.474-.16-.008-.344-.01-.527-.01-.184 0-.483.069-.736.345-.253.276-.966.943-.966 2.3 0 1.356.988 2.666 1.126 2.85.138.184 1.944 2.969 4.71 4.16.657.283 1.17.453 1.57.58.66.21 1.26.18 1.73.11.53-.08 1.62-.66 1.85-1.3.23-.64.23-1.19.16-1.3-.07-.11-.25-.18-.53-.32z"/>
+                              </svg>
+                            </a>
+                          )}
+                        </div>
                         <span className="shrink-0 opacity-70">{session.time}</span>
                       </div>
 
@@ -8861,7 +9872,22 @@ function CalendarView({
                       )}
                     >
                       <div className="flex justify-between items-start mb-2">
-                        <span className="uppercase tracking-tight text-lg truncate flex-1">{session.patientName || 'Paciente'}</span>
+                        <div className="flex items-center gap-2 truncate flex-1">
+                          <span className="uppercase tracking-tight text-lg truncate">{session.patientName || 'Paciente'}</span>
+                          {session.patientPhone && getWhatsAppLink(session.patientPhone) && (
+                            <a 
+                              href={getWhatsAppLink(session.patientPhone)!} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-green-500 hover:text-green-400 p-1 transition-colors flex items-center justify-center rounded-lg hover:bg-green-500/10 cursor-pointer shrink-0"
+                              title="Conversar no WhatsApp"
+                            >
+                              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.717-1.458L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.863-9.864.001-2.63-1.023-5.101-2.883-6.962C16.59 1.878 14.12 .853 11.493.853 6.059.853 1.633 5.272 1.63 10.718c-.001 1.639.429 3.236 1.247 4.678L1.87 20.89l5.656-1.482c1.399.763 2.94 1.168 4.542 1.171z M17.07 14.543c-.275-.138-1.62-.8-1.873-.892-.253-.093-.437-.138-.62.138-.184.276-.713.892-.873 1.077-.16.184-.32.207-.595.069-.275-.138-1.163-.429-2.215-1.366-.817-.729-1.37-1.629-1.53-1.905-.16-.276-.017-.424.12-.562.124-.125.276-.322.414-.483.138-.161.184-.276.276-.46.09-.184.046-.345-.023-.483-.069-.138-.62-1.494-.85-2.046-.223-.538-.45-.465-.62-.474-.16-.008-.344-.01-.527-.01-.184 0-.483.069-.736.345-.253.276-.966.943-.966 2.3 0 1.356.988 2.666 1.126 2.85.138.184 1.944 2.969 4.71 4.16.657.283 1.17.453 1.57.58.66.21 1.26.18 1.73.11.53-.08 1.62-.66 1.85-1.3.23-.64.23-1.19.16-1.3-.07-.11-.25-.18-.53-.32z"/>
+                              </svg>
+                            </a>
+                          )}
+                        </div>
                         <span className="shrink-0 text-base">{session.time}</span>
                       </div>
                       
@@ -9712,7 +10738,7 @@ function ImportTranscriptView({
   const [aiMessages, setAiMessages] = useState<Array<{ role: 'user' | 'model', content: string }>>([
     {
       role: 'model',
-      content: `Olá! Sou o seu Copiloto de IA oficial. 🧠\n\nPosso ajudar você a trabalhar e refinar a transcrição desta sessão.\nUtilize as ações rápidas acima para gerar uma evolução formal estruturada para a abordagem ${approachInfo.name}, formatar a conversa ou extrair planos de ação. Você também pode me fazer qualquer pergunta personalizada no chat abaixo!`
+      content: `Olá! Sou o seu Copiloto de IA oficial. 🧠\n\nPosso ajudar você a analisar a transcrição desta sessão.\nUtilize as ações rápidas acima para gerar o relato completo da sessão, planejar a próxima sessão com base no plano de tratamento ou realizar uma supervisão clínica na abordagem ${approachInfo.name}. Você também pode me fazer perguntas personalizadas no chat abaixo!`
     }
   ]);
   const [aiInput, setAiInput] = useState('');
@@ -9820,7 +10846,7 @@ function ImportTranscriptView({
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
       setAiMessages(prev => [...prev, 
-        { role: 'user', content: `Executar: ${actionType === 'sintetizar' ? 'Sintetizar Prontuário' : actionType === 'formatar' ? 'Formatar Diálogo' : actionType === 'analise' ? dynamicAnalysisLabel : 'Plano de Ação'}` },
+        { role: 'user', content: `Executar: ${actionType === 'relato' ? 'Relato Completo' : actionType === 'proxima_sessao' ? 'Próxima Sessão' : 'Supervisão Clínica'}` },
         { role: 'model', content: "Erro: A chave de API do Gemini não está configurada (VITE_GEMINI_API_KEY no .env.local)." }
       ]);
       setIsAiLoading(false);
@@ -9831,52 +10857,55 @@ function ImportTranscriptView({
       const ai = new GoogleGenAI({ apiKey });
       let prompt = "";
 
-      if (actionType === 'sintetizar') {
-        prompt = `Você é um psicólogo clínico experiente cuja abordagem principal é a ${approachInfo.name}. Analise a transcrição de atendimento clínico a seguir e gere uma evolução clínica técnica detalhada e estruturada para compor o prontuário.
-        Escreva no formato de narrativa em primeira pessoa do terapeuta (ex: "O paciente relatou...", "Questionei a respeito...", "Trabalhei com o paciente...").
-        Identifique e estruture a demanda principal, intervenções terapêuticas realizadas e progresso observado de forma objetiva.
-        REGRA ÉTICA DE SIGILO: Substitua TODOS os nomes próprios de pessoas mencionadas na transcrição APENAS pela letra inicial (ex: Mariana -> M., João -> J.).
-        Não inclua saudações, observações ou introduções. Devolva apenas o texto limpo da evolução.
-
-        Transcrição:
-        "${transcriptText}"`;
-      } else if (actionType === 'formatar') {
-        prompt = `Organize a transcrição a seguir de forma legível dividida em diálogos marcados claramente como "Terapeuta:" e "Paciente:".
-        Remova ruídos de fala típicos da oralidade (como "tipo", "né", "eh", "gagueiras") de modo a tornar a leitura fluida e profissional, mas preservando 100% do sentido original e do conteúdo das falas.
+      if (actionType === 'relato') {
+        prompt = `Você é um psicólogo clínico experiente cuja abordagem principal é a ${approachInfo.name}. Analise a transcrição de atendimento clínico a seguir e gere um relato completo da sessão em texto corrido com todos os detalhes importantes da sessão (o texto pode ser simplificado ou limpo de marcas de oralidade para melhor leitura).
+        Regras fundamentais:
+        1. O relato deve ser muito detalhado, completo e longo, estendendo-se por quantos parágrafos forem necessários (ex: 5, 7, 8, 9 ou mais parágrafos), de forma a cobrir todos os pontos discutidos de forma abrangente e aprofundada.
+        2. Você deve reconhecer que quem está enviando a transcrição é o psicólogo (quem fala em primeira pessoa como "eu" na transcrição). Portanto, o relato deve ser elaborado sob a perspectiva em primeira pessoa do terapeuta (ex: "Questionei o paciente...", "Observei que...", "Realizei a intervenção...").
+        3. REGRA ÉTICA DE SIGILO: Substitua todos os nomes próprios de pessoas mencionadas na transcrição apenas pela letra inicial (ex: Mariana -> M., João -> J.).
+        4. Retorne apenas o texto corrido do relato, sem saudações, introduções ou observações extras.
         
         Transcrição:
         "${transcriptText}"`;
-      } else if (actionType === 'analise') {
-        prompt = `Aja como um assistente de psicólogo clínico altamente experiente e especializado na abordagem ${approachInfo.name}.
-        Analise a seguinte transcrição de atendimento e faça uma análise clínica aprofundada baseando-se especificamente nas seguintes diretrizes:
+      } else if (actionType === 'proxima_sessao') {
+        const treatmentPlan = selectedPatient?.clinicalData?.treatmentPlan;
+        const treatmentPlanStr = treatmentPlan && treatmentPlan.length > 0
+          ? treatmentPlan.map((tp: any, index: number) => `- Objetivo ${index + 1}: ${tp.goal} (Status: ${tp.status})`).join('\n')
+          : 'Nenhum plano de tratamento cadastrado.';
+
+        prompt = `Você é um psicólogo clínico experiente cuja abordagem principal é a ${approachInfo.name}.
+        Crie um planejamento completo e estruturado para a próxima sessão de psicoterapia do paciente ${selectedPatient?.name || 'do paciente'}.
+        Você deve basear seu planejamento em dois pilares principais:
+        1. O plano de tratamento atual do paciente:
+        ${treatmentPlanStr}
+        2. O conteúdo e a dinâmica discutidos na transcrição desta sessão atual:
+        "${transcriptText}"
         
-        DIRETRIZES DA ABORDAGEM (${approachInfo.name}):
-        ${approachInfo.evolutionPrompt}
-
-        Identifique padrões inconscientes, distorções, awareness, ou contingências (dependendo do que rege a abordagem) de forma estruturada.
-        Estruture a resposta em tópicos profissionais e claros.
-
-        Transcrição:
-        "${transcriptText}"`;
-      } else if (actionType === 'plano') {
-        prompt = `Analise a transcrição de atendimento clínico abaixo e extraia com clareza:
-        1. Metas e objetivos delineados durante a conversa.
-        2. Combinados, tarefas de casa ou orientações inter-sessões acordadas entre terapeuta e paciente.
-        3. Focos ou direcionamentos recomendados para a próxima sessão.
+        IMPORTANTE:
+        - Analise atentamente se, na transcrição, o terapeuta ou o paciente mencionaram explicitamente algum tema, técnica ou exercício específico para ser trabalhado na próxima sessão (por exemplo, se ao final o terapeuta disse 'na próxima sessão vamos trabalhar assertividade', seu planejamento DEVE incorporar e dar foco a isso).
+        - Retorne um plano prático, estruturado e acionável para guiar a próxima sessão, incluindo objetivos específicos da próxima sessão e possíveis intervenções/abordagens clínicas coerentes com a abordagem ${approachInfo.name}.
+        - Remova saudações ou comentários iniciais/finais. Devolva apenas o planejamento limpo em formato markdown.`;
+      } else if (actionType === 'supervisao') {
+        prompt = `Aja como um supervisor clínico altamente experiente e especializado na abordagem ${approachInfo.name}.
+        Analise criticamente a transcrição de atendimento clínico a seguir e forneça uma supervisão clínica construtiva sobre a atuação do terapeuta.
         
-        Se a abordagem do terapeuta for Psicanálise, adapte a linguagem para "Associações e Apontamentos para Sessões Futuras" em vez de "tarefas de casa" ou "metas".
-
+        Identifique de forma detalhada e dividida em tópicos claros em markdown:
+        1. Pontos fortes e acertos na condução do terapeuta (o que foi bem feito).
+        2. Pontos a melhorar ou possíveis desvios (ex: onde o terapeuta fala demais, se repete, interrompe o paciente, perde oportunidades de aprofundamento, ou comete desvios técnicos).
+        3. Otimização de intervenções: Onde o terapeuta poderia ter aprofundado mais na fala do paciente e quais perguntas reflexivas, hipóteses diagnósticas ou técnicas poderiam ter sido exploradas sob a perspectiva da abordagem ${approachInfo.name}.
+        4. Recomendações e orientações práticas de manejo clínico para as próximas sessões.
+        
+        Mantenha um tom profissional, acadêmico e construtivo, focado na melhoria da prática clínica.
+        
         Transcrição:
         "${transcriptText}"`;
       }
 
-      const label = actionType === 'sintetizar' 
-        ? 'Sintetizar Prontuário' 
-        : actionType === 'formatar' 
-          ? 'Formatar Diálogo' 
-          : actionType === 'analise' 
-            ? dynamicAnalysisLabel 
-            : 'Plano de Ação';
+      const label = actionType === 'relato' 
+        ? 'Relato Completo da Sessão' 
+        : actionType === 'proxima_sessao' 
+          ? 'Planejamento da Próxima Sessão' 
+          : 'Supervisão Clínica';
 
       setAiMessages(prev => [...prev, { role: 'user', content: `Executar: ${label}` }]);
 
@@ -10080,34 +11109,27 @@ function ImportTranscriptView({
                 </div>
 
                 {/* Ações Rápidas */}
-                <div className="grid grid-cols-2 gap-3 mb-5">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
                   <button
-                    onClick={() => handleAiAction('sintetizar')}
-                    disabled={isAiLoading || hasReachedLimit || !transcriptText.trim()}
+                    onClick={() => handleAiAction('relato')}
+                    disabled={isAiLoading || !transcriptText.trim()}
                     className="flex items-center gap-2 justify-center px-3 py-2.5 rounded-xl border border-white/5 bg-white/5 text-[11px] font-bold text-text-main uppercase hover:bg-primary/10 hover:border-primary/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed group"
                   >
-                    <span>✨ Sintetizar Prontuário</span>
+                    <span>📝 Relato da Sessão</span>
                   </button>
                   <button
-                    onClick={() => handleAiAction('formatar')}
-                    disabled={isAiLoading || hasReachedLimit || !transcriptText.trim()}
+                    onClick={() => handleAiAction('proxima_sessao')}
+                    disabled={isAiLoading || !transcriptText.trim()}
                     className="flex items-center gap-2 justify-center px-3 py-2.5 rounded-xl border border-white/5 bg-white/5 text-[11px] font-bold text-text-main uppercase hover:bg-primary/10 hover:border-primary/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                   >
-                    <span>🧹 Formatar Diálogo</span>
+                    <span>📅 Próxima Sessão</span>
                   </button>
                   <button
-                    onClick={() => handleAiAction('analise')}
-                    disabled={isAiLoading || hasReachedLimit || !transcriptText.trim()}
+                    onClick={() => handleAiAction('supervisao')}
+                    disabled={isAiLoading || !transcriptText.trim()}
                     className="flex items-center gap-2 justify-center px-3 py-2.5 rounded-xl border border-white/5 bg-white/5 text-[11px] font-bold text-text-main uppercase hover:bg-primary/10 hover:border-primary/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                   >
-                    <span>{dynamicAnalysisLabel}</span>
-                  </button>
-                  <button
-                    onClick={() => handleAiAction('plano')}
-                    disabled={isAiLoading || hasReachedLimit || !transcriptText.trim()}
-                    className="flex items-center gap-2 justify-center px-3 py-2.5 rounded-xl border border-white/5 bg-white/5 text-[11px] font-bold text-text-main uppercase hover:bg-primary/10 hover:border-primary/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    <span>🎯 Plano de Ação</span>
+                    <span>🎓 Supervisão Clínica</span>
                   </button>
                 </div>
 
