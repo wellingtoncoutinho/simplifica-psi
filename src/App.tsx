@@ -2994,17 +2994,17 @@ function DashboardView({
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Today's Agenda */}
-        <section className="glass-card rounded-3xl p-6">
-          <div className="flex items-center justify-between mb-6">
+        <section className="glass-card rounded-3xl p-6 flex flex-col h-[480px]">
+          <div className="flex items-center justify-between mb-6 shrink-0">
             <h3 className="text-lg font-bold flex items-center gap-2">
               <CalendarIcon size={20} className="text-primary" />
               Agenda Próxima
             </h3>
             <span className="text-xs text-text-muted">{new Date().toLocaleDateString('pt-BR')}</span>
           </div>
-          <div className="space-y-4">
-             <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Próximos Horários</p>
-             {upcomingAgenda.slice(0, 3).map(session => {
+          <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar space-y-4 min-h-0 relative">
+             <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest sticky top-0 bg-background/80 backdrop-blur-sm py-1 z-10">Próximos Horários</p>
+             {upcomingAgenda.slice(0, 15).map(session => {
                const p = patients.find(pat => pat.id === session.patientId);
                const sessionDate = new Date(session.date + 'T12:00:00');
                const modality = session.type || p?.modality || 'Presencial';
@@ -3056,19 +3056,20 @@ function DashboardView({
                  <p className="text-xs text-text-muted">Nenhum agendamento próximo.</p>
                </div>
              )}
-             <button onClick={onGoToAgenda} className="w-full py-3 text-sm text-text-muted hover:text-text-main border-t border-white/5 mt-4">Ver Agenda Completa</button>
           </div>
+          <button onClick={onGoToAgenda} className="w-full py-3 text-sm text-text-muted hover:text-text-main border-t border-white/5 mt-4 shrink-0">Ver Agenda Completa</button>
         </section>
 
         {/* Recent Patients */}
-        <section className="glass-card rounded-3xl p-6">
-           <div className="flex items-center justify-between mb-6">
+        <section className="glass-card rounded-3xl p-6 flex flex-col h-[480px]">
+           <div className="flex items-center justify-between mb-6 shrink-0">
             <h3 className="text-lg font-bold flex items-center gap-2">
               <Bell size={20} className="text-primary" />
               Alertas Clínicos
             </h3>
           </div>
-          <div className="space-y-3">
+          <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar space-y-3 min-h-0 relative">
+             <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest sticky top-0 bg-background/80 backdrop-blur-sm py-1 z-10">Alertas</p>
              {alerts.length > 0 ? alerts.map((alert, idx) => (
                <div 
                 key={idx} 
@@ -3098,7 +3099,7 @@ function DashboardView({
                   <ChevronRight size={18} className="text-text-muted group-hover:text-primary transition-colors" />
                </div>
              )) : (
-               <div className="py-12 text-center bg-card/30 rounded-2xl border border-dashed border-border-ui">
+               <div className="py-12 text-center bg-card/30 rounded-2xl border border-dashed border-border-ui h-full flex flex-col justify-center">
                  <Sparkles size={32} className="mx-auto text-primary/20 mb-3" />
                  <p className="text-xs text-text-muted">Tudo em dia! Nenhum alerta pendente.</p>
                </div>
