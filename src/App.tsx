@@ -83,6 +83,65 @@ async function generateContentWithFallback(
   throw lastError;
 }
 
+function safeJsonParse(rawText: string): any {
+  // Strip markdown code fences
+  let sanitized = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+  
+  // Try to find the JSON boundary in case there's surrounding conversational text
+  const firstBrace = sanitized.indexOf('{');
+  const firstBracket = sanitized.indexOf('[');
+  let startIdx = -1;
+  let endIdx = -1;
+  
+  if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+    startIdx = firstBrace;
+    endIdx = sanitized.lastIndexOf('}');
+  } else if (firstBracket !== -1) {
+    startIdx = firstBracket;
+    endIdx = sanitized.lastIndexOf(']');
+  }
+  
+  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+    sanitized = sanitized.slice(startIdx, endIdx + 1);
+  }
+  
+  // State machine to escape raw control characters inside JSON string values
+  let inString = false;
+  let escaped = false;
+  let cleaned = '';
+  for (let i = 0; i < sanitized.length; i++) {
+    const char = sanitized[i];
+    if (char === '"' && !escaped) {
+      inString = !inString;
+    }
+    
+    if (inString) {
+      if (char === '\n') {
+        cleaned += '\\n';
+      } else if (char === '\r') {
+        cleaned += '\\r';
+      } else if (char === '\t') {
+        cleaned += '\\t';
+      } else {
+        cleaned += char;
+      }
+    } else {
+      cleaned += char;
+    }
+    
+    if (char === '\\' && !escaped) {
+      escaped = true;
+    } else {
+      escaped = false;
+    }
+  }
+  
+  // Remove trailing commas before closing braces/brackets
+  cleaned = cleaned.replace(/,\s*([}\]])/g, '$1');
+  
+  return JSON.parse(cleaned);
+}
+
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import ReactMarkdown from 'react-markdown';
@@ -2807,26 +2866,12 @@ function DashboardView({
     return transactions.filter(t => patients.some(p => p.id === t.patientId));
   }, [transactions, patients]);
 
-  const weeklySessions = useMemo(() => {
-    const start = startOfWeek(new Date(), { weekStartsOn: 0 });
-    const end = endOfWeek(new Date(), { weekStartsOn: 0 });
-    return validSessions.filter(s => {
-      const d = new Date(s.date + 'T12:00:00');
-      return d >= start && d <= end && s.status !== 'Cancelada';
-    });
-  }, [validSessions]);
-
-  const monthlyPredictedIncome = useMemo(() => {
-    return calculateIncomePrediction(startOfMonth(new Date()), endOfMonth(new Date()), sessions, patients);
-  }, [sessions, patients]);
-
-  const getFutureAgendaSlots = (daysCount: number) => {
+  const getAgendaSlotsForInterval = (start: Date, end: Date) => {
     const slots: any[] = [];
-    const today = new Date();
-    
-    for (let i = 0; i < daysCount; i++) {
-      const day = new Date();
-      day.setDate(today.getDate() + i);
+    const days = eachDayOfInterval({ start: startOfDay(start), end: startOfDay(end) });
+    const weekdaysNames = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+
+    days.forEach(day => {
       const dayName = format(day, 'eeee', { locale: ptBR });
       const capitalizedDayName = dayName.charAt(0).toUpperCase() + dayName.slice(1);
       const dateStr = format(day, 'yyyy-MM-dd');
@@ -2883,10 +2928,32 @@ function DashboardView({
           }
         }
       });
-    }
-    
+    });
+
     return slots;
   };
+
+  const getFutureAgendaSlots = (daysCount: number) => {
+    const today = new Date();
+    const end = new Date(today);
+    end.setDate(today.getDate() + daysCount - 1);
+    return getAgendaSlotsForInterval(today, end);
+  };
+
+  const sessionsTodayCount = useMemo(() => {
+    const today = new Date();
+    return getAgendaSlotsForInterval(today, today).length;
+  }, [sessions, patients]);
+
+  const weeklySessionsCount = useMemo(() => {
+    const start = startOfWeek(new Date(), { weekStartsOn: 0 });
+    const end = endOfWeek(new Date(), { weekStartsOn: 0 });
+    return getAgendaSlotsForInterval(start, end).length;
+  }, [sessions, patients]);
+
+  const monthlyPredictedIncome = useMemo(() => {
+    return calculateIncomePrediction(startOfMonth(new Date()), endOfMonth(new Date()), sessions, patients);
+  }, [sessions, patients]);
 
   const upcomingAgenda = useMemo(() => {
     const now = new Date();
@@ -2894,7 +2961,7 @@ function DashboardView({
     return futureSlots
       .filter(s => {
         const d = new Date(s.date + 'T' + (s.time || '00:00'));
-        return d >= now && s.status !== 'Cancelada';
+        return d >= startOfDay(now) && s.status !== 'Cancelada';
       })
       .sort((a, b) => {
         const dateCompare = a.date.localeCompare(b.date);
@@ -2986,10 +3053,10 @@ function DashboardView({
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard onClick={onGoToAgenda} title="Sessões Hoje" value={validSessions.filter(s => s.date === format(new Date(), 'yyyy-MM-dd') && s.status !== 'Cancelada').length.toString()} subtext="Agendadas para hoje" icon={CalendarIcon} color="text-purple-400" />
+        <StatCard onClick={onGoToAgenda} title="Sessões Hoje" value={sessionsTodayCount.toString()} subtext="Agendadas para hoje" icon={CalendarIcon} color="text-purple-400" />
         <StatCard onClick={onGoToPacientes} title="Pacientes Ativos" value={patients.filter(p => p.status !== 'Inativo').length.toString()} subtext="Gestão total" icon={Users} color="text-blue-400" />
         <StatCard onClick={onGoToFinanceiro} title="Receita Mensal Prevista" value={formatCurrency(monthlyPredictedIncome)} subtext="Previsão baseada em sessões" icon={DollarSign} color="text-pink-400" />
-        <StatCard onClick={onGoToAgenda} title="Agendamentos da Semana" value={weeklySessions.length.toString()} subtext="Sessões nesta semana" icon={BarChart3} color="text-orange-400" />
+        <StatCard onClick={onGoToAgenda} title="Agendamentos da Semana" value={weeklySessionsCount.toString()} subtext="Sessões nesta semana" icon={BarChart3} color="text-orange-400" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -4641,22 +4708,10 @@ function PatientDetailsView({
         }
       });
 
-      // Strip markdown code fences the model sometimes adds despite instructions
       const rawText = response?.text || '{}';
-      const sanitized = (() => {
-        // Remove ```json ... ``` or ``` ... ``` wrappers
-        const fenceStripped = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
-        // If there's still no leading '{', try to extract first {...} block
-        const firstBrace = fenceStripped.indexOf('{');
-        const lastBrace = fenceStripped.lastIndexOf('}');
-        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-          return fenceStripped.slice(firstBrace, lastBrace + 1);
-        }
-        return fenceStripped;
-      })();
       let parsedData: any = {};
       try {
-        parsedData = JSON.parse(sanitized);
+        parsedData = safeJsonParse(rawText);
       } catch (jsonErr: any) {
         console.error('Raw AI response that failed to parse:', rawText);
         throw new Error('JSON_PARSE_FAILED');
@@ -4798,17 +4853,7 @@ function PatientDetailsView({
       });
 
       const rawText = response?.text || '{}';
-      const sanitized = (() => {
-        const str = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-        const startIdx = str.indexOf('{');
-        const endIdx = str.lastIndexOf('}');
-        if (startIdx !== -1 && endIdx !== -1) {
-          return str.substring(startIdx, endIdx + 1);
-        }
-        return str;
-      })();
-
-      const parsedData = JSON.parse(sanitized);
+      const parsedData = safeJsonParse(rawText);
 
       const isValid = schemaKeys.every(k => Object.keys(parsedData).includes(k));
       if (!isValid) {
@@ -4974,7 +5019,7 @@ function PatientDetailsView({
         }
       });
 
-      const parsedPlan = JSON.parse(response.text || '[]');
+      const parsedPlan = safeJsonParse(response.text || '[]');
       if (Array.isArray(parsedPlan) && parsedPlan.length > 0) {
         const formattedPlan = parsedPlan.map((item: any, idx: number) => ({
           id: 'goal_ai_' + Date.now() + '_' + idx,
@@ -5079,8 +5124,8 @@ function PatientDetailsView({
       const planText = plan.map((g: any) => `- Meta: ${g.goal} (${g.status === 'completed' ? 'Alcançada' : g.status === 'in_progress' ? 'Em Progresso' : 'Pendente'})${g.interventions ? ` | Intervenções: ${g.interventions}` : ''}`).join('\n');
 
       const prompt = `
-        Aja como um assistente clínico de psicologia experiente.
-        Com base na Conceitualização Cognitiva do paciente ${patient.name} e no Plano de Tratamento atualizado dele, proponha um planejamento prático de intervenções, tópicos e planos de ação para serem trabalhados na PRÓXIMA SESSÃO.
+        Aja como um assistente clínico de psicologia experiente na abordagem do paciente.
+        Com base na Conceitualização Cognitiva do paciente ${patient.name}, no Plano de Tratamento atualizado e nas evoluções recentes, proponha um planejamento prático, estruturado e muito objetivo de intervenções, tópicos e planos de ação para serem trabalhados na PRÓXIMA SESSÃO.
         
         CONCEITUALIZAÇÃO COGNITIVA:
         ${formulationText}
@@ -5091,13 +5136,21 @@ function PatientDetailsView({
         EVOLUÇÕES RECENTES:
         ${clinicalData.evoluções.slice(-3).map((e: any) => `${e.date}: ${e.note}`).join('\n')}
         
-        Escreva uma recomendação concisa, objetiva, ética e baseada em evidências clínicas para a próxima sessão de psicoterapia. Divida em:
-        1. Foco Principal da Sessão
-        2. Intervenções Recomendadas (específicas para a abordagem do paciente)
-        3. Possíveis Tarefas de Casa (Plano de Ação)
-        
-        Retorne em português, formatado em Markdown limpo.
-      `;
+        DIRETRIZES DE FORMATAÇÃO E CONTEÚDO (SIGA À RISCA):
+        1. Divida o planejamento em tópicos numerados cronológicos da sessão (ex: 1. Checagem..., 2. Intervenção/Foco..., 3. Fechamento...).
+        2. Para cada tópico, estime a duração em minutos (ex: "5-10 min", "15-20 min").
+        3. Para cada tópico, adicione itens de lista usando apenas o caractere "*" como marcador.
+        4. O texto deve ser extremamente limpo. NÃO utilize nenhum tipo de negrito ou itálico com asteriscos (como **texto** ou ***texto***). Não envie os caracteres asteriscos extras a não ser o marcador de lista. Se quiser enfatizar algo, faça apenas no texto de forma natural.
+        5. Remova saudações, introduções ou comentários iniciais/finais. Devolva apenas o planejamento limpo no formato do exemplo abaixo:
+
+        Exemplo de formato esperado:
+        1. Título do Tópico (5-10 min)
+        * Item de orientação clínica ou pergunta prática para fazer ao paciente.
+        * Outro item de acompanhamento.
+
+        2. Título do Tópico (15-20 min)
+        * Item descrevendo o foco principal e intervenções baseadas na abordagem do paciente.
+        `;
 
       const response = await generateContentWithFallback(ai, {
         model: "gemini-2.5-flash",
@@ -5509,7 +5562,7 @@ Relato:
         }
       });
 
-      const data = JSON.parse(response.text || '{}');
+      const data = safeJsonParse(response.text || '{}');
 
       const doc = new jsPDF();
       
@@ -5683,7 +5736,7 @@ Relato:
             }
           });
 
-          const data = JSON.parse(response.text || '{}');
+          const data = safeJsonParse(response.text || '{}');
 
           const doc = new jsPDF();
           let startY = 20;
@@ -5973,7 +6026,7 @@ Relato:
         }
       });
 
-      const data = JSON.parse(response.text || '{}');
+      const data = safeJsonParse(response.text || '{}');
       
       onUpdatePatient({
         ...patient,
@@ -10864,7 +10917,8 @@ function ImportTranscriptView({
         1. O relato deve ser muito detalhado, completo e longo, estendendo-se por quantos parágrafos forem necessários (ex: 5, 7, 8, 9 ou mais parágrafos), de forma a cobrir todos os pontos discutidos de forma abrangente e aprofundada.
         2. Você deve reconhecer que quem está enviando a transcrição é o psicólogo (quem fala em primeira pessoa como "eu" na transcrição). Portanto, o relato deve ser elaborado sob a perspectiva em primeira pessoa do terapeuta (ex: "Questionei o paciente...", "Observei que...", "Realizei a intervenção...").
         3. REGRA ÉTICA DE SIGILO: Substitua todos os nomes próprios de pessoas mencionadas na transcrição apenas pela letra inicial (ex: Mariana -> M., João -> J.).
-        4. Retorne apenas o texto corrido do relato, sem saudações, introduções ou observações extras.
+        4. NÃO utilize nenhum tipo de negrito ou itálico com asteriscos (como **texto** ou ***texto***). O texto deve ser inteiramente limpo e sem formatação de destaque com asteriscos.
+        5. Retorne apenas o texto corrido do relato, sem saudações, introduções ou observações extras.
         
         Transcrição:
         "${transcriptText}"`;
@@ -10875,7 +10929,8 @@ function ImportTranscriptView({
           : 'Nenhum plano de tratamento cadastrado.';
 
         prompt = `Você é um psicólogo clínico experiente cuja abordagem principal é a ${approachInfo.name}.
-        Crie um planejamento completo e estruturado para a próxima sessão de psicoterapia do paciente ${selectedPatient?.name || 'do paciente'}.
+        Crie um planejamento completo, prático, estruturado e muito objetivo para a próxima sessão de psicoterapia do paciente ${selectedPatient?.name || 'do paciente'}.
+        
         Você deve basear seu planejamento em dois pilares principais:
         1. O plano de tratamento atual do paciente:
         ${treatmentPlanStr}
@@ -10883,20 +10938,36 @@ function ImportTranscriptView({
         "${transcriptText}"
         
         IMPORTANTE:
-        - Analise atentamente se, na transcrição, o terapeuta ou o paciente mencionaram explicitamente algum tema, técnica ou exercício específico para ser trabalhado na próxima sessão (por exemplo, se ao final o terapeuta disse 'na próxima sessão vamos trabalhar assertividade', seu planejamento DEVE incorporar e dar foco a isso).
-        - Retorne um plano prático, estruturado e acionável para guiar a próxima sessão, incluindo objetivos específicos da próxima sessão e possíveis intervenções/abordagens clínicas coerentes com a abordagem ${approachInfo.name}.
-        - Remova saudações ou comentários iniciais/finais. Devolva apenas o planejamento limpo em formato markdown.`;
+        - Analise atentamente se, na transcrição, o terapeuta ou o paciente mencionaram explicitamente algum tema, técnica ou exercício específico para ser trabalhado na próxima sessão e incorpore isso.
+        
+        DIRETRIZES DE FORMATAÇÃO E CONTEÚDO (SIGA À RISCA):
+        1. Divida o planejamento em tópicos numerados cronológicos da sessão (ex: 1. Checagem..., 2. Mapeamento..., 3. Construção..., 4. Fechamento...).
+        2. Para cada tópico, estime a duração em minutos (ex: "5-10 min", "15-20 min").
+        3. Para cada tópico, adicione itens de lista usando apenas o caractere "*" como marcador.
+        4. O texto deve ser extremamente limpo. NÃO utilize nenhum tipo de negrito ou itálico com asteriscos (como **texto** ou ***texto***). Não envie os caracteres asteriscos extras a não ser o marcador de lista. Se quiser enfatizar algo, faça apenas no texto de forma natural.
+        5. Remova saudações, introduções ou comentários iniciais/finais. Devolva apenas o planejamento limpo no formato do exemplo abaixo:
+
+        Exemplo de formato esperado:
+        1. Título do Tópico (5-10 min)
+        * Item de orientação clínica ou pergunta prática para fazer ao paciente.
+        * Outro item de acompanhamento.
+
+        2. Título do Tópico (15-20 min)
+        * Item descrevendo o foco principal e intervenções baseadas na abordagem ${approachInfo.name}.
+        `;
       } else if (actionType === 'supervisao') {
         prompt = `Aja como um supervisor clínico altamente experiente e especializado na abordagem ${approachInfo.name}.
         Analise criticamente a transcrição de atendimento clínico a seguir e forneça uma supervisão clínica construtiva sobre a atuação do terapeuta.
         
-        Identifique de forma detalhada e dividida em tópicos claros em markdown:
+        Identifique de forma detalhada e dividida em tópicos claros (utilize numeração simples como 1, 2, 3):
         1. Pontos fortes e acertos na condução do terapeuta (o que foi bem feito).
         2. Pontos a melhorar ou possíveis desvios (ex: onde o terapeuta fala demais, se repete, interrompe o paciente, perde oportunidades de aprofundamento, ou comete desvios técnicos).
         3. Otimização de intervenções: Onde o terapeuta poderia ter aprofundado mais na fala do paciente e quais perguntas reflexivas, hipóteses diagnósticas ou técnicas poderiam ter sido exploradas sob a perspectiva da abordagem ${approachInfo.name}.
         4. Recomendações e orientações práticas de manejo clínico para as próximas sessões.
         
-        Mantenha um tom profissional, acadêmico e construtivo, focado na melhoria da prática clínica.
+        DIRETRIZES DE FORMATAÇÃO (SIGA À RISCA):
+        - NÃO utilize nenhum tipo de negrito ou itálico com asteriscos (como **texto** ou ***texto***). O texto deve ser inteiramente limpo de caracteres asteriscos extras.
+        - Mantenha um tom profissional, acadêmico e construtivo, focado na melhoria da prática clínica.
         
         Transcrição:
         "${transcriptText}"`;
@@ -10972,7 +11043,8 @@ function ImportTranscriptView({
       "${userMessage}"
 
       Aja como um assistente de inteligência artificial prestativo e profissional (estilo o Gemini padrão). Se o usuário der uma instrução direta (como "escreva o relato no estilo TCC", "resuma", "analise" ou "reescreva tal parte"), execute a instrução exatamente como pedido, focando estritamente no conteúdo e na abordagem.
-      REGRA DE OURO: Vá direto ao ponto. Não adicione introduções burocráticas (como "Aqui está a análise...") ou assinaturas/rodapés repetitivos (como "Observação do Copiloto:" ou "Nota da IA"). Retorne diretamente a resposta limpa e útil.`;
+      REGRA DE OURO 1: Vá direto ao ponto. Não adicione introduções burocráticas (como "Aqui está a análise...") ou assinaturas/rodapés repetitivos (como "Observação do Copiloto:" ou "Nota da IA"). Retorne diretamente a resposta limpa e útil.
+      REGRA DE OURO 2: NÃO utilize nenhum tipo de negrito ou itálico com asteriscos (como **texto** ou ***texto***). O texto deve ser inteiramente livre de caracteres asteriscos extras.`;
 
       const response = await generateContentWithFallback(ai, {
         model: "gemini-2.5-flash",
