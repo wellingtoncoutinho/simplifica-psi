@@ -194,18 +194,24 @@ import {
   Copy,
   Check,
   X,
-  ShieldCheck
+  ShieldCheck,
+  Smile
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency, getWhatsAppLink } from './lib/utils';
 import LandingPage from './components/LandingPage';
 import PaywallScreen from './components/PaywallScreen';
 import AdminPanel from './components/AdminPanel';
+import PatientPortalDashboard from './components/PatientPortalDashboard';
+import PsychologistPatientPortalView from './components/PsychologistPatientPortalView';
 import { 
   Patient, 
   Session, 
   Transaction,
-  AppNotification 
+  AppNotification,
+  PatientPortal,
+  PdfLibraryItem,
+  DiaryEntry
 } from './types';
 import { auth, db, signInWithGoogle, signInWithGoogleCalendar } from './lib/firebase';
 import { 
@@ -442,7 +448,10 @@ Como posso te ajudar hoje?`
     cpfCnpj: localStorage.getItem('prof_cpf_cnpj') || '',
     address: localStorage.getItem('prof_address') || '',
     phone: localStorage.getItem('prof_phone') || '',
-    signatureText: localStorage.getItem('prof_signature_text') || ''
+    signatureText: localStorage.getItem('prof_signature_text') || '',
+    pixKey: localStorage.getItem('prof_pix_key') || '',
+    pixType: localStorage.getItem('prof_pix_type') || '',
+    pixName: localStorage.getItem('prof_pix_name') || ''
   });
 
   // Helper to calculate trial remaining days
@@ -467,6 +476,9 @@ Como posso te ajudar hoje?`
   const [patients, setPatients] = useState<Patient[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [diaryEntries, setDiaryEntries] = useState<DiaryEntry[]>([]);
+  const [portalInitialPatientId, setPortalInitialPatientId] = useState<string | undefined>(undefined);
+  const [portalInitialSubTab, setPortalInitialSubTab] = useState<'pdfs' | 'safety' | 'diary' | 'access' | undefined>(undefined);
   const [patientDocuments, setPatientDocuments] = useState<Record<string, any[]>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddingPatient, setIsAddingPatient] = useState(false);
@@ -574,7 +586,10 @@ Como posso te ajudar hoje?`
                 cpfCnpj: data.cpfCnpj || '',
                 address: data.address || '',
                 phone: data.phone || '',
-                signatureText: data.signatureText || ''
+                signatureText: data.signatureText || '',
+                pixKey: data.pixKey || '',
+                pixType: data.pixType || '',
+                pixName: data.pixName || ''
               });
             }
             setUser(user);
@@ -598,7 +613,10 @@ Como posso te ajudar hoje?`
                 cpfCnpj: data.cpfCnpj || '',
                 address: data.address || '',
                 phone: data.phone || '',
-                signatureText: data.signatureText || ''
+                signatureText: data.signatureText || '',
+                pixKey: data.pixKey || '',
+                pixType: data.pixType || '',
+                pixName: data.pixName || ''
               });
               setUser(user);
               setAuthError(null);
@@ -645,6 +663,7 @@ Como posso te ajudar hoje?`
       setPatients([]);
       setSessions([]);
       setTransactions([]);
+      setDiaryEntries([]);
       return;
     }
 
@@ -664,7 +683,10 @@ Como posso te ajudar hoje?`
           cpfCnpj: data.cpfCnpj || '',
           address: data.address || '',
           phone: data.phone || '',
-          signatureText: data.signatureText || ''
+          signatureText: data.signatureText || '',
+          pixKey: data.pixKey || '',
+          pixType: data.pixType || '',
+          pixName: data.pixName || ''
         });
         // Also update localStorage as backup/cache
         localStorage.setItem('prof_name', data.name || '');
@@ -679,6 +701,9 @@ Como posso te ajudar hoje?`
         localStorage.setItem('prof_address', data.address || '');
         localStorage.setItem('prof_phone', data.phone || '');
         localStorage.setItem('prof_signature_text', data.signatureText || '');
+        localStorage.setItem('prof_pix_key', data.pixKey || '');
+        localStorage.setItem('prof_pix_type', data.pixType || '');
+        localStorage.setItem('prof_pix_name', data.pixName || '');
       }
     });
 
@@ -716,14 +741,115 @@ Como posso te ajudar hoje?`
       setTransactions(data);
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'transactions'));
 
+    const qDiary = query(collection(db, 'diary_entries'), where('ownerId', '==', user.uid));
+    const unsubDiary = onSnapshot(qDiary, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as DiaryEntry));
+      data.sort((a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime());
+      setDiaryEntries(data);
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'diary_entries'));
+
     return () => {
       unsubProfile();
       unsubPatients();
       unsubSessions();
       unsubTransactions();
+      unsubDiary();
       unsubAuthEmail();
     };
   }, [user]);
+
+  // Auto-garantir documentos do portal e sincronizar dados bidirecionalmente em tempo real
+  useEffect(() => {
+    if (!user || patients.length === 0) return;
+
+    const qPortals = query(collection(db, 'patient_portal'), where('ownerId', '==', user.uid));
+    const unsubscribe = onSnapshot(qPortals, async (snapshot) => {
+      try {
+        const existingPortals = new Map(snapshot.docs.map(d => [d.id, d.data() as PatientPortal]));
+
+        for (const p of patients) {
+          if (p.status !== 'Inativo') {
+            const portalData = existingPortals.get(p.id);
+            const cleanCpf = (p.cpf || p.document || '').replace(/\D/g, '');
+
+            if (!portalData) {
+              await setDoc(doc(db, 'patient_portal', p.id), {
+                patientId: p.id,
+                ownerId: user.uid,
+                cpf: cleanCpf,
+                patientUid: null,
+                tutorialCompleted: false,
+                name: p.name.toUpperCase(),
+                phone: p.phone || '',
+                email: p.email || '',
+                birthDate: p.birthDate || '',
+                gender: p.gender || '',
+                profession: p.profession || p.occupation || '',
+                address: p.address || '',
+                emergencyName: '',
+                emergencyRelation: '',
+                emergencyPhone: '',
+                sharedPDFs: [],
+                updatedAt: new Date().toISOString()
+              });
+              console.log(`Auto-created missing portal doc for patient ${p.name}`);
+            } else {
+              // 1. Sincronizar campos do paciente para o portal (caso estejam no paciente mas não no portal)
+              const portalUpdates: any = {};
+              if (!portalData.cpf && cleanCpf) portalUpdates.cpf = cleanCpf;
+              if (!portalData.birthDate && p.birthDate) portalUpdates.birthDate = p.birthDate;
+              if (!portalData.gender && p.gender) portalUpdates.gender = p.gender;
+              if (!portalData.profession && (p.profession || p.occupation)) portalUpdates.profession = p.profession || p.occupation;
+              if (!portalData.address && p.address) portalUpdates.address = p.address;
+              if (!portalData.phone && p.phone) portalUpdates.phone = p.phone;
+              if (!portalData.email && p.email) portalUpdates.email = p.email;
+
+              if (Object.keys(portalUpdates).length > 0) {
+                portalUpdates.updatedAt = new Date().toISOString();
+                await updateDoc(doc(db, 'patient_portal', p.id), portalUpdates);
+                console.log(`Synced fields for patient portal ${p.name}:`, Object.keys(portalUpdates));
+              }
+
+              // 2. Sincronizar campos do portal para o paciente (caso estejam no portal mas não no paciente)
+              const patientUpdates: any = {};
+              if (portalData.birthDate && portalData.birthDate !== p.birthDate) {
+                patientUpdates.birthDate = portalData.birthDate;
+              }
+              if (portalData.gender && portalData.gender !== p.gender) {
+                patientUpdates.gender = portalData.gender;
+              }
+              const pProfession = p.profession || p.occupation || '';
+              if (portalData.profession && portalData.profession !== pProfession) {
+                patientUpdates.profession = portalData.profession;
+              }
+              if (portalData.address && portalData.address !== p.address) {
+                patientUpdates.address = portalData.address;
+              }
+              if (portalData.emergencyName && portalData.emergencyName !== p.emergencyName) {
+                patientUpdates.emergencyName = portalData.emergencyName;
+              }
+              if (portalData.emergencyRelation && portalData.emergencyRelation !== p.emergencyRelation) {
+                patientUpdates.emergencyRelation = portalData.emergencyRelation;
+              }
+              if (portalData.emergencyPhone && portalData.emergencyPhone !== p.emergencyPhone) {
+                patientUpdates.emergencyPhone = portalData.emergencyPhone;
+              }
+
+              if (Object.keys(patientUpdates).length > 0) {
+                patientUpdates.updatedAt = new Date().toISOString();
+                await updateDoc(doc(db, 'patients', p.id), patientUpdates);
+                console.log(`Synced fields from portal to patient ${p.name}:`, Object.keys(patientUpdates));
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Erro ao sincronizar documentos do portal:", err);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [user, patients]);
 
   // Notification generation removed as requested
 
@@ -924,7 +1050,7 @@ Como posso te ajudar hoje?`
         sessions: data.isNewPatient ? 0 : (data.sessions || 0),
         status: 'Ativo',
         lastSession: data.sessionDay ? `Toda ${data.sessionDay}` : 'Sem sessões',
-        photo: `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.name}`,
+        photo: '',
         amount: parseFloat(data.amount) || 0,
         recurrence: data.recurrence || 'Semanal',
         recurrenceStart: data.firstSessionDate || new Date().toISOString().split('T')[0],
@@ -941,6 +1067,28 @@ Como posso te ajudar hoje?`
       };
       const patientRef = await addDoc(collection(db, 'patients'), patientData);
       const newPatientId = patientRef.id;
+
+      // 1.1. Criar espelho na coleção patient_portal para acesso do paciente
+      const cleanCpf = (data.document || '').replace(/\D/g, '');
+      await setDoc(doc(db, 'patient_portal', newPatientId), {
+        patientId: newPatientId,
+        ownerId: user.uid,
+        cpf: cleanCpf,
+        patientUid: null,
+        tutorialCompleted: false,
+        name: data.name.toUpperCase(),
+        phone: data.phone || '',
+        email: data.email || '',
+        birthDate: data.birthDate || '',
+        gender: data.gender || '',
+        profession: data.occupation || '',
+        address: data.address || '',
+        emergencyName: '',
+        emergencyRelation: '',
+        emergencyPhone: '',
+        sharedPDFs: [],
+        updatedAt: new Date().toISOString()
+      });
 
       // 2. Adicionar/Atualizar Sessão inicial
       if (triageInitialSessionId) {
@@ -1819,6 +1967,45 @@ Como posso te ajudar hoje?`
         updatedAt: new Date().toISOString()
       });
 
+      // 1.2. Sincronizar com o espelho patient_portal
+      try {
+        const cleanCpf = (data.document || data.cpf || '').replace(/\D/g, '');
+        const portalRef = doc(db, 'patient_portal', id);
+        const portalDoc = await getDoc(portalRef);
+        if (portalDoc.exists()) {
+          await updateDoc(portalRef, {
+            cpf: cleanCpf || portalDoc.data().cpf || '',
+            name: (data.name || '').toUpperCase() || portalDoc.data().name,
+            phone: data.phone || portalDoc.data().phone || '',
+            email: data.email || portalDoc.data().email || '',
+            birthDate: data.birthDate || portalDoc.data().birthDate || '',
+            gender: data.gender || portalDoc.data().gender || '',
+            profession: data.profession || data.occupation || portalDoc.data().profession || '',
+            address: data.address || portalDoc.data().address || '',
+            updatedAt: new Date().toISOString()
+          });
+        } else {
+          await setDoc(portalRef, {
+            patientId: id,
+            ownerId: user.uid,
+            cpf: cleanCpf,
+            patientUid: null,
+            tutorialCompleted: false,
+            name: (data.name || '').toUpperCase(),
+            phone: data.phone || '',
+            email: data.email || '',
+            birthDate: data.birthDate || '',
+            gender: data.gender || '',
+            profession: data.profession || data.occupation || '',
+            address: data.address || '',
+            sharedPDFs: [],
+            updatedAt: new Date().toISOString()
+          });
+        }
+      } catch (portalErr) {
+        console.error("Erro ao sincronizar dados com portal do paciente:", portalErr);
+      }
+
       // If default schedule day/time, recurrence or recurrence start date changed, update/align future scheduled sessions
       if (isDayChanged || isTimeChanged || isRecurrenceChanged || isRecurrenceStartChanged) {
         const todayStr = new Date().toISOString().split('T')[0];
@@ -2000,6 +2187,9 @@ Como posso te ajudar hoje?`
       // 1. Delete patient document
       batch.delete(doc(db, 'patients', id));
 
+      // 1.1. Delete patient portal document
+      batch.delete(doc(db, 'patient_portal', id));
+
       // 2. Query and delete all sessions associated with this patient (from Firestore directly)
       const qSessions = query(
         collection(db, 'sessions'), 
@@ -2024,6 +2214,18 @@ Como posso te ajudar hoje?`
         batch.delete(doc.ref);
       });
 
+      // 3.1. Query and delete all diary entries associated with this patient
+      const qDiary = query(
+        collection(db, 'diary_entries'),
+        where('ownerId', '==', user.uid),
+        where('patientId', '==', id)
+      );
+      const diarySnapshot = await getDocs(qDiary);
+      console.log(`Found ${diarySnapshot.size} diary entries to delete from DB`);
+      diarySnapshot.forEach((doc) => {
+        batch.delete(doc.ref);
+      });
+
       // 4. Commit the batch
       await batch.commit();
       console.log('Successfully deleted patient and all related data:', id);
@@ -2045,6 +2247,7 @@ Como posso te ajudar hoje?`
       { id: 'agenda', label: 'Agenda', icon: CalendarIcon },
       { id: 'prontuarios', label: 'Prontuários', icon: FileText },
       { id: 'financeiro', label: 'Financeiro', icon: DollarSign },
+      { id: 'area-paciente', label: 'Área do Paciente', icon: UserCircle },
       { id: 'import-transcript', label: 'Importar Transcrição', icon: FileDown },
     ];
     if (user?.email && user.email.toLowerCase().trim() === 'wellcoutinho99@gmail.com') {
@@ -2052,6 +2255,12 @@ Como posso te ajudar hoje?`
     }
     return items;
   }, [user]);
+
+  const isPatientRoute = window.location.pathname.startsWith('/paciente') || window.location.search.includes('role=paciente');
+
+  if (isPatientRoute) {
+    return <PatientPortalDashboard />;
+  }
 
   if (loading) {
     return (
@@ -2168,6 +2377,8 @@ Como posso te ajudar hoje?`
                 setActiveTab(item.id);
                 setSelectedPatient(null);
                 setIsMobileMenuOpen(false);
+                setPortalInitialPatientId(undefined);
+                setPortalInitialSubTab(undefined);
               }}
               className={cn(
                 "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group text-sm",
@@ -2302,11 +2513,17 @@ Como posso te ajudar hoje?`
                 filteredPatients={filteredPatients} 
                 sessions={sessions} 
                 transactions={transactions} 
+                diaryEntries={diaryEntries}
                 onPatientSelect={(id) => { setSelectedPatient(id); setActiveTab('pacientes'); }} 
                 onGoToAgenda={() => setActiveTab('agenda')}
                 onGoToFinanceiro={() => setActiveTab('financeiro')}
                 onGoToPacientes={() => { setSelectedPatient(null); setActiveTab('pacientes'); }}
                 onDeletePatient={handleDeletePatient}
+                onGoToPortalTab={(patientId, tab) => {
+                  setPortalInitialPatientId(patientId);
+                  setPortalInitialSubTab(tab);
+                  setActiveTab('area-paciente');
+                }}
               />
             )}
             {activeTab === 'pacientes' && !selectedPatient && (
@@ -2491,6 +2708,16 @@ Como posso te ajudar hoje?`
               />
             )}
 
+            {activeTab === 'area-paciente' && (
+              <PsychologistPatientPortalView 
+                key="psychologist-patient-portal"
+                user={user}
+                patients={patients}
+                initialPatientId={portalInitialPatientId}
+                initialSubTab={portalInitialSubTab}
+              />
+            )}
+
             {activeTab === 'admin' && (
               <AdminPanel key="admin" />
             )}
@@ -2551,6 +2778,9 @@ Como posso te ajudar hoje?`
                   localStorage.setItem('prof_address', data.address || '');
                   localStorage.setItem('prof_phone', data.phone || '');
                   localStorage.setItem('prof_signature_text', data.signatureText || '');
+                  localStorage.setItem('prof_pix_key', data.pixKey || '');
+                  localStorage.setItem('prof_pix_type', data.pixType || '');
+                  localStorage.setItem('prof_pix_name', data.pixName || '');
                   setProfileSettings(data);
                   setIsSettingsOpen(false);
                 }
@@ -2725,10 +2955,12 @@ function DashboardView({
   filteredPatients, 
   sessions, 
   transactions,
+  diaryEntries,
   onGoToAgenda,
   onGoToFinanceiro,
   onGoToPacientes,
-  onDeletePatient
+  onDeletePatient,
+  onGoToPortalTab
 }: { 
   user: User | null,
   onPatientSelect: (id: string) => void, 
@@ -2736,10 +2968,12 @@ function DashboardView({
   filteredPatients: any[], 
   sessions: any[], 
   transactions: any[],
+  diaryEntries: DiaryEntry[],
   onGoToAgenda: () => void,
   onGoToFinanceiro: () => void,
   onGoToPacientes: () => void,
-  onDeletePatient: (id: string) => void
+  onDeletePatient: (id: string) => void,
+  onGoToPortalTab: (patientId: string, tab: 'pdfs' | 'safety' | 'diary' | 'access') => void
 }) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -3174,6 +3408,75 @@ function DashboardView({
           </div>
         </section>
       </div>
+
+      {/* Central de Relatos e Humor dos Pacientes */}
+      <section className="glass-card rounded-3xl p-6 space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
+              <Smile size={20} />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold flex items-center gap-2 text-text-main">
+                Relatos e Humor dos Pacientes
+              </h3>
+              <p className="text-xs text-text-muted mt-0.5">
+                Acompanhe as últimas atualizações e sentimentos enviados pelos pacientes no portal.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {diaryEntries.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {diaryEntries.slice(0, 4).map((entry) => {
+              const p = patients.find((pat) => pat.id === entry.patientId);
+              const getMoodBadgeColor = (mood: number) => {
+                if (mood >= 8) return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+                if (mood >= 5) return 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+                return 'bg-rose-500/10 text-rose-400 border-rose-500/20';
+              };
+              
+              return (
+                <div
+                  key={entry.id}
+                  onClick={() => onGoToPortalTab(entry.patientId, 'diary')}
+                  className="p-4 rounded-2xl bg-surface-muted border border-border-ui hover:bg-white/5 transition-all cursor-pointer group flex flex-col justify-between space-y-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-bold text-text-main uppercase group-hover:text-primary transition-colors">
+                        {p?.name || 'Paciente'}
+                      </p>
+                      <p className="text-[10px] text-text-muted mt-0.5">
+                        {entry.date ? entry.date.split('-').reverse().join('/') : ''}
+                      </p>
+                    </div>
+                    <span className={cn(
+                      "text-[9px] font-bold px-2 py-0.5 rounded-full border shrink-0",
+                      getMoodBadgeColor(entry.mood)
+                    )}>
+                      Humor: {entry.mood}/10
+                    </span>
+                  </div>
+                  <p className="text-xs text-text-muted leading-relaxed italic border-l-2 border-primary/20 pl-2 line-clamp-2">
+                    "{entry.text || 'Sem anotações escritas.'}"
+                  </p>
+                  <div className="flex items-center justify-end text-[10px] font-bold uppercase tracking-wider text-primary opacity-0 group-hover:opacity-100 transition-opacity gap-1 mt-1">
+                    <span>Ver Diário Completo</span>
+                    <ChevronRight size={12} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="py-8 text-center bg-card/30 rounded-2xl border border-dashed border-border-ui">
+            <Smile size={32} className="mx-auto text-text-muted/20 mb-2" />
+            <p className="text-xs text-text-muted">Nenhum relato ou atualização recente enviada pelos pacientes.</p>
+          </div>
+        )}
+      </section>
 
       {/* Calendário de Recebimentos de Pacientes */}
       <section className="glass-card rounded-3xl p-6 space-y-6">
@@ -10342,6 +10645,48 @@ function ProfileSettingsModal({ initialData, onClose, onSave, googleAccessToken,
               value={formData.crp} 
               onChange={e => setFormData({...formData, crp: e.target.value})} 
               placeholder="Ex: CRP 06/12345"
+              className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Tipo de Chave Pix</label>
+              <select
+                value={formData.pixType || ''}
+                onChange={e => setFormData({...formData, pixType: e.target.value})}
+                className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary cursor-pointer appearance-none"
+                style={{
+                  backgroundImage: `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%23888' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E")`,
+                  backgroundPosition: 'right 1rem center',
+                  backgroundSize: '1.25rem',
+                  backgroundRepeat: 'no-repeat',
+                  paddingRight: '2.5rem'
+                }}
+              >
+                <option value="" className="bg-background-dark">Não configurado</option>
+                <option value="CPF" className="bg-background-dark">CPF</option>
+                <option value="CNPJ" className="bg-background-dark">CNPJ</option>
+                <option value="E-mail" className="bg-background-dark">E-mail</option>
+                <option value="Celular" className="bg-background-dark">Celular</option>
+                <option value="Chave Aleatória" className="bg-background-dark">Chave Aleatória</option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Chave Pix</label>
+              <input 
+                value={formData.pixKey || ''} 
+                onChange={e => setFormData({...formData, pixKey: e.target.value})} 
+                placeholder="Insira a chave"
+                className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Favorecido Pix (Opcional)</label>
+            <input 
+              value={formData.pixName || ''} 
+              onChange={e => setFormData({...formData, pixName: e.target.value})} 
+              placeholder="Ex: Nome do beneficiário"
               className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
             />
           </div>

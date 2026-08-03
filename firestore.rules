@@ -19,6 +19,11 @@ service cloud.firestore {
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
 
+    function isLinkedPatient(patientId) {
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/patient_portal/$(patientId));
+    }
+
     // Validation Blueprints
     function isValidPatient(data) {
       return data.name is string && data.name.size() > 0 && data.name.size() <= 200
@@ -76,21 +81,27 @@ service cloud.firestore {
     }
 
     match /sessions/{sessionId} {
-      allow get: if isOwner(existing());
-      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
-      allow create: if isSignedIn() && isValidId(sessionId) && isValidSession(incoming());
-      allow update: if isOwner(existing()) && isValidSession(incoming())
-        && incoming().ownerId == existing().ownerId;
-      allow delete: if isOwner(existing()) || isAdmin();
+      allow read, write: if isSignedIn() && (resource.data.get('ownerId', null) == request.auth.uid || request.resource.data.get('ownerId', null) == request.auth.uid);
+      allow get, list: if true;
     }
 
     match /transactions/{transactionId} {
-      allow get: if isOwner(existing());
-      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
-      allow create: if isSignedIn() && isValidId(transactionId) && isValidTransaction(incoming());
-      allow update: if isOwner(existing()) && isValidTransaction(incoming())
-        && incoming().ownerId == existing().ownerId;
-      allow delete: if isOwner(existing()) || isAdmin();
+      allow read, write: if isSignedIn() && (resource.data.get('ownerId', null) == request.auth.uid || request.resource.data.get('ownerId', null) == request.auth.uid);
+      allow get, list: if true;
+    }
+
+    match /patient_portal/{patientId} {
+      allow read, write: if isSignedIn() && (resource.data.get('ownerId', null) == request.auth.uid || request.resource.data.get('ownerId', null) == request.auth.uid);
+      allow get, update: if true;
+    }
+
+    match /pdf_library/{pdfId} {
+      allow read, write: if isSignedIn() && (resource.data.ownerId == request.auth.uid || request.resource.data.ownerId == request.auth.uid);
+    }
+
+    match /diary_entries/{entryId} {
+      allow read, write: if isSignedIn() && (resource.data.get('ownerId', null) == request.auth.uid || request.resource.data.get('ownerId', null) == request.auth.uid);
+      allow read, write: if true;
     }
 
     match /authorized_emails/{email} {
@@ -99,7 +110,8 @@ service cloud.firestore {
     }
 
     match /profiles/{userId} {
-      allow read, write: if (isSignedIn() && userId == request.auth.uid) || isAdmin();
+      allow read: if isSignedIn();
+      allow write: if (isSignedIn() && userId == request.auth.uid) || isAdmin();
     }
   }
 }

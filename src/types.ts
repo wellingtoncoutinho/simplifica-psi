@@ -167,3 +167,65 @@ export interface AppNotification {
   date: string;
   read: boolean;
 }
+
+export interface PatientPortal {
+  patientId: string;
+  ownerId: string;
+  cpf: string;
+  patientUid: string | null;
+  tutorialCompleted: boolean;
+  
+  // Dados Cadastrais Públicos
+  name: string;
+  phone: string;
+  email: string;
+  birthDate: string;
+  gender: string;
+  profession: string;
+  address: string;
+  emergencyName: string;
+  emergencyRelation: string;
+  emergencyPhone: string;
+
+  // Plano de Segurança
+  safetyPlan?: {
+    warningSigns: string;
+    copingStrategies: string;
+    distractingPeople: string;
+    helpingPeople: string;
+    professionals: string;
+    safeEnvironment: string;
+    reasonsToLive: string;
+    updatedAt: string;
+  };
+
+  // PDFs Compartilhados
+  sharedPDFs?: Array<{
+    id: string;
+    title: string;
+    description: string;
+    fileUrl: string;
+    sharedAt: string;
+  }>;
+  updatedAt: string;
+}
+
+export interface PdfLibraryItem {
+  id: string;
+  ownerId: string;
+  title: string;
+  description: string;
+  fileUrl: string;
+  createdAt: string;
+}
+
+export interface DiaryEntry {
+  id: string;
+  patientId: string;
+  ownerId: string;
+  date: string;
+  mood: number;
+  text: string;
+  createdAt: string;
+}
+
