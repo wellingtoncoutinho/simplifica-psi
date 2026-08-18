@@ -10,9 +10,9 @@ import {
   query, 
   where, 
   orderBy, 
-  onSnapshot,
-  addDoc,
-  deleteDoc
+  onSnapshot, 
+  addDoc, 
+  deleteDoc 
 } from 'firebase/firestore';
 import { 
   UserCircle, 
@@ -25,19 +25,29 @@ import {
   Loader2, 
   Copy, 
   Check, 
-  RefreshCw,
-  AlertCircle,
-  FileDown,
-  ArrowRight,
-  ExternalLink
+  RefreshCw, 
+  AlertCircle, 
+  FileDown, 
+  ArrowRight, 
+  ExternalLink,
+  CheckCircle2,
+  PenTool,
+  Eye,
+  Download,
+  FileCheck,
+  Undo2,
+  X
 } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { Patient, PatientPortal, PdfLibraryItem, DiaryEntry } from '../types';
+import { DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE, fillContractTemplate } from '../utils/contractDefaults';
 
 interface PsychologistPatientPortalViewProps {
   user: any;
   patients: Patient[];
   initialPatientId?: string;
-  initialSubTab?: 'pdfs' | 'safety' | 'diary' | 'access';
+  initialSubTab?: 'pdfs' | 'safety' | 'diary' | 'contract' | 'access';
 }
 
 export default function PsychologistPatientPortalView({ 
@@ -48,9 +58,19 @@ export default function PsychologistPatientPortalView({
 }: PsychologistPatientPortalViewProps) {
   const [selectedPatientId, setSelectedPatientId] = useState<string>(initialPatientId || '');
   const [portalData, setPortalData] = useState<PatientPortal | null>(null);
-  const [activeSubTab, setActiveSubTab] = useState<'pdfs' | 'safety' | 'diary' | 'access'>(initialSubTab || 'pdfs');
+  const [activeSubTab, setActiveSubTab] = useState<'pdfs' | 'safety' | 'diary' | 'contract' | 'access'>(initialSubTab || 'pdfs');
   const [loadingPortal, setLoadingPortal] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
+
+  // Psychologist Profile & Global Contract Template State
+  const [psychologistProfile, setPsychologistProfile] = useState<any | null>(null);
+  const [contractTemplate, setContractTemplate] = useState<string>(DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE);
+  const [contractRequired, setContractRequired] = useState<boolean>(true);
+  const [savingContract, setSavingContract] = useState<boolean>(false);
+  const [viewingContractModal, setViewingContractModal] = useState<boolean>(false);
+  const [markingManualModal, setMarkingManualModal] = useState<boolean>(false);
+  const [manualNote, setManualNote] = useState<string>('Assinado fisicamente em consultório');
+  const [copiedContractText, setCopiedContractText] = useState<boolean>(false);
 
   // PDF Library State
   const [pdfLibrary, setPdfLibrary] = useState<PdfLibraryItem[]>([]);
@@ -86,6 +106,245 @@ export default function PsychologistPatientPortalView({
       setActiveSubTab(initialSubTab);
     }
   }, [initialPatientId, initialSubTab]);
+
+  // Load Psychologist Profile & Contract Settings
+  useEffect(() => {
+    if (!user) return;
+    const unsub = onSnapshot(doc(db, 'profiles', user.uid), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setPsychologistProfile(data);
+        if (data.contractTemplate) {
+          setContractTemplate(data.contractTemplate);
+        }
+        if (data.contractRequired !== undefined) {
+          setContractRequired(data.contractRequired);
+        }
+      }
+    });
+    return unsub;
+  }, [user]);
+
+  // Save Global Contract Settings
+  const handleSaveContractSettings = async () => {
+    if (!user) return;
+    setSavingContract(true);
+    try {
+      await updateDoc(doc(db, 'profiles', user.uid), {
+        contractTemplate: contractTemplate,
+        contractRequired: contractRequired,
+        updatedAt: new Date().toISOString()
+      });
+      alert('Modelo de Contrato Terapêutico salvo com sucesso! Todos os pacientes que acessarem o portal verão este modelo.');
+    } catch (err: any) {
+      console.error('Erro ao salvar modelo de contrato:', err);
+      alert('Erro ao salvar modelo de contrato: ' + (err.message || String(err)));
+    } finally {
+      setSavingContract(false);
+    }
+  };
+
+  // Restore Default Contract Template
+  const handleRestoreDefaultContract = () => {
+    if (window.confirm('Tem certeza que deseja restaurar o modelo padrão do SimplePsi? As alterações não salvas serão substituídas.')) {
+      setContractTemplate(DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE);
+    }
+  };
+
+  // Mark Patient as Manually Signed (Offline/Paper)
+  const handleConfirmManualSigned = async () => {
+    if (!portalData) return;
+    try {
+      const nowIso = new Date().toISOString();
+      const updates = {
+        contractManualOverride: true,
+        contractManualNotes: manualNote || 'Assinado fisicamente em papel',
+        contractSigned: true,
+        contractSignedAt: nowIso,
+        updatedAt: nowIso
+      };
+
+      await updateDoc(doc(db, 'patient_portal', portalData.patientId), updates);
+      // Also update patient document
+      await updateDoc(doc(db, 'patients', portalData.patientId), updates).catch(() => {});
+
+      setMarkingManualModal(false);
+      alert('Status atualizado! O paciente foi marcado como tendo assinado o contrato fisicamente.');
+    } catch (err: any) {
+      console.error('Erro ao marcar contrato manual:', err);
+      alert('Erro ao atualizar status: ' + (err.message || String(err)));
+    }
+  };
+
+  // Reset Contract Signature (Ask Patient to Sign Again)
+  const handleResetContractSignature = async () => {
+    if (!portalData) return;
+    if (!window.confirm('Deseja solicitar uma nova assinatura deste paciente? No próximo acesso ao portal, ele será obrigado a assinar o contrato novamente.')) return;
+    
+    try {
+      const nowIso = new Date().toISOString();
+      const updates = {
+        contractSigned: false,
+        contractSignedAt: null,
+        contractSignature: null,
+        contractSignedBy: null,
+        contractSignedDocument: null,
+        contractSignedText: null,
+        contractManualOverride: false,
+        contractManualNotes: null,
+        updatedAt: nowIso
+      };
+
+      await updateDoc(doc(db, 'patient_portal', portalData.patientId), updates);
+      await updateDoc(doc(db, 'patients', portalData.patientId), updates).catch(() => {});
+
+      alert('Assinatura resetada. O paciente deverá assinar novamente no próximo login.');
+    } catch (err: any) {
+      console.error('Erro ao resetar assinatura do contrato:', err);
+      alert('Erro ao resetar assinatura: ' + (err.message || String(err)));
+    }
+  };
+
+  // Download Contract PDF using jsPDF
+  const handleDownloadContractPdf = () => {
+    if (!portalData) return;
+    try {
+      const docPdf = new jsPDF();
+      let startY = 20;
+
+      // Header logo
+      if (psychologistProfile?.logo) {
+        try {
+          docPdf.addImage(psychologistProfile.logo, 'JPEG', 14, 10, 25, 25);
+          startY = 42;
+        } catch (e) {
+          console.error('Erro ao adicionar logo no PDF:', e);
+        }
+      }
+
+      // Psychologist details top right
+      docPdf.setFontSize(9);
+      docPdf.setFont('helvetica', 'normal');
+      const rightX = 196;
+      let lineY = 14;
+      if (psychologistProfile?.name) {
+        docPdf.text(`Psicólogo(a): ${psychologistProfile.name}`, rightX, lineY, { align: 'right' });
+        lineY += 5;
+      }
+      if (psychologistProfile?.crp) {
+        docPdf.text(`CRP: ${psychologistProfile.crp}`, rightX, lineY, { align: 'right' });
+        lineY += 5;
+      }
+      if (psychologistProfile?.cpfCnpj) {
+        docPdf.text(`CPF/CNPJ: ${psychologistProfile.cpfCnpj}`, rightX, lineY, { align: 'right' });
+        lineY += 5;
+      }
+      if (psychologistProfile?.phone) {
+        docPdf.text(`Tel: ${psychologistProfile.phone}`, rightX, lineY, { align: 'right' });
+        lineY += 5;
+      }
+
+      // Title
+      docPdf.setFontSize(13);
+      docPdf.setFont('helvetica', 'bold');
+      docPdf.text('CONTRATO DE PRESTAÇÃO DE SERVIÇOS PSICOLÓGICOS', 14, startY);
+      docPdf.setFontSize(9);
+      docPdf.setFont('helvetica', 'normal');
+      docPdf.text('TERMO DE CONSENTIMENTO E ACORDO TERAPÊUTICO', 14, startY + 5);
+
+      // Filled contract text
+      const selectedPatient = patients.find(p => p.id === selectedPatientId);
+      const textToRender = portalData.contractSignedText || fillContractTemplate(contractTemplate, {
+        psychologistName: psychologistProfile?.name,
+        psychologistCrp: psychologistProfile?.crp,
+        psychologistCpfCnpj: psychologistProfile?.cpfCnpj,
+        psychologistAddress: psychologistProfile?.address,
+        patientName: portalData.name,
+        patientCpf: portalData.cpf,
+        patientBirthDate: portalData.birthDate,
+        patientAddress: portalData.address,
+        patientPhone: portalData.phone,
+        sessionAmount: selectedPatient?.amount,
+        paymentPeriodicity: selectedPatient?.paymentPeriodicity,
+        date: portalData.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleDateString('pt-BR') : undefined
+      });
+
+      // Split text across pages
+      docPdf.setFontSize(8.5);
+      const splitText = docPdf.splitTextToSize(textToRender, 180);
+      
+      let cursorY = startY + 14;
+      const pageHeight = docPdf.internal.pageSize.height;
+      
+      for (let i = 0; i < splitText.length; i++) {
+        if (cursorY > pageHeight - 25) {
+          docPdf.addPage();
+          cursorY = 20;
+        }
+        docPdf.text(splitText[i], 14, cursorY);
+        cursorY += 4.5;
+      }
+
+      // Digital Signature section
+      if (cursorY > pageHeight - 55) {
+        docPdf.addPage();
+        cursorY = 22;
+      } else {
+        cursorY += 8;
+      }
+
+      docPdf.setDrawColor(200, 200, 200);
+      docPdf.line(14, cursorY, 196, cursorY);
+      cursorY += 7;
+
+      docPdf.setFontSize(9.5);
+      docPdf.setFont('helvetica', 'bold');
+      docPdf.text('REGISTRO DE ACEITE E ASSINATURA ELETRÔNICA', 14, cursorY);
+      cursorY += 6;
+
+      docPdf.setFontSize(8);
+      docPdf.setFont('helvetica', 'normal');
+      
+      if (portalData.contractSigned && !portalData.contractManualOverride) {
+        const signedDateStr = portalData.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleString('pt-BR') : 'Data não registrada';
+        docPdf.text(`• Status: Assinado digitalmente pelo paciente no Portal SimplePsi`, 14, cursorY);
+        cursorY += 4.5;
+        docPdf.text(`• Data e hora da assinatura: ${signedDateStr}`, 14, cursorY);
+        cursorY += 4.5;
+        docPdf.text(`• Nome do signatário: ${portalData.contractSignedBy || portalData.name}`, 14, cursorY);
+        cursorY += 4.5;
+        docPdf.text(`• CPF do signatário: ${portalData.contractSignedDocument || portalData.cpf || 'Não informado'}`, 14, cursorY);
+        cursorY += 6;
+
+        if (portalData.contractSignature) {
+          try {
+            docPdf.text('Rubrica / Assinatura do Paciente:', 14, cursorY);
+            cursorY += 3;
+            docPdf.addImage(portalData.contractSignature, 'PNG', 14, cursorY, 45, 18);
+            cursorY += 22;
+          } catch (e) {
+            console.error('Erro ao desenhar imagem da assinatura no PDF:', e);
+          }
+        }
+      } else if (portalData.contractManualOverride) {
+        docPdf.text(`• Status: Marcado como assinado fisicamente / em papel`, 14, cursorY);
+        cursorY += 4.5;
+        docPdf.text(`• Observações do terapeuta: ${portalData.contractManualNotes || 'Contrato assinado em consultório'}`, 14, cursorY);
+        cursorY += 4.5;
+        if (portalData.contractSignedAt) {
+          docPdf.text(`• Registrado em: ${new Date(portalData.contractSignedAt).toLocaleString('pt-BR')}`, 14, cursorY);
+        }
+      } else {
+        docPdf.text(`• Status: Pendente de assinatura`, 14, cursorY);
+      }
+
+      const fileName = `Contrato_Terapeutico_${portalData.name.replace(/\s+/g, '_')}.pdf`;
+      docPdf.save(fileName);
+    } catch (err) {
+      console.error('Erro ao gerar PDF do contrato:', err);
+      alert('Ocorreu um erro ao gerar o PDF do contrato.');
+    }
+  };
 
   // Load PDF Library
   useEffect(() => {
@@ -528,6 +787,23 @@ export default function PsychologistPatientPortalView({
                 </div>
               </button>
               <button
+                onClick={() => setActiveSubTab('contract')}
+                className={`px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-lg transition-all whitespace-nowrap ${
+                  activeSubTab === 'contract' ? 'bg-primary/10 text-primary border border-primary/20' : 'text-text-muted hover:text-text-main'
+                }`}
+              >
+                <div className="flex items-center gap-1.5">
+                  <FileCheck size={14} />
+                  <span>Contrato Terapêutico</span>
+                  {portalData?.contractSigned && (
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" title="Contrato Assinado" />
+                  )}
+                  {!portalData?.contractSigned && !portalData?.contractManualOverride && (
+                    <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0 animate-pulse" title="Pendente de Assinatura" />
+                  )}
+                </div>
+              </button>
+              <button
                 onClick={() => setActiveSubTab('access')}
                 className={`px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-lg transition-all whitespace-nowrap ${
                   activeSubTab === 'access' ? 'bg-primary/10 text-primary border border-primary/20' : 'text-text-muted hover:text-text-main'
@@ -870,6 +1146,223 @@ export default function PsychologistPatientPortalView({
                 </div>
               )}
 
+              {/* Therapeutic Contract & Digital Signature Management */}
+              {activeSubTab === 'contract' && (
+                <div className="space-y-6">
+                  <div>
+                    <h4 className="font-bold text-sm text-text-main">Contrato Terapêutico & Assinatura Digital</h4>
+                    <p className="text-xs text-text-muted mt-0.5">Gerencie a assinatura do contrato com este paciente e customize o modelo institucional do seu consultório.</p>
+                  </div>
+
+                  {/* Patient-Specific Status Banner */}
+                  <div className="bg-surface-muted border border-border-ui rounded-2xl p-5 space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/5">
+                      <div className="flex items-center gap-2.5">
+                        {portalData?.contractSigned && !portalData?.contractManualOverride ? (
+                          <div className="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                            <CheckCircle2 size={18} />
+                          </div>
+                        ) : portalData?.contractManualOverride ? (
+                          <div className="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center">
+                            <FileCheck size={18} />
+                          </div>
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                            <AlertCircle size={18} />
+                          </div>
+                        )}
+                        <div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Status do Paciente</span>
+                          <h5 className="font-bold text-sm text-text-main">
+                            {portalData?.contractSigned && !portalData?.contractManualOverride
+                              ? '✓ Contrato Assinado Digitalmente'
+                              : portalData?.contractManualOverride
+                              ? '✓ Assinado Fisicamente (Papel / Externo)'
+                              : '⏳ Pendente de Assinatura'}
+                          </h5>
+                        </div>
+                      </div>
+
+                      {/* Action Buttons for this patient */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setViewingContractModal(true)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-text-main font-semibold text-xs rounded-xl transition-all border border-white/5"
+                        >
+                          <Eye size={13} />
+                          <span>Visualizar</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleDownloadContractPdf}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-text-main font-semibold text-xs rounded-xl transition-all border border-white/5"
+                        >
+                          <Download size={13} />
+                          <span>Baixar PDF</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Status details */}
+                    {portalData?.contractSigned && !portalData?.contractManualOverride ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center bg-card/60 rounded-xl p-4 border border-emerald-500/20">
+                        <div className="space-y-1.5 text-xs">
+                          <p className="text-text-muted">
+                            <strong className="text-emerald-400">Data e Hora:</strong> {portalData.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleString('pt-BR') : 'Registrado'}
+                          </p>
+                          <p className="text-text-muted">
+                            <strong className="text-text-main">Signatário:</strong> {portalData.contractSignedBy || portalData.name}
+                          </p>
+                          <p className="text-text-muted">
+                            <strong className="text-text-main">CPF Registrado:</strong> {portalData.contractSignedDocument || portalData.cpf || 'Não informado'}
+                          </p>
+                        </div>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 md:border-l md:border-white/10 md:pl-4">
+                          {portalData.contractSignature ? (
+                            <div className="space-y-1">
+                              <span className="text-[10px] text-text-muted uppercase tracking-wider font-bold">Rubrica / Assinatura</span>
+                              <div className="bg-white rounded-lg p-1.5 w-fit border border-gray-200 shadow-inner">
+                                <img 
+                                  src={portalData.contractSignature} 
+                                  alt="Assinatura do Paciente" 
+                                  className="h-10 w-auto max-w-[140px] object-contain" 
+                                />
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-text-muted italic">Aceite digital registrado</span>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={handleResetContractSignature}
+                            className="flex items-center gap-1 text-[11px] text-text-muted hover:text-red-400 transition-colors underline decoration-dotted"
+                          >
+                            <Undo2 size={12} />
+                            <span>Solicitar nova assinatura</span>
+                          </button>
+                        </div>
+                      </div>
+                    ) : portalData?.contractManualOverride ? (
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card/60 rounded-xl p-4 border border-blue-500/20">
+                        <div className="space-y-1 text-xs">
+                          <p className="text-text-muted">
+                            <strong className="text-blue-400">Observação:</strong> {portalData.contractManualNotes || 'Contrato assinado fisicamente'}
+                          </p>
+                          {portalData.contractSignedAt && (
+                            <p className="text-[11px] text-text-muted">
+                              Registrado em: {new Date(portalData.contractSignedAt).toLocaleString('pt-BR')}
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleResetContractSignature}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-text-muted hover:text-red-400 text-xs rounded-xl transition-all border border-white/5"
+                        >
+                          <Undo2 size={13} />
+                          <span>Reverter e Exigir no Portal</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-amber-500/10 border border-amber-500/20 rounded-xl p-4">
+                        <div className="space-y-1 max-w-xl">
+                          <p className="text-xs text-amber-200 leading-relaxed">
+                            O paciente será obrigado a ler e assinar este contrato na tela logo no primeiro login pelo link do portal.
+                          </p>
+                          <p className="text-[11px] text-text-muted">
+                            Caso o paciente já tenha assinado o contrato fisicamente em papel no consultório, você pode marcar abaixo para dispensar a cobrança no portal.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setMarkingManualModal(true)}
+                          className="shrink-0 flex items-center justify-center gap-2 px-4 py-2 bg-primary hover:bg-primary/95 text-white font-semibold text-xs rounded-xl transition-all shadow-sm"
+                        >
+                          <FileCheck size={14} />
+                          <span>Marcar como Assinado em Papel</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Global Contract Template Configuration */}
+                  <div className="bg-surface-muted border border-border-ui rounded-2xl p-5 space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <h5 className="font-bold text-xs text-text-main uppercase tracking-widest">Modelo de Contrato (Geral para Todos os Pacientes)</h5>
+                        <p className="text-[11px] text-text-muted mt-0.5">
+                          Personalize o texto do contrato. As variáveis entre chaves duplas serão substituídas automaticamente pelos dados cadastrais de cada paciente.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleRestoreDefaultContract}
+                        className="text-[11px] text-primary hover:underline font-semibold"
+                      >
+                        Restaurar Modelo Padrão SimplePsi
+                      </button>
+                    </div>
+
+                    {/* Variable tags chips */}
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Variáveis Dinâmicas Disponíveis:</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          { label: '{{NOME_PACIENTE}}', desc: 'Nome do paciente' },
+                          { label: '{{CPF_PACIENTE}}', desc: 'CPF do paciente' },
+                          { label: '{{DATA_NASCIMENTO_PACIENTE}}', desc: 'Nascimento' },
+                          { label: '{{ENDERECO_PACIENTE}}', desc: 'Endereço' },
+                          { label: '{{TELEFONE_PACIENTE}}', desc: 'Telefone' },
+                          { label: '{{VALOR_SESSAO}}', desc: 'Valor da sessão' },
+                          { label: '{{PERIODICIDADE_PAGAMENTO}}', desc: 'Forma pagamento' },
+                          { label: '{{NOME_PSICOLOGO}}', desc: 'Seu nome' },
+                          { label: '{{CRP_PSICOLOGO}}', desc: 'Seu CRP' },
+                          { label: '{{CPF_CNPJ_PSICOLOGO}}', desc: 'Seu CPF/CNPJ' },
+                          { label: '{{ENDERECO_PSICOLOGO}}', desc: 'Seu endereço' },
+                          { label: '{{DATA_ATUAL}}', desc: 'Data de hoje' }
+                        ].map(tag => (
+                          <button
+                            key={tag.label}
+                            type="button"
+                            onClick={() => {
+                              setContractTemplate(prev => prev + ' ' + tag.label);
+                            }}
+                            title={`Clique para inserir: ${tag.desc}`}
+                            className="px-2 py-1 bg-card hover:bg-primary/20 hover:text-primary hover:border-primary/30 text-text-muted border border-border-ui rounded-lg text-[10px] font-mono transition-all"
+                          >
+                            + {tag.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Contract Template Textarea */}
+                    <div className="space-y-1.5">
+                      <textarea
+                        rows={14}
+                        value={contractTemplate}
+                        onChange={(e) => setContractTemplate(e.target.value)}
+                        className="w-full bg-card border border-border-ui rounded-xl p-4 text-xs font-mono text-text-main outline-none focus:border-primary resize-y leading-relaxed custom-scrollbar"
+                      />
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        disabled={savingContract}
+                        onClick={handleSaveContractSettings}
+                        className="px-6 py-2.5 bg-primary hover:bg-primary/95 text-white font-semibold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        {savingContract ? <Loader2 className="animate-spin" size={14} /> : <Check size={14} />}
+                        <span>Salvar Modelo de Contrato</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Access Settings & Link Management */}
               {activeSubTab === 'access' && (
                 <div className="space-y-6">
@@ -913,6 +1406,149 @@ Dica: No primeiro acesso, você poderá completar seus dados de cadastro (caso f
           </div>
         )}
       </div>
+
+      {/* Modal: Visualizar Contrato Assinado / Minuta */}
+      {viewingContractModal && portalData && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-card border border-border-ui rounded-[28px] max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-border-ui flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileCheck className="text-primary" size={20} />
+                <div>
+                  <h3 className="font-bold text-base text-text-main">Contrato Terapêutico</h3>
+                  <p className="text-xs text-text-muted">Paciente: {portalData.name}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setViewingContractModal(false)}
+                className="p-2 text-text-muted hover:text-text-main rounded-full hover:bg-white/5 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Body: Contract Text & Signatures */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar text-xs leading-relaxed text-text-main whitespace-pre-wrap font-mono bg-surface-muted/50 rounded-xl m-4 border border-border-ui">
+              {portalData.contractSignedText || fillContractTemplate(contractTemplate, {
+                psychologistName: psychologistProfile?.name,
+                psychologistCrp: psychologistProfile?.crp,
+                psychologistCpfCnpj: psychologistProfile?.cpfCnpj,
+                psychologistAddress: psychologistProfile?.address,
+                patientName: portalData.name,
+                patientCpf: portalData.cpf,
+                patientBirthDate: portalData.birthDate,
+                patientAddress: portalData.address,
+                patientPhone: portalData.phone,
+                sessionAmount: patients.find(p => p.id === selectedPatientId)?.amount,
+                paymentPeriodicity: patients.find(p => p.id === selectedPatientId)?.paymentPeriodicity,
+                date: portalData.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleDateString('pt-BR') : undefined
+              })}
+
+              <div className="pt-4 border-t border-border-ui not-italic font-sans space-y-3">
+                <h6 className="font-bold text-xs uppercase tracking-widest text-text-muted">Dados de Assinatura / Aceite</h6>
+                {portalData.contractSigned && !portalData.contractManualOverride ? (
+                  <div className="bg-card border border-emerald-500/20 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <p className="font-bold text-emerald-400">✓ Assinado Eletronicamente</p>
+                      <p className="text-text-muted">Data/Hora: {portalData.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleString('pt-BR') : 'Data não registrada'}</p>
+                      <p className="text-text-muted">Signatário: {portalData.contractSignedBy || portalData.name}</p>
+                      <p className="text-text-muted">CPF: {portalData.contractSignedDocument || portalData.cpf || 'Não informado'}</p>
+                    </div>
+                    {portalData.contractSignature && (
+                      <div className="bg-white rounded-lg p-2 border border-gray-300 shadow-sm">
+                        <img src={portalData.contractSignature} alt="Assinatura" className="h-12 w-auto max-w-[160px] object-contain" />
+                      </div>
+                    )}
+                  </div>
+                ) : portalData.contractManualOverride ? (
+                  <div className="bg-card border border-blue-500/20 rounded-xl p-4">
+                    <p className="font-bold text-blue-400">✓ Assinado Fisicamente / em Papel</p>
+                    <p className="text-text-muted mt-1">{portalData.contractManualNotes || 'Contrato assinado em consultório'}</p>
+                  </div>
+                ) : (
+                  <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 text-amber-200">
+                    ⏳ Este contrato ainda não foi assinado pelo paciente.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-border-ui flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={handleDownloadContractPdf}
+                className="flex items-center gap-1.5 px-4 py-2 bg-white/5 hover:bg-white/10 text-text-main font-semibold text-xs rounded-xl transition-all border border-white/5"
+              >
+                <Download size={14} />
+                <span>Baixar em PDF</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewingContractModal(false)}
+                className="px-4 py-2 bg-primary hover:bg-primary/95 text-white font-semibold text-xs rounded-xl transition-all"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Marcar como Assinado em Papel */}
+      {markingManualModal && portalData && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-card border border-border-ui rounded-[28px] max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileCheck className="text-primary" size={20} />
+                <h3 className="font-bold text-base text-text-main">Marcar como Assinado em Papel</h3>
+              </div>
+              <button
+                onClick={() => setMarkingManualModal(false)}
+                className="p-1.5 text-text-muted hover:text-text-main rounded-full hover:bg-white/5"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-text-muted leading-relaxed">
+              Ao marcar como assinado fisicamente, o paciente <strong className="text-text-main">{portalData.name}</strong> não será cobrado para assinar na tela ao fazer login no portal.
+            </p>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Observações (opcional)</label>
+              <input
+                type="text"
+                placeholder="Ex: Assinado fisicamente em consultório no primeiro atendimento"
+                value={manualNote}
+                onChange={(e) => setManualNote(e.target.value)}
+                className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-primary"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setMarkingManualModal(false)}
+                className="px-4 py-2 bg-transparent hover:bg-white/5 text-text-muted font-semibold text-xs rounded-xl transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmManualSigned}
+                className="px-4 py-2 bg-primary hover:bg-primary/95 text-white font-semibold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5"
+              >
+                <Check size={14} />
+                <span>Confirmar Assinatura em Papel</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

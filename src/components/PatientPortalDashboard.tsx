@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { db, auth } from '../lib/firebase';
 import { signInAnonymously } from 'firebase/auth';
 import { 
@@ -31,9 +31,172 @@ import {
   Compass,
   ArrowRight,
   Trash2,
-  Copy
+  Copy,
+  FileCheck,
+  FileText,
+  PenTool,
+  CheckCircle2,
+  Download,
+  CheckSquare,
+  Square
 } from 'lucide-react';
+import jsPDF from 'jspdf';
 import { PatientPortal, Session, Transaction, DiaryEntry } from '../types';
+import { DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE, fillContractTemplate } from '../utils/contractDefaults';
+
+// Interactive Signature Canvas Component
+function SignaturePad({ 
+  onSignatureChange, 
+  onClear 
+}: { 
+  onSignatureChange: (dataUrl: string | null) => void;
+  onClear?: () => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [hasDrawn, setHasDrawn] = useState(false);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Scale for crisp high DPI screens
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * 2;
+    canvas.height = rect.height * 2;
+    ctx.scale(2, 2);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#1a365d'; // Deep ink color
+    ctx.lineWidth = 2.5;
+  }, []);
+
+  const getCoordinates = (e: React.MouseEvent | React.TouchEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    if ('touches' in e) {
+      const touch = e.touches[0] || e.changedTouches[0];
+      return {
+        x: touch.clientX - rect.left,
+        y: touch.clientY - rect.top
+      };
+    }
+    return {
+      x: (e as React.MouseEvent).clientX - rect.left,
+      y: (e as React.MouseEvent).clientY - rect.top
+    };
+  };
+
+  const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const { x, y } = getCoordinates(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    setIsDrawing(true);
+  };
+
+  const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    if (!isDrawing) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const { x, y } = getCoordinates(e);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    if (!hasDrawn) {
+      setHasDrawn(true);
+    }
+  };
+
+  const stopDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    if (!isDrawing) return;
+    setIsDrawing(false);
+    const canvas = canvasRef.current;
+    if (canvas && hasDrawn) {
+      onSignatureChange(canvas.toDataURL('image/png'));
+    }
+  };
+
+  const clear = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setHasDrawn(false);
+    onSignatureChange(null);
+    if (onClear) onClear();
+  };
+
+  return (
+    <div className="space-y-2 text-left">
+      <div className="relative border-2 border-dashed border-[#2E3C2B]/30 hover:border-primary rounded-2xl bg-white overflow-hidden touch-none select-none h-36 w-full shadow-inner flex items-center justify-center">
+        <canvas
+          ref={canvasRef}
+          onMouseDown={startDrawing}
+          onMouseMove={draw}
+          onMouseUp={stopDrawing}
+          onMouseLeave={stopDrawing}
+          onTouchStart={startDrawing}
+          onTouchMove={draw}
+          onTouchEnd={stopDrawing}
+          onTouchCancel={stopDrawing}
+          className="w-full h-full cursor-crosshair block"
+          style={{ touchAction: 'none' }}
+        />
+        {!hasDrawn && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-gray-400 text-xs font-medium gap-1.5">
+            <PenTool size={14} className="text-gray-400" />
+            <span>Desenhe sua assinatura ou rubrica aqui com o dedo ou mouse</span>
+          </div>
+        )}
+      </div>
+      <div className="flex justify-between items-center px-1">
+        <span className="text-[10px] text-[#2E3C2B]/60">Rubrica digital manuscrita</span>
+        <button
+          type="button"
+          onClick={clear}
+          disabled={!hasDrawn}
+          className="text-xs text-red-500 hover:text-red-700 font-semibold disabled:opacity-30 disabled:hover:text-red-500 transition-colors"
+        >
+          Limpar Assinatura
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const isSessionInPast = (sessionDate: string, sessionTime?: string) => {
+  try {
+    const today = new Date();
+    const todayStr = today.getFullYear() + '-' + 
+      String(today.getMonth() + 1).padStart(2, '0') + '-' + 
+      String(today.getDate()).padStart(2, '0');
+    
+    if (sessionDate < todayStr) return true;
+    if (sessionDate === todayStr) {
+      if (!sessionTime) return true;
+      const currentHourMin = String(today.getHours()).padStart(2, '0') + ':' + 
+        String(today.getMinutes()).padStart(2, '0');
+      return sessionTime < currentHourMin;
+    }
+    return false;
+  } catch (e) {
+    return false;
+  }
+};
 
 export default function PatientPortalDashboard() {
   const [cpf, setCpf] = useState<string>('');
@@ -60,7 +223,7 @@ export default function PatientPortalDashboard() {
   const loggingInRef = React.useRef<boolean>(false);
 
   // Dashboard state
-  const [activeTab, setActiveTab] = useState<'finance' | 'safety' | 'diary' | 'materials'>('diary');
+  const [activeTab, setActiveTab] = useState<'finance' | 'safety' | 'diary' | 'materials' | 'contract'>('diary');
   const hasSafetyPlan = !!(portalData?.safetyPlan && Object.values(portalData.safetyPlan).some(v => v && v !== portalData.safetyPlan?.updatedAt));
   
   // Finance State
@@ -78,6 +241,13 @@ export default function PatientPortalDashboard() {
   const [newDiaryForm, setNewDiaryForm] = useState({ mood: 5, text: '' });
   const [isAddingDiary, setIsAddingDiary] = useState<boolean>(false);
 
+  // Contract Signing Flow State
+  const [contractAgreed, setContractAgreed] = useState<boolean>(false);
+  const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
+  const [signingContract, setSigningContract] = useState<boolean>(false);
+  const [signerName, setSignerName] = useState<string>('');
+  const [signerDocument, setSignerDocument] = useState<string>('');
+
   // Onboarding/Register States
   const [showRegisterForm, setShowRegisterForm] = useState<boolean>(false);
   const [registerForm, setRegisterForm] = useState({
@@ -93,7 +263,7 @@ export default function PatientPortalDashboard() {
   const [showTutorial, setShowTutorial] = useState<boolean>(false);
   const [tutorialStep, setTutorialStep] = useState<number>(0);
 
-  // Pre-fill registerForm when portalData changes
+  // Pre-fill registerForm and signer details when portalData changes
   useEffect(() => {
     if (portalData) {
       setRegisterForm({
@@ -105,8 +275,190 @@ export default function PatientPortalDashboard() {
         emergencyRelation: portalData.emergencyRelation || '',
         emergencyPhone: portalData.emergencyPhone || ''
       });
+      if (!signerName) setSignerName(portalData.name || '');
+      if (!signerDocument) setSignerDocument(portalData.cpf || '');
     }
   }, [portalData]);
+
+  // Sign contract handler
+  const handleSignContract = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!portalData) return;
+    if (!contractAgreed) {
+      alert('Por favor, marque a caixa confirmando que leu e aceita as cláusulas do contrato.');
+      return;
+    }
+    if (!signatureDataUrl) {
+      alert('Por favor, desenhe sua rubrica/assinatura no quadro com o dedo ou mouse antes de continuar.');
+      return;
+    }
+
+    setSigningContract(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const filledText = fillContractTemplate(psychologistProfile?.contractTemplate || DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE, {
+        psychologistName: psychologistProfile?.name,
+        psychologistCrp: psychologistProfile?.crp,
+        psychologistCpfCnpj: psychologistProfile?.cpfCnpj,
+        psychologistAddress: psychologistProfile?.address,
+        patientName: portalData.name,
+        patientCpf: portalData.cpf,
+        patientBirthDate: portalData.birthDate,
+        patientAddress: portalData.address,
+        patientPhone: portalData.phone,
+        date: new Date().toLocaleDateString('pt-BR')
+      });
+
+      const updates = {
+        contractSigned: true,
+        contractSignedAt: nowIso,
+        contractSignature: signatureDataUrl,
+        contractSignedBy: signerName || portalData.name,
+        contractSignedDocument: signerDocument || portalData.cpf || '',
+        contractSignedText: filledText,
+        contractManualOverride: false,
+        updatedAt: nowIso
+      };
+
+      const portalRef = doc(db, 'patient_portal', portalData.patientId);
+      await updateDoc(portalRef, updates);
+
+      // Also mirror updates to patients collection
+      await updateDoc(doc(db, 'patients', portalData.patientId), updates).catch(() => {});
+
+      setPortalData({ ...portalData, ...updates });
+
+      if (!portalData.tutorialCompleted) {
+        setShowTutorial(true);
+      }
+    } catch (err: any) {
+      console.error('Erro ao assinar contrato:', err);
+      alert('Erro ao registrar assinatura: ' + (err.message || String(err)));
+    } finally {
+      setSigningContract(false);
+    }
+  };
+
+  // Download contract PDF for patient
+  const handleDownloadContractPdf = () => {
+    if (!portalData) return;
+    try {
+      const docPdf = new jsPDF();
+      let startY = 20;
+
+      if (psychologistProfile?.logo) {
+        try {
+          docPdf.addImage(psychologistProfile.logo, 'JPEG', 14, 10, 25, 25);
+          startY = 42;
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      docPdf.setFontSize(9);
+      docPdf.setFont('helvetica', 'normal');
+      const rightX = 196;
+      let lineY = 14;
+      if (psychologistProfile?.name) {
+        docPdf.text(`Psicólogo(a): ${psychologistProfile.name}`, rightX, lineY, { align: 'right' });
+        lineY += 5;
+      }
+      if (psychologistProfile?.crp) {
+        docPdf.text(`CRP: ${psychologistProfile.crp}`, rightX, lineY, { align: 'right' });
+        lineY += 5;
+      }
+      if (psychologistProfile?.cpfCnpj) {
+        docPdf.text(`CPF/CNPJ: ${psychologistProfile.cpfCnpj}`, rightX, lineY, { align: 'right' });
+        lineY += 5;
+      }
+
+      docPdf.setFontSize(13);
+      docPdf.setFont('helvetica', 'bold');
+      docPdf.text('CONTRATO DE PRESTAÇÃO DE SERVIÇOS PSICOLÓGICOS', 14, startY);
+      docPdf.setFontSize(9);
+      docPdf.setFont('helvetica', 'normal');
+      docPdf.text('TERMO DE CONSENTIMENTO E ACORDO TERAPÊUTICO', 14, startY + 5);
+
+      const textToRender = portalData.contractSignedText || fillContractTemplate(psychologistProfile?.contractTemplate || DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE, {
+        psychologistName: psychologistProfile?.name,
+        psychologistCrp: psychologistProfile?.crp,
+        psychologistCpfCnpj: psychologistProfile?.cpfCnpj,
+        psychologistAddress: psychologistProfile?.address,
+        patientName: portalData.name,
+        patientCpf: portalData.cpf,
+        patientBirthDate: portalData.birthDate,
+        patientAddress: portalData.address,
+        patientPhone: portalData.phone,
+        date: portalData.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleDateString('pt-BR') : undefined
+      });
+
+      docPdf.setFontSize(8.5);
+      const splitText = docPdf.splitTextToSize(textToRender, 180);
+      let cursorY = startY + 14;
+      const pageHeight = docPdf.internal.pageSize.height;
+
+      for (let i = 0; i < splitText.length; i++) {
+        if (cursorY > pageHeight - 25) {
+          docPdf.addPage();
+          cursorY = 20;
+        }
+        docPdf.text(splitText[i], 14, cursorY);
+        cursorY += 4.5;
+      }
+
+      if (cursorY > pageHeight - 55) {
+        docPdf.addPage();
+        cursorY = 22;
+      } else {
+        cursorY += 8;
+      }
+
+      docPdf.setDrawColor(200, 200, 200);
+      docPdf.line(14, cursorY, 196, cursorY);
+      cursorY += 7;
+
+      docPdf.setFontSize(9.5);
+      docPdf.setFont('helvetica', 'bold');
+      docPdf.text('REGISTRO DE ACEITE E ASSINATURA ELETRÔNICA', 14, cursorY);
+      cursorY += 6;
+
+      docPdf.setFontSize(8);
+      docPdf.setFont('helvetica', 'normal');
+
+      if (portalData.contractSigned && !portalData.contractManualOverride) {
+        const signedDateStr = portalData.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleString('pt-BR') : 'Data não registrada';
+        docPdf.text(`• Status: Assinado digitalmente pelo paciente no Portal SimplePsi`, 14, cursorY);
+        cursorY += 4.5;
+        docPdf.text(`• Data e hora da assinatura: ${signedDateStr}`, 14, cursorY);
+        cursorY += 4.5;
+        docPdf.text(`• Nome do signatário: ${portalData.contractSignedBy || portalData.name}`, 14, cursorY);
+        cursorY += 4.5;
+        docPdf.text(`• CPF do signatário: ${portalData.contractSignedDocument || portalData.cpf || 'Não informado'}`, 14, cursorY);
+        cursorY += 6;
+
+        if (portalData.contractSignature) {
+          try {
+            docPdf.text('Rubrica / Assinatura do Paciente:', 14, cursorY);
+            cursorY += 3;
+            docPdf.addImage(portalData.contractSignature, 'PNG', 14, cursorY, 45, 18);
+            cursorY += 22;
+          } catch (e) {
+            console.error(e);
+          }
+        }
+      } else if (portalData.contractManualOverride) {
+        docPdf.text(`• Status: Assinado fisicamente em consultório`, 14, cursorY);
+        cursorY += 4.5;
+        docPdf.text(`• Observações: ${portalData.contractManualNotes || 'Contrato físico assinado'}`, 14, cursorY);
+      }
+
+      const fileName = `Meu_Contrato_Terapeutico_${portalData.name.replace(/\s+/g, '_')}.pdf`;
+      docPdf.save(fileName);
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao gerar PDF do contrato.');
+    }
+  };
 
   // Auto-login if we have patientId and anonymous user is active
   useEffect(() => {
@@ -635,6 +987,133 @@ export default function PatientPortalDashboard() {
     );
   }
 
+  // MANDATORY CONTRACT SIGNING SCREEN
+  const needsContract = !portalData?.contractSigned && !portalData?.contractManualOverride;
+  if (needsContract) {
+    const rawTemplate = psychologistProfile?.contractTemplate || DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE;
+    const contractText = fillContractTemplate(rawTemplate, {
+      psychologistName: psychologistProfile?.name,
+      psychologistCrp: psychologistProfile?.crp,
+      psychologistCpfCnpj: psychologistProfile?.cpfCnpj,
+      psychologistAddress: psychologistProfile?.address,
+      patientName: portalData?.name,
+      patientCpf: portalData?.cpf,
+      patientBirthDate: portalData?.birthDate,
+      patientAddress: portalData?.address,
+      patientPhone: portalData?.phone,
+      date: new Date().toLocaleDateString('pt-BR')
+    });
+
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-background text-[#2E3C2B] p-4 text-left">
+        <div className="bg-[#FAF9F6] border border-[#2E3C2B]/10 max-w-3xl w-full rounded-3xl p-6 sm:p-8 space-y-6 shadow-2xl animate-in fade-in zoom-in duration-300">
+          
+          {/* Header */}
+          <div className="flex items-center justify-between pb-4 border-b border-[#2E3C2B]/10">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                <FileCheck size={22} />
+              </div>
+              <div>
+                <h2 className="text-lg sm:text-xl font-bold text-[#2E3C2B]">Contrato Terapêutico</h2>
+                <p className="text-xs text-[#2E3C2B]/60">Leitura e Assinatura Eletrônica Obrigatória</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Intro notice */}
+          <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 text-xs text-[#2E3C2B]/80 leading-relaxed flex items-start gap-3">
+            <Info size={18} className="text-primary shrink-0 mt-0.5" />
+            <p>
+              Olá, <strong className="text-[#2E3C2B]">{portalData?.name}</strong>! Para formalizarmos o acompanhamento terapêutico com segurança e transparência mútua, por favor leia as cláusulas abaixo e desenhe sua rubrica digital no final para liberar o seu acesso.
+            </p>
+          </div>
+
+          {/* Scrollable Contract View */}
+          <div className="bg-white border border-[#2E3C2B]/10 rounded-2xl p-5 max-h-64 sm:max-h-80 overflow-y-auto custom-scrollbar font-mono text-xs text-[#2E3C2B] leading-relaxed whitespace-pre-wrap shadow-inner select-text">
+            {contractText}
+          </div>
+
+          {/* Form with Agreement Checkbox & Signature Pad */}
+          <form onSubmit={handleSignContract} className="space-y-5">
+            
+            {/* Agreement Checkbox */}
+            <label className="flex items-start gap-3 p-4 bg-[#2E3C2B]/5 border border-[#2E3C2B]/10 rounded-2xl cursor-pointer hover:bg-[#2E3C2B]/10 transition-colors">
+              <input
+                type="checkbox"
+                required
+                checked={contractAgreed}
+                onChange={(e) => setContractAgreed(e.target.checked)}
+                className="mt-0.5 w-4 h-4 accent-primary rounded cursor-pointer"
+              />
+              <span className="text-xs font-semibold text-[#2E3C2B] leading-relaxed">
+                Declaro que li atentamente, compreendi e concordo integralmente com todas as cláusulas e condições deste Contrato Terapêutico.
+              </span>
+            </label>
+
+            {/* Signature Canvas */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-[#2E3C2B]/60 uppercase tracking-widest pl-1">
+                Sua Assinatura / Rubrica Digital
+              </label>
+              <SignaturePad 
+                onSignatureChange={setSignatureDataUrl} 
+                onClear={() => setSignatureDataUrl(null)}
+              />
+            </div>
+
+            {/* Signer Confirmation Details */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-[#2E3C2B]/60 uppercase tracking-widest pl-1">Nome Completo do Signatário</label>
+                <input
+                  required
+                  type="text"
+                  value={signerName}
+                  onChange={(e) => setSignerName(e.target.value)}
+                  placeholder="Seu nome completo"
+                  className="w-full bg-[#2E3C2B]/5 border border-[#2E3C2B]/10 rounded-xl px-4 py-2.5 text-xs text-[#2E3C2B] outline-none focus:border-primary"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-[#2E3C2B]/60 uppercase tracking-widest pl-1">CPF do Signatário</label>
+                <input
+                  required
+                  type="text"
+                  value={signerDocument}
+                  onChange={(e) => setSignerDocument(e.target.value)}
+                  placeholder="000.000.000-00"
+                  className="w-full bg-[#2E3C2B]/5 border border-[#2E3C2B]/10 rounded-xl px-4 py-2.5 text-xs text-[#2E3C2B] outline-none focus:border-primary"
+                />
+              </div>
+            </div>
+
+            {/* Submit Button */}
+            <div className="pt-2">
+              <button
+                type="submit"
+                disabled={signingContract || !contractAgreed || !signatureDataUrl || !signerName.trim()}
+                className="w-full py-4 bg-primary hover:bg-primary/95 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center justify-center gap-2 select-none disabled:opacity-50"
+              >
+                {signingContract ? (
+                  <>
+                    <Loader2 className="animate-spin" size={16} />
+                    <span>Registrando Assinatura...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 size={16} />
+                    <span>Assinar e Acessar Meu Espaço</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   // TUTORIAL/ONBOARDING SLIDES MODAL
   if (showTutorial) {
     const tutorials = [
@@ -787,6 +1266,15 @@ export default function PatientPortalDashboard() {
           >
             <BookOpen size={14} />
             <span>Materiais</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('contract')}
+            className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 ${
+              activeTab === 'contract' ? 'bg-[#2E3C2B] text-white shadow-md' : 'text-text-muted hover:text-text-main'
+            }`}
+          >
+            <FileCheck size={14} />
+            <span>Meu Contrato</span>
           </button>
         </div>
 
@@ -1128,12 +1616,17 @@ export default function PatientPortalDashboard() {
                             </td>
                             <td className="py-3 px-4 text-text-muted">{s.type}</td>
                             <td className="py-3 px-4">
-                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                                s.status === 'Realizada' ? 'bg-emerald-500/10 text-emerald-600' :
-                                s.status === 'Agendada' ? 'bg-blue-500/10 text-blue-600' : 'bg-rose-500/10 text-rose-600'
-                              }`}>
-                                {s.status}
-                              </span>
+                              {(() => {
+                                const displayStatus = (s.status === 'Agendada' && isSessionInPast(s.date, s.time)) ? 'Realizada' : s.status;
+                                return (
+                                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                                    displayStatus === 'Realizada' ? 'bg-emerald-500/10 text-emerald-600' :
+                                    displayStatus === 'Agendada' ? 'bg-blue-500/10 text-blue-600' : 'bg-rose-500/10 text-rose-600'
+                                  }`}>
+                                    {displayStatus}
+                                  </span>
+                                );
+                              })()}
                             </td>
                             <td className="py-3 px-4 text-right font-bold">
                               R$ {(s.amount || 0).toFixed(2)}
@@ -1205,8 +1698,88 @@ export default function PatientPortalDashboard() {
             </div>
           )}
 
+          {/* MY CONTRACT TAB */}
+          {activeTab === 'contract' && (
+            <div className="space-y-6">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div>
+                  <h3 className="font-bold text-base text-text-main">Meu Contrato Terapêutico</h3>
+                  <p className="text-xs text-text-muted mt-0.5">Visualize e baixe uma cópia do seu contrato de prestação de serviços psicológicos assinado.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDownloadContractPdf}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-primary hover:bg-primary/95 text-white font-semibold text-xs rounded-xl transition-all shadow-sm"
+                >
+                  <Download size={14} />
+                  <span>Baixar Cópia em PDF</span>
+                </button>
+              </div>
+
+              {/* Status Certificate Card */}
+              <div className="bg-card border border-border-ui rounded-[24px] p-5 space-y-4 shadow-sm">
+                <div className="flex items-center gap-3 pb-3 border-b border-border-ui/60">
+                  <div className="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-600 flex items-center justify-center">
+                    <CheckCircle2 size={18} />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">Assinatura Eletrônica Válida</span>
+                    <h4 className="font-bold text-xs text-text-main">
+                      {portalData?.contractSigned && !portalData?.contractManualOverride
+                        ? `Assinado digitalmente por ${portalData.contractSignedBy || portalData.name}`
+                        : 'Contrato assinado em consultório'}
+                    </h4>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 text-xs">
+                  <div>
+                    <span className="text-[10px] text-text-muted uppercase tracking-wider font-bold block">Data do Aceite</span>
+                    <span className="font-semibold text-text-main">
+                      {portalData?.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleString('pt-BR') : 'Registrado'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-text-muted uppercase tracking-wider font-bold block">Documento do Signatário</span>
+                    <span className="font-semibold text-text-main">
+                      CPF: {portalData?.contractSignedDocument || portalData?.cpf || 'Não informado'}
+                    </span>
+                  </div>
+                  {portalData?.contractSignature && (
+                    <div>
+                      <span className="text-[10px] text-text-muted uppercase tracking-wider font-bold block">Rubrica Registrada</span>
+                      <div className="bg-white rounded-lg p-1 border border-gray-200 w-fit mt-1">
+                        <img src={portalData.contractSignature} alt="Rubrica" className="h-8 max-w-[120px] object-contain" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Contract Full Text View */}
+              <div className="space-y-2">
+                <h4 className="font-bold text-xs text-text-muted uppercase tracking-widest pl-1">Teor do Contrato</h4>
+                <div className="bg-card border border-border-ui rounded-[24px] p-6 font-mono text-xs text-text-main leading-relaxed whitespace-pre-wrap max-h-[500px] overflow-y-auto custom-scrollbar shadow-inner">
+                  {portalData?.contractSignedText || fillContractTemplate(psychologistProfile?.contractTemplate || DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE, {
+                    psychologistName: psychologistProfile?.name,
+                    psychologistCrp: psychologistProfile?.crp,
+                    psychologistCpfCnpj: psychologistProfile?.cpfCnpj,
+                    psychologistAddress: psychologistProfile?.address,
+                    patientName: portalData?.name,
+                    patientCpf: portalData?.cpf,
+                    patientBirthDate: portalData?.birthDate,
+                    patientAddress: portalData?.address,
+                    patientPhone: portalData?.phone,
+                    date: portalData?.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleDateString('pt-BR') : undefined
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
         </div>
       </main>
     </div>
   );
 }
+

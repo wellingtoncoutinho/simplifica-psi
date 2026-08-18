@@ -37,7 +37,15 @@ export interface Patient {
   recurrence?: 'Semanal' | 'Quinzenal' | 'Mensal' | 'Nenhuma';
   recurrenceStart?: string;
   modality?: 'Online' | 'Presencial';
-  meetingLink?: string;
+  // Contrato Terapêutico
+  contractSigned?: boolean;
+  contractSignedAt?: string;
+  contractSignature?: string;
+  contractSignedBy?: string;
+  contractSignedDocument?: string;
+  contractSignedText?: string;
+  contractManualOverride?: boolean;
+  contractManualNotes?: string;
   createdAt?: string;
   updatedAt?: string;
   clinicalData?: {
@@ -207,6 +215,17 @@ export interface PatientPortal {
     fileUrl: string;
     sharedAt: string;
   }>;
+
+  // Contrato Terapêutico
+  contractSigned?: boolean;
+  contractSignedAt?: string;
+  contractSignature?: string;
+  contractSignedBy?: string;
+  contractSignedDocument?: string;
+  contractSignedText?: string;
+  contractManualOverride?: boolean;
+  contractManualNotes?: string;
+
   updatedAt: string;
 }
 

@@ -790,6 +790,14 @@ Como posso te ajudar hoje?`
                 emergencyRelation: '',
                 emergencyPhone: '',
                 sharedPDFs: [],
+                contractSigned: p.contractSigned || false,
+                contractSignedAt: p.contractSignedAt || null,
+                contractSignature: p.contractSignature || null,
+                contractSignedBy: p.contractSignedBy || '',
+                contractSignedDocument: p.contractSignedDocument || '',
+                contractSignedText: p.contractSignedText || '',
+                contractManualOverride: p.contractManualOverride || false,
+                contractManualNotes: p.contractManualNotes || '',
                 updatedAt: new Date().toISOString()
               });
               console.log(`Auto-created missing portal doc for patient ${p.name}`);
@@ -803,6 +811,16 @@ Como posso te ajudar hoje?`
               if (!portalData.address && p.address) portalUpdates.address = p.address;
               if (!portalData.phone && p.phone) portalUpdates.phone = p.phone;
               if (!portalData.email && p.email) portalUpdates.email = p.email;
+
+              // Sincronizar status do contrato do paciente para o portal
+              if (p.contractSigned !== undefined && portalData.contractSigned !== p.contractSigned) portalUpdates.contractSigned = p.contractSigned;
+              if (p.contractSignedAt !== undefined && portalData.contractSignedAt !== p.contractSignedAt) portalUpdates.contractSignedAt = p.contractSignedAt;
+              if (p.contractSignature !== undefined && portalData.contractSignature !== p.contractSignature) portalUpdates.contractSignature = p.contractSignature;
+              if (p.contractSignedBy !== undefined && portalData.contractSignedBy !== p.contractSignedBy) portalUpdates.contractSignedBy = p.contractSignedBy;
+              if (p.contractSignedDocument !== undefined && portalData.contractSignedDocument !== p.contractSignedDocument) portalUpdates.contractSignedDocument = p.contractSignedDocument;
+              if (p.contractSignedText !== undefined && portalData.contractSignedText !== p.contractSignedText) portalUpdates.contractSignedText = p.contractSignedText;
+              if (p.contractManualOverride !== undefined && portalData.contractManualOverride !== p.contractManualOverride) portalUpdates.contractManualOverride = p.contractManualOverride;
+              if (p.contractManualNotes !== undefined && portalData.contractManualNotes !== p.contractManualNotes) portalUpdates.contractManualNotes = p.contractManualNotes;
 
               if (Object.keys(portalUpdates).length > 0) {
                 portalUpdates.updatedAt = new Date().toISOString();
@@ -833,6 +851,32 @@ Como posso te ajudar hoje?`
               }
               if (portalData.emergencyPhone && portalData.emergencyPhone !== p.emergencyPhone) {
                 patientUpdates.emergencyPhone = portalData.emergencyPhone;
+              }
+
+              // Sincronizar contrato assinado pelo paciente no portal de volta para o cadastro do psicólogo
+              if (portalData.contractSigned !== undefined && portalData.contractSigned !== p.contractSigned) {
+                patientUpdates.contractSigned = portalData.contractSigned;
+              }
+              if (portalData.contractSignedAt && portalData.contractSignedAt !== p.contractSignedAt) {
+                patientUpdates.contractSignedAt = portalData.contractSignedAt;
+              }
+              if (portalData.contractSignature && portalData.contractSignature !== p.contractSignature) {
+                patientUpdates.contractSignature = portalData.contractSignature;
+              }
+              if (portalData.contractSignedBy && portalData.contractSignedBy !== p.contractSignedBy) {
+                patientUpdates.contractSignedBy = portalData.contractSignedBy;
+              }
+              if (portalData.contractSignedDocument && portalData.contractSignedDocument !== p.contractSignedDocument) {
+                patientUpdates.contractSignedDocument = portalData.contractSignedDocument;
+              }
+              if (portalData.contractSignedText && portalData.contractSignedText !== p.contractSignedText) {
+                patientUpdates.contractSignedText = portalData.contractSignedText;
+              }
+              if (portalData.contractManualOverride !== undefined && portalData.contractManualOverride !== p.contractManualOverride) {
+                patientUpdates.contractManualOverride = portalData.contractManualOverride;
+              }
+              if (portalData.contractManualNotes && portalData.contractManualNotes !== p.contractManualNotes) {
+                patientUpdates.contractManualNotes = portalData.contractManualNotes;
               }
 
               if (Object.keys(patientUpdates).length > 0) {
@@ -1959,6 +2003,7 @@ Como posso te ajudar hoje?`
       const isTimeChanged = oldPatient && oldPatient.sessionTime !== data.sessionTime;
       const isRecurrenceChanged = oldPatient && oldPatient.recurrence !== data.recurrence;
       const isRecurrenceStartChanged = oldPatient && oldPatient.recurrenceStart !== data.recurrenceStart;
+      const isModalityChanged = oldPatient && oldPatient.modality !== data.modality;
 
       await updateDoc(patientRef, {
         ...data,
@@ -2006,8 +2051,8 @@ Como posso te ajudar hoje?`
         console.error("Erro ao sincronizar dados com portal do paciente:", portalErr);
       }
 
-      // If default schedule day/time, recurrence or recurrence start date changed, update/align future scheduled sessions
-      if (isDayChanged || isTimeChanged || isRecurrenceChanged || isRecurrenceStartChanged) {
+      // If default schedule day/time, recurrence, recurrence start date, or modality changed, update/align future scheduled sessions
+      if (isDayChanged || isTimeChanged || isRecurrenceChanged || isRecurrenceStartChanged || isModalityChanged) {
         const todayStr = new Date().toISOString().split('T')[0];
         const patientSessionsToUpdate = sessions.filter(s => 
           s.patientId === id && 
@@ -2049,6 +2094,7 @@ Como posso te ajudar hoje?`
               await updateDoc(doc(db, 'sessions', s.id), {
                 date: newDateStr,
                 time: data.sessionTime || s.time,
+                type: data.modality || s.type,
                 updatedAt: new Date().toISOString()
               });
               
@@ -2056,7 +2102,8 @@ Como posso te ajudar hoje?`
                 await updateSessionInGoogleCalendar({
                   ...s,
                   date: newDateStr,
-                  time: data.sessionTime || s.time
+                  time: data.sessionTime || s.time,
+                  type: data.modality || s.type
                 });
               }
             } else {
@@ -2065,6 +2112,20 @@ Como posso te ajudar hoje?`
                 await deleteSessionFromGoogleCalendar(s.googleEventId);
               }
               await deleteDoc(doc(db, 'sessions', s.id));
+            }
+          }
+        } else if (isModalityChanged) {
+          // Se não houver dia da semana definido mas a modalidade mudou, atualiza a modalidade de todas as agendadas futuras
+          for (const s of patientSessionsToUpdate) {
+            await updateDoc(doc(db, 'sessions', s.id), {
+              type: data.modality,
+              updatedAt: new Date().toISOString()
+            });
+            if (s.googleEventId) {
+              await updateSessionInGoogleCalendar({
+                ...s,
+                type: data.modality
+              });
             }
           }
         }
@@ -2114,10 +2175,21 @@ Como posso te ajudar hoje?`
   const handleDeleteSession = async (id: string) => {
     if (!user) return;
     try {
+      // Se a sessão de fato existe no banco (mesmo com ID iniciando em 'virtual-'), vamos excluí-la
+      const sessionExists = sessions.some(s => s.id === id);
+      if (sessionExists) {
+        const sessionToDelete = sessions.find(s => s.id === id);
+        if (sessionToDelete && sessionToDelete.googleEventId) {
+          await deleteSessionFromGoogleCalendar(sessionToDelete.googleEventId);
+        }
+        await deleteDoc(doc(db, 'sessions', id));
+        return;
+      }
+
       if (id.toString().startsWith('virtual-')) {
-         const parts = id.split('-');
-         const pId = parts[1];
-         const dStr = parts.slice(2).join('-');
+         const virtualContent = id.toString().substring('virtual-'.length);
+         const dStr = virtualContent.slice(-10); // YYYY-MM-DD
+         const pId = virtualContent.slice(0, -11); // pacienteId
          await addDoc(collection(db, 'sessions'), {
              patientId: pId,
              date: dStr,
@@ -2542,6 +2614,7 @@ Como posso te ajudar hoje?`
                 key="patient-detail" 
                 patientId={selectedPatient} 
                 patients={patients} 
+                sessions={sessions}
                 currentUserEmail={user?.email || ''}
                 documents={patientDocuments[selectedPatient] || []}
                 onUpload={(file, category) => handleUploadDocument(selectedPatient, file, category)}
@@ -2565,6 +2638,7 @@ Como posso te ajudar hoje?`
                 key="patient-record" 
                 patientId={selectedPatient} 
                 patients={patients} 
+                sessions={sessions}
                 currentUserEmail={user?.email || ''}
                 defaultSubTab="biblioteca"
                 documents={patientDocuments[selectedPatient] || []}
@@ -4480,6 +4554,7 @@ function PatientDetailsView({
   onUpdatePatient, 
   onDeletePatient, 
   profileSettings,
+  sessions = [],
   currentUserEmail = '',
   defaultSubTab = 'perfil' 
 }: { 
@@ -4492,6 +4567,7 @@ function PatientDetailsView({
   onUpdatePatient: (patient: any) => void,
   onDeletePatient: (id: string) => void,
   profileSettings?: any,
+  sessions?: any[],
   currentUserEmail?: string,
   defaultSubTab?: 'perfil' | 'prontuario' | 'anamnese' | 'smartnotes' | 'biblioteca' | 'tratamento' | 'reembolso'
 }) {
@@ -4511,33 +4587,35 @@ function PatientDetailsView({
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set());
   const [copiedReceiptText, setCopiedReceiptText] = useState(false);
 
-  // Load sessions from Firestore for this patient
+  // Filter sessions from prop for this patient
   useEffect(() => {
-    if (activeSubTab === 'reembolso' && user) {
-      const q = query(
-        collection(db, 'sessions'),
-        where('ownerId', '==', user.uid),
-        where('patientId', '==', patientId)
-      );
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-        // Sort by date descending and time descending
-        list.sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time));
-        setPatientSessions(list);
-      }, (err) => {
-        console.error("Erro ao carregar sessões do paciente:", err);
+    if (activeSubTab === 'reembolso') {
+      const list = sessions.filter(s => s.patientId === patientId);
+      // Sort by date descending and time descending
+      list.sort((a, b) => {
+        const dateA = a.date || "";
+        const dateB = b.date || "";
+        const timeA = a.time || "";
+        const timeB = b.time || "";
+        return dateB.localeCompare(dateA) || timeB.localeCompare(timeA);
       });
-      return unsubscribe;
+      setPatientSessions(list);
     }
-  }, [activeSubTab, patientId, user]);
+  }, [activeSubTab, patientId, sessions]);
 
   const generateReceiptDescription = () => {
     const selected = patientSessions.filter(s => selectedSessionIds.has(s.id));
-    const sorted = [...selected].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
+    const sorted = [...selected].sort((a, b) => {
+      const dateA = a.date || "";
+      const dateB = b.date || "";
+      const timeA = a.time || "";
+      const timeB = b.time || "";
+      return dateA.localeCompare(dateB) || timeA.localeCompare(timeB);
+    });
     if (sorted.length === 0) return "";
     
     const count = sorted.length;
-    const datesStr = sorted.map(s => s.date.split('-').reverse().join('/')).join(', ');
+    const datesStr = sorted.map(s => (s.date || "").split('-').reverse().join('/')).join(', ');
     const totalAmount = sorted.reduce((acc, s) => acc + (s.amount || 0), 0);
     const types = Array.from(new Set(sorted.map(s => s.type)));
     const modalityStr = types.join(' e ');
@@ -8727,7 +8805,7 @@ Relato:
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
                           {patientSessions.filter(s => s.status !== 'Cancelada').map((session, index) => {
                             const isSelected = selectedSessionIds.has(session.id);
-                            const formattedDate = session.date.split('-').reverse().join('/');
+                            const formattedDate = (session.date || "").split('-').reverse().join('/');
                             
                             return (
                               <div 
