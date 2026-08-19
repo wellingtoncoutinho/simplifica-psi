@@ -812,16 +812,6 @@ Como posso te ajudar hoje?`
               if (!portalData.phone && p.phone) portalUpdates.phone = p.phone;
               if (!portalData.email && p.email) portalUpdates.email = p.email;
 
-              // Sincronizar status do contrato do paciente para o portal
-              if (p.contractSigned !== undefined && portalData.contractSigned !== p.contractSigned) portalUpdates.contractSigned = p.contractSigned;
-              if (p.contractSignedAt !== undefined && portalData.contractSignedAt !== p.contractSignedAt) portalUpdates.contractSignedAt = p.contractSignedAt;
-              if (p.contractSignature !== undefined && portalData.contractSignature !== p.contractSignature) portalUpdates.contractSignature = p.contractSignature;
-              if (p.contractSignedBy !== undefined && portalData.contractSignedBy !== p.contractSignedBy) portalUpdates.contractSignedBy = p.contractSignedBy;
-              if (p.contractSignedDocument !== undefined && portalData.contractSignedDocument !== p.contractSignedDocument) portalUpdates.contractSignedDocument = p.contractSignedDocument;
-              if (p.contractSignedText !== undefined && portalData.contractSignedText !== p.contractSignedText) portalUpdates.contractSignedText = p.contractSignedText;
-              if (p.contractManualOverride !== undefined && portalData.contractManualOverride !== p.contractManualOverride) portalUpdates.contractManualOverride = p.contractManualOverride;
-              if (p.contractManualNotes !== undefined && portalData.contractManualNotes !== p.contractManualNotes) portalUpdates.contractManualNotes = p.contractManualNotes;
-
               if (Object.keys(portalUpdates).length > 0) {
                 portalUpdates.updatedAt = new Date().toISOString();
                 await updateDoc(doc(db, 'patient_portal', p.id), portalUpdates);
@@ -851,32 +841,6 @@ Como posso te ajudar hoje?`
               }
               if (portalData.emergencyPhone && portalData.emergencyPhone !== p.emergencyPhone) {
                 patientUpdates.emergencyPhone = portalData.emergencyPhone;
-              }
-
-              // Sincronizar contrato assinado pelo paciente no portal de volta para o cadastro do psicólogo
-              if (portalData.contractSigned !== undefined && portalData.contractSigned !== p.contractSigned) {
-                patientUpdates.contractSigned = portalData.contractSigned;
-              }
-              if (portalData.contractSignedAt && portalData.contractSignedAt !== p.contractSignedAt) {
-                patientUpdates.contractSignedAt = portalData.contractSignedAt;
-              }
-              if (portalData.contractSignature && portalData.contractSignature !== p.contractSignature) {
-                patientUpdates.contractSignature = portalData.contractSignature;
-              }
-              if (portalData.contractSignedBy && portalData.contractSignedBy !== p.contractSignedBy) {
-                patientUpdates.contractSignedBy = portalData.contractSignedBy;
-              }
-              if (portalData.contractSignedDocument && portalData.contractSignedDocument !== p.contractSignedDocument) {
-                patientUpdates.contractSignedDocument = portalData.contractSignedDocument;
-              }
-              if (portalData.contractSignedText && portalData.contractSignedText !== p.contractSignedText) {
-                patientUpdates.contractSignedText = portalData.contractSignedText;
-              }
-              if (portalData.contractManualOverride !== undefined && portalData.contractManualOverride !== p.contractManualOverride) {
-                patientUpdates.contractManualOverride = portalData.contractManualOverride;
-              }
-              if (portalData.contractManualNotes && portalData.contractManualNotes !== p.contractManualNotes) {
-                patientUpdates.contractManualNotes = portalData.contractManualNotes;
               }
 
               if (Object.keys(patientUpdates).length > 0) {
