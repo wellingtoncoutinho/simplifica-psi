@@ -200,6 +200,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency, getWhatsAppLink } from './lib/utils';
 import LandingPage from './components/LandingPage';
+import PrivacyPolicyPage from './components/PrivacyPolicyPage';
 import PaywallScreen from './components/PaywallScreen';
 import AdminPanel from './components/AdminPanel';
 import PatientPortalDashboard from './components/PatientPortalDashboard';
@@ -2291,6 +2292,15 @@ Como posso te ajudar hoje?`
     }
     return items;
   }, [user]);
+
+  const isPrivacyRoute = window.location.pathname.startsWith('/privacidade') || window.location.search.includes('goto=privacidade');
+
+  if (isPrivacyRoute) {
+    return <PrivacyPolicyPage onBack={() => {
+      window.history.pushState({}, '', '/');
+      window.location.href = '/';
+    }} />;
+  }
 
   const isPatientRoute = window.location.pathname.startsWith('/paciente') || window.location.search.includes('role=paciente');
 
