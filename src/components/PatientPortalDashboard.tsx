@@ -38,10 +38,29 @@ import {
   CheckCircle2,
   Download,
   CheckSquare,
-  Square
+  Square,
+  Smile,
+  Brain,
+  Zap,
+  Activity,
+  Heart,
+  Moon,
+  Target,
+  Sparkles,
+  Sliders,
+  ChevronDown,
+  ChevronUp,
+  Star,
+  Filter,
+  X,
+  Clock,
+  TrendingUp,
+  Sun,
+  Flame,
+  Award
 } from 'lucide-react';
 import jsPDF from 'jspdf';
-import { PatientPortal, Session, Transaction, DiaryEntry } from '../types';
+import { PatientPortal, Session, Transaction, DiaryEntry, ClinicalModuleKey, DiaryEntryData, ClinicalModulesConfig } from '../types';
 import { DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE, fillContractTemplate } from '../utils/contractDefaults';
 
 // Interactive Signature Canvas Component
@@ -240,6 +259,84 @@ export default function PatientPortalDashboard() {
   const [submittingDiary, setSubmittingDiary] = useState<boolean>(false);
   const [newDiaryForm, setNewDiaryForm] = useState({ mood: 5, text: '' });
   const [isAddingDiary, setIsAddingDiary] = useState<boolean>(false);
+
+  // Clinical Modules Modal & Form States
+  const [activeModuleModal, setActiveModuleModal] = useState<ClinicalModuleKey | null>(null);
+  const [submittingModule, setSubmittingModule] = useState<boolean>(false);
+  const [patientHistoryFilter, setPatientHistoryFilter] = useState<string>('all');
+
+  // TOC Form
+  const [tocForm, setTocForm] = useState({
+    mode: 'episode' as 'episode' | 'evolution',
+    trigger: '',
+    anxietyLevel: 5,
+    compulsion: '',
+    resisted: 'yes' as 'yes' | 'delayed' | 'no',
+    delayMinutes: 15,
+    dailyControlScore: 7,
+    dailyVictories: '',
+    notes: ''
+  });
+
+  // Panic Form
+  const [panicForm, setPanicForm] = useState({
+    mode: 'episode' as 'episode' | 'evolution',
+    intensity: 7,
+    symptoms: [] as string[],
+    copingUsed: '',
+    anticipatoryAnxiety: 4,
+    exposureSituation: '',
+    dailyVictories: '',
+    generalThoughts: '',
+    notes: ''
+  });
+
+  // Depression / Behavioral Activation Form
+  const [depressionForm, setDepressionForm] = useState({
+    mode: 'episode' as 'episode' | 'evolution',
+    activity: '',
+    pleasureLevel: 5,
+    masteryLevel: 5,
+    energyLevel: 5,
+    generalThoughts: '',
+    notes: ''
+  });
+
+  // Anxiety / Worries Form
+  const [anxietyForm, setAnxietyForm] = useState({
+    mode: 'episode' as 'episode' | 'evolution',
+    anxietyLevel: 6,
+    concern: '',
+    inControl: true,
+    actionPlan: '',
+    generalThoughts: '',
+    dailyVictories: '',
+    notes: ''
+  });
+
+  // Sleep Form
+  const [sleepForm, setSleepForm] = useState({
+    bedTime: '23:00',
+    wakeTime: '07:00',
+    sleepQuality: 4,
+    awakenings: 0,
+    notes: ''
+  });
+
+  // RPD Form
+  const [rpdForm, setRpdForm] = useState({
+    situation: '',
+    automaticThought: '',
+    emotion: '',
+    alternativeThought: '',
+    notes: ''
+  });
+
+  // Habits Form
+  const [habitsForm, setHabitsForm] = useState({
+    completedHabits: [] as string[],
+    notes: ''
+  });
 
   // Contract Signing Flow State
   const [contractAgreed, setContractAgreed] = useState<boolean>(false);
@@ -724,6 +821,7 @@ export default function PatientPortalDashboard() {
         date: new Date().toISOString().split('T')[0],
         mood: newDiaryForm.mood,
         text: newDiaryForm.text.trim(),
+        moduleType: 'general_diary',
         createdAt: new Date().toISOString()
       });
       setNewDiaryForm({ mood: 5, text: '' });
@@ -733,6 +831,41 @@ export default function PatientPortalDashboard() {
       alert('Erro ao salvar seu diário.');
     } finally {
       setSubmittingDiary(false);
+    }
+  };
+
+  const handleSaveModuleEntry = async (
+    moduleType: ClinicalModuleKey,
+    data: DiaryEntryData,
+    summaryText: string,
+    moodScore: number = 5
+  ) => {
+    if (!portalData) return;
+    setSubmittingModule(true);
+    try {
+      await addDoc(collection(db, 'diary_entries'), {
+        patientId: portalData.patientId,
+        ownerId: portalData.ownerId,
+        date: new Date().toISOString().split('T')[0],
+        mood: moodScore,
+        text: summaryText.trim(),
+        moduleType,
+        data,
+        createdAt: new Date().toISOString()
+      });
+      setActiveModuleModal(null);
+      // Reset forms
+      setTocForm({ trigger: '', anxietyLevel: 5, compulsion: '', resisted: 'yes', delayMinutes: 15, notes: '' });
+      setPanicForm({ intensity: 7, symptoms: [], copingUsed: '', thoughts: '', notes: '' });
+      setDepressionForm({ activity: '', pleasureLevel: 5, masteryLevel: 5, notes: '' });
+      setAnxietyForm({ anxietyLevel: 6, concern: '', inControl: true, actionPlan: '', notes: '' });
+      setSleepForm({ bedTime: '23:00', wakeTime: '07:00', sleepQuality: 4, awakenings: 0, notes: '' });
+      setRpdForm({ situation: '', automaticThought: '', emotion: '', alternativeThought: '', notes: '' });
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao salvar seu registro.');
+    } finally {
+      setSubmittingModule(false);
     }
   };
 
@@ -1281,141 +1414,2059 @@ export default function PatientPortalDashboard() {
         {/* Tab Content Panels */}
         <div className="flex-1">
           
-          {/* DIARY TAB */}
-          {activeTab === 'diary' && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
+          {/* DIARY & CLINICAL MODULES TAB */}
+          {activeTab === 'diary' && (() => {
+            const activeModules = portalData?.clinicalModules || { general_diary: true };
+            const customHabitsList = activeModules.customHabits || [
+              'Tomar medicação prescrita no horário',
+              'Caminhada ou atividade física (15-30 min)',
+              'Higiene do sono (desligar telas às 22h)'
+            ];
+
+            const panicSymptomOptions = [
+              'Taquicardia (Coração acelerado)',
+              'Falta de ar / Sufocamento',
+              'Tontura / Vertigem',
+              'Sensação de desmaio',
+              'Tremores',
+              'Suor frio',
+              'Aperto no peito',
+              'Medo de perder o controle',
+              'Formigamento nas mãos/rosto',
+              'Náusea / Desconforto abdominal'
+            ];
+
+            return (
+              <div className="space-y-6">
+                
+                {/* Header & Subtitle */}
                 <div>
-                  <h3 className="font-bold text-base text-text-main">Diário Terapêutico</h3>
-                  <p className="text-xs text-text-muted mt-0.5">Registre como foi seu dia/semana e pontue seu humor geral. Seu psicólogo terá acesso para nos guiar na próxima sessão.</p>
+                  <h3 className="font-bold text-base text-text-main">Meu Espaço de Acompanhamento</h3>
+                  <p className="text-xs text-text-muted mt-0.5">
+                    Registre seus episódios agudos, evoluções diárias, pensamentos e check-ins durante a semana. Essas informações guiarão seu psicólogo nas próximas sessões.
+                  </p>
                 </div>
-                {!isAddingDiary && (
-                  <button
-                    onClick={() => setIsAddingDiary(true)}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-primary hover:bg-primary/95 text-white font-semibold text-xs rounded-xl transition-all shadow-sm"
-                  >
-                    <Plus size={14} />
-                    <span>Novo Registro</span>
-                  </button>
-                )}
-              </div>
 
-              {/* Add New Diary Form */}
-              {isAddingDiary && (
-                <form onSubmit={handleAddDiaryEntry} className="bg-card border border-border-ui rounded-[24px] p-5 space-y-4 animate-in slide-in-from-top-3 duration-200">
-                  <div className="flex items-center justify-between">
-                    <h4 className="font-bold text-xs uppercase tracking-widest text-[#2E3C2B]">Novo Registro de Diário</h4>
-                    <button
-                      type="button"
-                      onClick={() => setIsAddingDiary(false)}
-                      className="text-xs font-semibold text-text-muted hover:text-text-main"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
+                {/* Active Modules Quick Action Cards */}
+                <div className="space-y-3">
+                  <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                    Ferramentas & Acompanhamentos Ativos
+                  </span>
 
-                  {/* Mood scale from 0 to 10 */}
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-[#2E3C2B]/60 uppercase tracking-widest pl-1">
-                      Como está seu humor hoje? (Nota de 0 a 10)
-                    </label>
-                    <div className="flex justify-between gap-1 overflow-x-auto py-1">
-                      {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((score) => {
-                        let btnColor = 'bg-[#2E3C2B]/5 border-[#2E3C2B]/10 text-[#2E3C2B]';
-                        if (newDiaryForm.mood === score) {
-                          if (score >= 8) btnColor = 'bg-emerald-500 border-emerald-500 text-white font-bold scale-105';
-                          else if (score >= 5) btnColor = 'bg-amber-500 border-amber-500 text-black font-bold scale-105';
-                          else btnColor = 'bg-rose-500 border-rose-500 text-white font-bold scale-105';
-                        }
-                        return (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    
+                    {/* 1. TOC Module */}
+                    {activeModules.toc && (
+                      <div className="bg-purple-500/10 border border-purple-500/30 rounded-2xl p-4 flex flex-col justify-between gap-3 hover:border-purple-500/50 transition-all">
+                        <div className="flex items-start gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center shrink-0">
+                            <Brain size={20} />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400">EPR & Obsessões</span>
+                            <h4 className="font-bold text-xs text-text-main">Monitor de TOC & Rituais</h4>
+                            <p className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                              Registre episódios de obsessão ou faça o check-in de evolução e vitórias do dia.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
                           <button
-                            key={score}
                             type="button"
-                            onClick={() => setNewDiaryForm({ ...newDiaryForm, mood: score })}
-                            className={`w-8 h-8 rounded-full border text-xs flex items-center justify-center shrink-0 transition-all ${btnColor}`}
+                            onClick={() => { setTocForm(prev => ({ ...prev, mode: 'episode' })); setActiveModuleModal('toc'); }}
+                            className="py-2 px-2 bg-purple-600 hover:bg-purple-500 text-white font-bold text-[11px] rounded-xl transition-all shadow-sm flex items-center justify-center gap-1"
                           >
-                            {score}
+                            <Zap size={13} />
+                            <span>Episódio / TOC</span>
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => { setTocForm(prev => ({ ...prev, mode: 'evolution' })); setActiveModuleModal('toc'); }}
+                            className="py-2 px-2 bg-white dark:bg-card text-purple-700 dark:text-purple-300 font-bold text-[11px] rounded-xl border-2 border-purple-500/60 hover:bg-purple-600 hover:text-white dark:hover:bg-purple-600 dark:hover:text-white transition-all shadow-xs flex items-center justify-center gap-1"
+                          >
+                            <TrendingUp size={13} />
+                            <span>Evolução do Dia</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 2. Panic Module */}
+                    {activeModules.panic && (
+                      <div className="bg-rose-500/10 border border-rose-500/30 rounded-2xl p-4 flex flex-col justify-between gap-3 hover:border-rose-500/50 transition-all">
+                        <div className="flex items-start gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-rose-500/20 text-rose-400 flex items-center justify-center shrink-0">
+                            <Zap size={20} />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-rose-400">Pânico & Agorafobia</span>
+                            <h4 className="font-bold text-xs text-text-main">Diário de Pânico & Evolução</h4>
+                            <p className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                              Registre crises agudas ou registre enfrentamentos, pensamentos e evolução diária.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => { setPanicForm(prev => ({ ...prev, mode: 'episode' })); setActiveModuleModal('panic'); }}
+                            className="py-2 px-2 bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] rounded-xl transition-all shadow-sm flex items-center justify-center gap-1"
+                          >
+                            <Zap size={13} />
+                            <span>Registrar Crise</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setPanicForm(prev => ({ ...prev, mode: 'evolution' })); setActiveModuleModal('panic'); }}
+                            className="py-2 px-2 bg-white dark:bg-card text-rose-700 dark:text-rose-300 font-bold text-[11px] rounded-xl border-2 border-rose-500/60 hover:bg-rose-600 hover:text-white dark:hover:bg-rose-600 dark:hover:text-white transition-all shadow-xs flex items-center justify-center gap-1"
+                          >
+                            <TrendingUp size={13} />
+                            <span>Evolução & Medo</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 3. Depression Behavioral Activation */}
+                    {activeModules.depression && (
+                      <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 flex flex-col justify-between gap-3 hover:border-amber-500/50 transition-all">
+                        <div className="flex items-start gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
+                            <Activity size={20} />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Ativação Comportamental</span>
+                            <h4 className="font-bold text-xs text-text-main">Ativação & Energia</h4>
+                            <p className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                              Pontue o Prazer e a Maestria de atividades ou relate seu nível de energia e ânimo.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => { setDepressionForm(prev => ({ ...prev, mode: 'episode' })); setActiveModuleModal('depression'); }}
+                            className="py-2 px-2 bg-amber-600 hover:bg-amber-500 text-white font-bold text-[11px] rounded-xl transition-all shadow-sm flex items-center justify-center gap-1"
+                          >
+                            <Activity size={13} />
+                            <span>Nova Atividade</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setDepressionForm(prev => ({ ...prev, mode: 'evolution' })); setActiveModuleModal('depression'); }}
+                            className="py-2 px-2 bg-white dark:bg-card text-amber-800 dark:text-amber-300 font-bold text-[11px] rounded-xl border-2 border-amber-500/60 hover:bg-amber-600 hover:text-white dark:hover:bg-amber-600 dark:hover:text-white transition-all shadow-xs flex items-center justify-center gap-1"
+                          >
+                            <TrendingUp size={13} />
+                            <span>Evolução & Ânimo</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 4. Anxiety Worries */}
+                    {activeModules.anxiety && (
+                      <div className="bg-orange-500/10 border border-orange-500/30 rounded-2xl p-4 flex flex-col justify-between gap-3 hover:border-orange-500/50 transition-all">
+                        <div className="flex items-start gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-orange-500/20 text-orange-400 flex items-center justify-center shrink-0">
+                            <Heart size={20} />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-orange-400">TAG & Ansiedade</span>
+                            <h4 className="font-bold text-xs text-text-main">Termômetro de Ansiedade</h4>
+                            <p className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                              Mapeie preocupações específicas ou relate o nível de tensão e reflexões do dia.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => { setAnxietyForm(prev => ({ ...prev, mode: 'episode' })); setActiveModuleModal('anxiety'); }}
+                            className="py-2 px-2 bg-orange-600 hover:bg-orange-500 text-white font-bold text-[11px] rounded-xl transition-all shadow-sm flex items-center justify-center gap-1"
+                          >
+                            <Heart size={13} />
+                            <span>Preocupação</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setAnxietyForm(prev => ({ ...prev, mode: 'evolution' })); setActiveModuleModal('anxiety'); }}
+                            className="py-2 px-2 bg-white dark:bg-card text-orange-800 dark:text-orange-300 font-bold text-[11px] rounded-xl border-2 border-orange-500/60 hover:bg-orange-600 hover:text-white dark:hover:bg-orange-600 dark:hover:text-white transition-all shadow-xs flex items-center justify-center gap-1"
+                          >
+                            <TrendingUp size={13} />
+                            <span>Evolução do Dia</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 5. Sleep Diary */}
+                    {activeModules.sleep && (
+                      <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-2xl p-4 flex flex-col justify-between gap-3 hover:border-indigo-500/50 transition-all">
+                        <div className="flex items-start gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+                            <Moon size={20} />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">Sono & Descanso</span>
+                            <h4 className="font-bold text-xs text-text-main">Diário do Sono</h4>
+                            <p className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                              Registre como foi sua noite, horários de dormir/acordar e qualidade.
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setActiveModuleModal('sleep')}
+                          className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5"
+                        >
+                          <Plus size={14} />
+                          <span>Registrar Noite de Sono</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* 6. RPD (TCC) */}
+                    {activeModules.rpd && (
+                      <div className="bg-sky-500/10 border border-sky-500/30 rounded-2xl p-4 flex flex-col justify-between gap-3 hover:border-sky-500/50 transition-all">
+                        <div className="flex items-start gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-sky-500/20 text-sky-400 flex items-center justify-center shrink-0">
+                            <FileText size={20} />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-sky-400">TCC</span>
+                            <h4 className="font-bold text-xs text-text-main">RPD (Registro de Pensamentos)</h4>
+                            <p className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                              Identifique pensamentos automáticos e encontre respostas alternativas.
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setActiveModuleModal('rpd')}
+                          className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5"
+                        >
+                          <Plus size={14} />
+                          <span>Novo Pensamento (RPD)</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* 7. General Diary / Mood Check-in */}
+                    {(activeModules.general_diary ?? true) && (
+                      <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4 flex flex-col justify-between gap-3 hover:border-emerald-500/50 transition-all">
+                        <div className="flex items-start gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                            <Smile size={20} />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">Autocuidado</span>
+                            <h4 className="font-bold text-xs text-text-main">Check-in de Humor & Diário Livre</h4>
+                            <p className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                              Conte como você está se sentindo hoje e registre seus pensamentos.
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setIsAddingDiary(true)}
+                          className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5"
+                        >
+                          <Plus size={14} />
+                          <span>Fazer Check-in de Humor</span>
+                        </button>
+                      </div>
+                    )}
+
+                  </div>
+                </div>
+
+                {/* 8. Interactive Habits Card (Direct on Screen) */}
+                {activeModules.habits && (
+                  <div className="bg-card border border-teal-500/30 rounded-2xl p-5 space-y-4 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-teal-500/20 text-teal-400 flex items-center justify-center shrink-0">
+                          <Target size={16} />
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-teal-400">Rotina & Compromisso</span>
+                          <h4 className="font-bold text-xs text-text-main">Metas & Hábitos de Hoje</h4>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-bold text-text-muted">
+                        {habitsForm.completedHabits.length} de {customHabitsList.length} cumpridos
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      {customHabitsList.map((habit, idx) => {
+                        const isChecked = habitsForm.completedHabits.includes(habit);
+                        return (
+                          <label
+                            key={idx}
+                            className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer select-none transition-all ${
+                              isChecked
+                                ? 'bg-teal-500/10 border-teal-500/30 text-text-main'
+                                : 'bg-[#2E3C2B]/5 border-border-ui text-text-muted hover:text-text-main'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => {
+                                const next = isChecked
+                                  ? habitsForm.completedHabits.filter(h => h !== habit)
+                                  : [...habitsForm.completedHabits, habit];
+                                setHabitsForm({ ...habitsForm, completedHabits: next });
+                              }}
+                              className="hidden"
+                            />
+                            <div className={`w-5 h-5 rounded-lg border flex items-center justify-center shrink-0 transition-all ${
+                              isChecked ? 'bg-teal-500 border-teal-500 text-white' : 'border-border-ui'
+                            }`}>
+                              {isChecked && <Check size={13} />}
+                            </div>
+                            <span className={`text-xs font-medium ${isChecked ? 'line-through opacity-80' : ''}`}>
+                              {habit}
+                            </span>
+                          </label>
                         );
                       })}
                     </div>
-                  </div>
 
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-[#2E3C2B]/60 uppercase tracking-widest pl-1">
-                      Como está se sentindo? O que está acontecendo?
-                    </label>
-                    <textarea
-                      required
-                      rows={5}
-                      placeholder="Descreva aqui o que sentiu, eventos importantes ou tarefas da semana..."
-                      value={newDiaryForm.text}
-                      onChange={(e) => setNewDiaryForm({...newDiaryForm, text: e.target.value})}
-                      className="w-full bg-[#2E3C2B]/5 border border-[#2E3C2B]/10 rounded-xl px-4 py-3 text-xs text-[#2E3C2B] outline-none focus:border-primary resize-y"
-                    />
-                  </div>
-
-                  <div className="flex justify-end gap-2 pt-1">
-                    <button
-                      type="submit"
-                      disabled={submittingDiary}
-                      className="px-5 py-2.5 bg-primary hover:bg-primary/95 text-white font-semibold text-xs rounded-xl transition-all shadow-md flex items-center gap-1.5 disabled:opacity-50"
-                    >
-                      {submittingDiary ? <Loader2 className="animate-spin" size={12} /> : null}
-                      <span>Enviar para Psicólogo</span>
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {/* Diary Entries List */}
-              <div className="space-y-3">
-                <h4 className="font-bold text-xs text-text-muted uppercase tracking-widest pl-1">Histórico de Diários</h4>
-                {diaryError ? (
-                  <div className="bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl p-3 flex items-start gap-2.5 text-xs">
-                    <AlertCircle className="shrink-0 mt-0.5" size={15} />
-                    <span>{diaryError}</span>
-                  </div>
-                ) : loadingDiary ? (
-                  <div className="flex justify-center py-8">
-                    <Loader2 className="animate-spin text-primary" size={24} />
-                  </div>
-                ) : diaryEntries.length === 0 ? (
-                  <div className="bg-card border border-border-ui rounded-2xl p-8 text-center text-xs text-text-muted">
-                    Você ainda não registrou nenhum diário. Clique em "Novo Registro" acima para começar.
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {diaryEntries.map(entry => (
-                      <div key={entry.id} className="bg-card border border-border-ui rounded-[20px] p-4 space-y-3 hover:shadow-sm transition-all">
-                        <div className="flex items-center justify-between gap-4">
-                          <div className="flex items-center gap-3">
-                            <div className="flex items-center gap-2 text-xs text-text-muted">
-                              <Calendar size={13} />
-                              <span>{entry.date.split('-').reverse().join('/')}</span>
-                            </div>
-                            <button
-                              onClick={() => handleDeleteDiaryEntry(entry.id)}
-                              className="text-text-muted hover:text-red-500 transition-all p-1"
-                              title="Excluir Registro"
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          </div>
-                          <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${getMoodColor(entry.mood)}`}>
-                            Humor: {entry.mood}/10
-                          </div>
-                        </div>
-                        <p className="text-xs text-text-main leading-relaxed whitespace-pre-wrap pl-1 border-l-2 border-primary/20">
-                          {entry.text}
-                        </p>
-                      </div>
-                    ))}
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        disabled={submittingModule || habitsForm.completedHabits.length === 0}
+                        onClick={() => handleSaveModuleEntry(
+                          'habits',
+                          { completedHabits: habitsForm.completedHabits },
+                          `Hábitos cumpridos: ${habitsForm.completedHabits.join(', ')}`,
+                          8
+                        )}
+                        className="px-5 py-2.5 bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-40"
+                      >
+                        {submittingModule ? <Loader2 className="animate-spin" size={13} /> : <Check size={13} />}
+                        <span>Salvar Hábitos de Hoje</span>
+                      </button>
+                    </div>
                   </div>
                 )}
+
+                {/* MODAL: TOC FORM */}
+                {activeModuleModal === 'toc' && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+                    <div className="bg-card border border-border-ui rounded-[28px] max-w-lg w-full p-6 space-y-4 shadow-2xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto custom-scrollbar">
+                      <div className="flex items-center justify-between pb-3 border-b border-border-ui">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center">
+                            <Brain size={18} />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold text-purple-400 uppercase tracking-wider">TOC & Rituais</span>
+                            <h4 className="font-bold text-sm text-text-main">
+                              {tocForm.mode === 'episode' ? 'Registrar Episódio / Gatilho' : 'Evolução Diária & Progresso'}
+                            </h4>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setActiveModuleModal(null)}
+                          className="p-1.5 text-text-muted hover:text-text-main rounded-lg hover:bg-white/5"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+
+                      {/* Mode Switcher Tabs */}
+                      <div className="flex bg-[#2E3C2B]/5 p-1 rounded-xl border border-border-ui">
+                        <button
+                          type="button"
+                          onClick={() => setTocForm({ ...tocForm, mode: 'episode' })}
+                          className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                            tocForm.mode === 'episode'
+                              ? 'bg-purple-600 text-white shadow-sm'
+                              : 'text-text-muted hover:text-text-main'
+                          }`}
+                        >
+                          <Zap size={13} />
+                          <span>Episódio / Gatilho</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTocForm({ ...tocForm, mode: 'evolution' })}
+                          className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                            tocForm.mode === 'evolution'
+                              ? 'bg-purple-600 text-white shadow-sm'
+                              : 'text-text-muted hover:text-text-main'
+                          }`}
+                        >
+                          <TrendingUp size={13} />
+                          <span>Evolução & Pensamentos</span>
+                        </button>
+                      </div>
+
+                      {/* TOC EPISODE FORM */}
+                      {tocForm.mode === 'episode' ? (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            handleSaveModuleEntry(
+                              'toc',
+                              {
+                                entryCategory: 'episode',
+                                trigger: tocForm.trigger,
+                                anxietyLevel: tocForm.anxietyLevel,
+                                compulsion: tocForm.compulsion,
+                                resisted: tocForm.resisted,
+                                delayMinutes: tocForm.delayMinutes
+                              },
+                              tocForm.notes || `TOC: Gatilho "${tocForm.trigger}". Desfecho: ${tocForm.resisted === 'yes' ? 'Resistiu' : tocForm.resisted === 'delayed' ? `Adiou ${tocForm.delayMinutes} min` : 'Realizou ritual'}.`,
+                              10 - tocForm.anxietyLevel
+                            );
+                          }}
+                          className="space-y-4 text-left"
+                        >
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              1. Qual foi a situação ou gatilho? *
+                            </label>
+                            <input
+                              required
+                              placeholder="Ex: Encostei na maçaneta, pensei que a porta ficou aberta..."
+                              value={tocForm.trigger}
+                              onChange={(e) => setTocForm({ ...tocForm, trigger: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-3 text-xs text-text-main outline-none focus:border-purple-500"
+                            />
+                          </div>
+
+                          {/* Anxiety Slider */}
+                          <div className="space-y-2 bg-[#2E3C2B]/5 p-3 rounded-xl border border-border-ui">
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
+                                2. Nível de Ansiedade / Desconforto
+                              </span>
+                              <span className="font-bold text-purple-400 bg-purple-500/20 px-2 py-0.5 rounded-full text-xs">
+                                {tocForm.anxietyLevel}/10
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="10"
+                              step="1"
+                              value={tocForm.anxietyLevel}
+                              onChange={(e) => setTocForm({ ...tocForm, anxietyLevel: Number(e.target.value) })}
+                              className="w-full accent-purple-500 cursor-pointer"
+                            />
+                            <div className="flex justify-between text-[10px] text-text-muted px-1">
+                              <span>0 (Calmo)</span>
+                              <span>5 (Moderado)</span>
+                              <span>10 (Extremo)</span>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              3. Qual ritual você teve impulso de fazer?
+                            </label>
+                            <input
+                              placeholder="Ex: Lavar as mãos 3 vezes, checar tranca..."
+                              value={tocForm.compulsion}
+                              onChange={(e) => setTocForm({ ...tocForm, compulsion: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-3 text-xs text-text-main outline-none focus:border-purple-500"
+                            />
+                          </div>
+
+                          {/* Outcome Radio Buttons */}
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              4. O que você fez com o ritual? *
+                            </label>
+                            <div className="grid grid-cols-1 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setTocForm({ ...tocForm, resisted: 'yes' })}
+                                className={`p-3 rounded-xl border text-xs font-semibold text-left transition-all flex items-center gap-2.5 ${
+                                  tocForm.resisted === 'yes'
+                                    ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400 shadow-sm'
+                                    : 'bg-[#2E3C2B]/5 border-border-ui text-text-muted hover:text-text-main'
+                                }`}
+                              >
+                                <CheckCircle2 size={16} className={tocForm.resisted === 'yes' ? 'text-emerald-400' : 'opacity-40'} />
+                                <div>
+                                  <span className="font-bold block">Consegui resistir (Não fiz o ritual)</span>
+                                  <span className="text-[10px] opacity-75 font-normal">Tolerei o desconforto e venci o impulso</span>
+                                </div>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => setTocForm({ ...tocForm, resisted: 'delayed' })}
+                                className={`p-3 rounded-xl border text-xs font-semibold text-left transition-all flex items-center gap-2.5 ${
+                                  tocForm.resisted === 'delayed'
+                                    ? 'bg-amber-500/15 border-amber-500/40 text-amber-400 shadow-sm'
+                                    : 'bg-[#2E3C2B]/5 border-border-ui text-text-muted hover:text-text-main'
+                                }`}
+                              >
+                                <Clock size={16} className={tocForm.resisted === 'delayed' ? 'text-amber-400' : 'opacity-40'} />
+                                <div>
+                                  <span className="font-bold block">Consegui adiar por alguns minutos</span>
+                                  <span className="text-[10px] opacity-75 font-normal">Esperei um tempo antes de realizar</span>
+                                </div>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => setTocForm({ ...tocForm, resisted: 'no' })}
+                                className={`p-3 rounded-xl border text-xs font-semibold text-left transition-all flex items-center gap-2.5 ${
+                                  tocForm.resisted === 'no'
+                                    ? 'bg-rose-500/15 border-rose-500/40 text-rose-400 shadow-sm'
+                                    : 'bg-[#2E3C2B]/5 border-border-ui text-text-muted hover:text-text-main'
+                                }`}
+                              >
+                                <AlertCircle size={16} className={tocForm.resisted === 'no' ? 'text-rose-400' : 'opacity-40'} />
+                                <div>
+                                  <span className="font-bold block">Realizei o ritual imediatamente</span>
+                                  <span className="text-[10px] opacity-75 font-normal">Não consegui segurar o impulso</span>
+                                </div>
+                              </button>
+                            </div>
+                          </div>
+
+                          {tocForm.resisted === 'delayed' && (
+                            <div className="space-y-1.5 bg-amber-500/10 p-3 rounded-xl border border-amber-500/20">
+                              <label className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">
+                                Por quantos minutos conseguiu adiar?
+                              </label>
+                              <input
+                                type="number"
+                                min="1"
+                                max="180"
+                                value={tocForm.delayMinutes}
+                                onChange={(e) => setTocForm({ ...tocForm, delayMinutes: Number(e.target.value) })}
+                                className="w-full bg-card border border-border-ui rounded-lg px-3 py-2 text-xs text-text-main outline-none focus:border-amber-500"
+                              />
+                            </div>
+                          )}
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              Anotações complementares (Opcional)
+                            </label>
+                            <textarea
+                              rows={2}
+                              placeholder="Como se sentiu depois? Algum detalhe que queira compartilhar com seu psicólogo..."
+                              value={tocForm.notes}
+                              onChange={(e) => setTocForm({ ...tocForm, notes: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-purple-500 resize-none"
+                            />
+                          </div>
+
+                          <div className="flex justify-end gap-2 pt-2 border-t border-border-ui">
+                            <button
+                              type="button"
+                              onClick={() => setActiveModuleModal(null)}
+                              className="px-4 py-2.5 text-xs font-semibold text-text-muted hover:text-text-main"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={submittingModule}
+                              className="px-6 py-2.5 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                              {submittingModule ? <Loader2 className="animate-spin" size={13} /> : null}
+                              <span>Salvar Registro de TOC</span>
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        /* TOC DAILY EVOLUTION FORM */
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            handleSaveModuleEntry(
+                              'toc',
+                              {
+                                entryCategory: 'daily_evolution',
+                                dailyControlScore: tocForm.dailyControlScore,
+                                dailyVictories: tocForm.dailyVictories,
+                                generalThoughts: tocForm.notes
+                              },
+                              tocForm.notes || `Evolução Diária TOC: Controle ${tocForm.dailyControlScore}/10. Vitórias: "${tocForm.dailyVictories || 'Nenhuma destacada'}".`,
+                              tocForm.dailyControlScore
+                            );
+                          }}
+                          className="space-y-4 text-left"
+                        >
+                          {/* Daily Control Slider */}
+                          <div className="space-y-2 bg-[#2E3C2B]/5 p-3 rounded-xl border border-border-ui">
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
+                                1. Nível de controle geral sobre os rituais hoje
+                              </span>
+                              <span className="font-bold text-purple-400 bg-purple-500/20 px-2 py-0.5 rounded-full text-xs">
+                                {tocForm.dailyControlScore}/10
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="10"
+                              step="1"
+                              value={tocForm.dailyControlScore}
+                              onChange={(e) => setTocForm({ ...tocForm, dailyControlScore: Number(e.target.value) })}
+                              className="w-full accent-purple-500 cursor-pointer"
+                            />
+                            <div className="flex justify-between text-[10px] text-text-muted px-1">
+                              <span>0 (Sem controle)</span>
+                              <span>5 (Parcial)</span>
+                              <span>10 (Total controle)</span>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              2. Vitórias ou momentos de superação de hoje
+                            </label>
+                            <input
+                              placeholder="Ex: Consegui sair de casa checando a porta só 1 vez em vez de 5..."
+                              value={tocForm.dailyVictories}
+                              onChange={(e) => setTocForm({ ...tocForm, dailyVictories: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-3 text-xs text-text-main outline-none focus:border-purple-500"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              3. Pensamentos intrusivos e reflexões do dia (Opcional)
+                            </label>
+                            <textarea
+                              rows={3}
+                              placeholder="Como esteve sua mente hoje? Que pensamentos mais tentaram te convencer a fazer rituais?"
+                              value={tocForm.notes}
+                              onChange={(e) => setTocForm({ ...tocForm, notes: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-purple-500 resize-none"
+                            />
+                          </div>
+
+                          <div className="flex justify-end gap-2 pt-2 border-t border-border-ui">
+                            <button
+                              type="button"
+                              onClick={() => setActiveModuleModal(null)}
+                              className="px-4 py-2.5 text-xs font-semibold text-text-muted hover:text-text-main"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={submittingModule}
+                              className="px-6 py-2.5 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                              {submittingModule ? <Loader2 className="animate-spin" size={13} /> : null}
+                              <span>Salvar Evolução Diária</span>
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* MODAL: PANIC FORM */}
+                {activeModuleModal === 'panic' && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+                    <div className="bg-card border border-border-ui rounded-[28px] max-w-lg w-full p-6 space-y-4 shadow-2xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto custom-scrollbar">
+                      <div className="flex items-center justify-between pb-3 border-b border-border-ui">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-xl bg-rose-500/20 text-rose-400 flex items-center justify-center">
+                            <Zap size={18} />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold text-rose-400 uppercase tracking-wider">Pânico & Agorafobia</span>
+                            <h4 className="font-bold text-sm text-text-main">
+                              {panicForm.mode === 'episode' ? 'Registrar Crise de Pânico' : 'Evolução Diária, Pensamentos & Enfrentamentos'}
+                            </h4>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setActiveModuleModal(null)}
+                          className="p-1.5 text-text-muted hover:text-text-main rounded-lg hover:bg-white/5"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+
+                      {/* Mode Switcher Tabs */}
+                      <div className="flex bg-[#2E3C2B]/5 p-1 rounded-xl border border-border-ui">
+                        <button
+                          type="button"
+                          onClick={() => setPanicForm({ ...panicForm, mode: 'episode' })}
+                          className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                            panicForm.mode === 'episode'
+                              ? 'bg-rose-600 text-white shadow-sm'
+                              : 'text-text-muted hover:text-text-main'
+                          }`}
+                        >
+                          <Zap size={13} />
+                          <span>Crise Aguda</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPanicForm({ ...panicForm, mode: 'evolution' })}
+                          className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                            panicForm.mode === 'evolution'
+                              ? 'bg-rose-600 text-white shadow-sm'
+                              : 'text-text-muted hover:text-text-main'
+                          }`}
+                        >
+                          <TrendingUp size={13} />
+                          <span>Evolução & Enfrentamentos</span>
+                        </button>
+                      </div>
+
+                      {/* PANIC EPISODE FORM */}
+                      {panicForm.mode === 'episode' ? (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            handleSaveModuleEntry(
+                              'panic',
+                              {
+                                entryCategory: 'episode',
+                                panicIntensity: panicForm.intensity,
+                                symptoms: panicForm.symptoms,
+                                copingUsed: panicForm.copingUsed
+                              },
+                              panicForm.notes || `Crise de Pânico (Intensidade ${panicForm.intensity}/10). Sintomas: ${panicForm.symptoms.join(', ') || 'Não especificados'}.`,
+                              10 - panicForm.intensity
+                            );
+                          }}
+                          className="space-y-4 text-left"
+                        >
+                          {/* Intensity Slider */}
+                          <div className="space-y-2 bg-[#2E3C2B]/5 p-3 rounded-xl border border-border-ui">
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
+                                Intensidade do episódio
+                              </span>
+                              <span className="font-bold text-rose-400 bg-rose-500/20 px-2 py-0.5 rounded-full text-xs">
+                                {panicForm.intensity}/10
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min="1"
+                              max="10"
+                              step="1"
+                              value={panicForm.intensity}
+                              onChange={(e) => setPanicForm({ ...panicForm, intensity: Number(e.target.value) })}
+                              className="w-full accent-rose-500 cursor-pointer"
+                            />
+                          </div>
+
+                          {/* Symptoms selection */}
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              Sintomas físicos sentidos (Toque para selecionar)
+                            </label>
+                            <div className="flex flex-wrap gap-1.5">
+                              {panicSymptomOptions.map((symp, i) => {
+                                const isSelected = panicForm.symptoms.includes(symp);
+                                return (
+                                  <button
+                                    type="button"
+                                    key={i}
+                                    onClick={() => {
+                                      const next = isSelected
+                                        ? panicForm.symptoms.filter(s => s !== symp)
+                                        : [...panicForm.symptoms, symp];
+                                      setPanicForm({ ...panicForm, symptoms: next });
+                                    }}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border ${
+                                      isSelected
+                                        ? 'bg-rose-500 text-white border-rose-500 shadow-xs'
+                                        : 'bg-[#2E3C2B]/5 border-border-ui text-text-muted hover:text-text-main'
+                                    }`}
+                                  >
+                                    {symp}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              O que você usou para se acalmar / regular?
+                            </label>
+                            <input
+                              placeholder="Ex: Respiração diafragmática, liguei para familiar, saí do local..."
+                              value={panicForm.copingUsed}
+                              onChange={(e) => setPanicForm({ ...panicForm, copingUsed: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-3 text-xs text-text-main outline-none focus:border-rose-500"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              Relato adicional / O que passou na cabeça (Opcional)
+                            </label>
+                            <textarea
+                              rows={3}
+                              placeholder="Onde você estava? Teve algum pensamento catastrófico?"
+                              value={panicForm.notes}
+                              onChange={(e) => setPanicForm({ ...panicForm, notes: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-rose-500 resize-none"
+                            />
+                          </div>
+
+                          <div className="flex justify-end gap-2 pt-2 border-t border-border-ui">
+                            <button
+                              type="button"
+                              onClick={() => setActiveModuleModal(null)}
+                              className="px-4 py-2.5 text-xs font-semibold text-text-muted hover:text-text-main"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={submittingModule}
+                              className="px-6 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                              {submittingModule ? <Loader2 className="animate-spin" size={13} /> : null}
+                              <span>Salvar Registro de Crise</span>
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        /* PANIC DAILY EVOLUTION FORM */
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            handleSaveModuleEntry(
+                              'panic',
+                              {
+                                entryCategory: 'daily_evolution',
+                                anticipatoryAnxiety: panicForm.anticipatoryAnxiety,
+                                exposureSituation: panicForm.exposureSituation,
+                                dailyVictories: panicForm.dailyVictories,
+                                generalThoughts: panicForm.generalThoughts
+                              },
+                              panicForm.notes || `Evolução Diária Pânico: Medo/Ansiedade antecipatória ${panicForm.anticipatoryAnxiety}/10. Enfrentamento: "${panicForm.exposureSituation || 'Nenhum'}". Vitórias: "${panicForm.dailyVictories || 'Nenhuma'}".`,
+                              10 - panicForm.anticipatoryAnxiety
+                            );
+                          }}
+                          className="space-y-4 text-left"
+                        >
+                          {/* Anticipatory Anxiety Slider */}
+                          <div className="space-y-2 bg-[#2E3C2B]/5 p-3 rounded-xl border border-border-ui">
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
+                                1. Nível de medo de ter novas crises hoje (Ansiedade antecipatória)
+                              </span>
+                              <span className="font-bold text-rose-400 bg-rose-500/20 px-2 py-0.5 rounded-full text-xs">
+                                {panicForm.anticipatoryAnxiety}/10
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="10"
+                              step="1"
+                              value={panicForm.anticipatoryAnxiety}
+                              onChange={(e) => setPanicForm({ ...panicForm, anticipatoryAnxiety: Number(e.target.value) })}
+                              className="w-full accent-rose-500 cursor-pointer"
+                            />
+                            <div className="flex justify-between text-[10px] text-text-muted px-1">
+                              <span>0 (Sem medo nenhum)</span>
+                              <span>5 (Moderado)</span>
+                              <span>10 (Constante / Pavor)</span>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              2. Conseguiu enfrentar algum lugar ou situação desafiadora hoje?
+                            </label>
+                            <input
+                              placeholder="Ex: Fui ao supermercado sozinho, peguei o metrô, andei na rua..."
+                              value={panicForm.exposureSituation}
+                              onChange={(e) => setPanicForm({ ...panicForm, exposureSituation: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-3 text-xs text-text-main outline-none focus:border-rose-500"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              3. Vitórias ou sensações que percebeu no corpo
+                            </label>
+                            <input
+                              placeholder="Ex: Senti o coração acelerar mas lembrei que era passageiro..."
+                              value={panicForm.dailyVictories}
+                              onChange={(e) => setPanicForm({ ...panicForm, dailyVictories: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-3 text-xs text-text-main outline-none focus:border-rose-500"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              4. Pensamentos automáticos e reflexões do dia (Opcional)
+                            </label>
+                            <textarea
+                              rows={3}
+                              placeholder="Que pensamentos passaram na sua cabeça durante o dia? Como se sentiu no geral?"
+                              value={panicForm.generalThoughts}
+                              onChange={(e) => setPanicForm({ ...panicForm, generalThoughts: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-rose-500 resize-none"
+                            />
+                          </div>
+
+                          <div className="flex justify-end gap-2 pt-2 border-t border-border-ui">
+                            <button
+                              type="button"
+                              onClick={() => setActiveModuleModal(null)}
+                              className="px-4 py-2.5 text-xs font-semibold text-text-muted hover:text-text-main"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={submittingModule}
+                              className="px-6 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                              {submittingModule ? <Loader2 className="animate-spin" size={13} /> : null}
+                              <span>Salvar Evolução Diária</span>
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* MODAL: DEPRESSION ACTIVATION FORM */}
+                {activeModuleModal === 'depression' && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+                    <div className="bg-card border border-border-ui rounded-[28px] max-w-lg w-full p-6 space-y-4 shadow-2xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto custom-scrollbar">
+                      <div className="flex items-center justify-between pb-3 border-b border-border-ui">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                            <Activity size={18} />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">Ativação Comportamental</span>
+                            <h4 className="font-bold text-sm text-text-main">
+                              {depressionForm.mode === 'episode' ? 'Registrar Atividade Realizada' : 'Evolução Diária, Ânimo & Energia'}
+                            </h4>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setActiveModuleModal(null)}
+                          className="p-1.5 text-text-muted hover:text-text-main rounded-lg hover:bg-white/5"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+
+                      {/* Mode Switcher Tabs */}
+                      <div className="flex bg-[#2E3C2B]/5 p-1 rounded-xl border border-border-ui">
+                        <button
+                          type="button"
+                          onClick={() => setDepressionForm({ ...depressionForm, mode: 'episode' })}
+                          className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                            depressionForm.mode === 'episode'
+                              ? 'bg-amber-600 text-white shadow-sm'
+                              : 'text-text-muted hover:text-text-main'
+                          }`}
+                        >
+                          <Activity size={13} />
+                          <span>Atividade Realizada</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDepressionForm({ ...depressionForm, mode: 'evolution' })}
+                          className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                            depressionForm.mode === 'evolution'
+                              ? 'bg-amber-600 text-white shadow-sm'
+                              : 'text-text-muted hover:text-text-main'
+                          }`}
+                        >
+                          <TrendingUp size={13} />
+                          <span>Evolução & Energia</span>
+                        </button>
+                      </div>
+
+                      {/* DEPRESSION EPISODE FORM */}
+                      {depressionForm.mode === 'episode' ? (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            handleSaveModuleEntry(
+                              'depression',
+                              {
+                                entryCategory: 'episode',
+                                activity: depressionForm.activity,
+                                pleasureLevel: depressionForm.pleasureLevel,
+                                masteryLevel: depressionForm.masteryLevel
+                              },
+                              depressionForm.notes || `Atividade: "${depressionForm.activity}". Prazer: ${depressionForm.pleasureLevel}/10, Maestria: ${depressionForm.masteryLevel}/10.`,
+                              depressionForm.pleasureLevel
+                            );
+                          }}
+                          className="space-y-4 text-left"
+                        >
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              Qual atividade você realizou? *
+                            </label>
+                            <input
+                              required
+                              placeholder="Ex: Caminhei 20 minutos, arrumei o quarto, cozinhei..."
+                              value={depressionForm.activity}
+                              onChange={(e) => setDepressionForm({ ...depressionForm, activity: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-3 text-xs text-text-main outline-none focus:border-amber-500"
+                            />
+                          </div>
+
+                          {/* Pleasure Slider */}
+                          <div className="space-y-2 bg-[#2E3C2B]/5 p-3 rounded-xl border border-border-ui">
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
+                                Nível de Prazer (Quanto foi bom/gostoso)
+                              </span>
+                              <span className="font-bold text-amber-400 bg-amber-500/20 px-2 py-0.5 rounded-full text-xs">
+                                {depressionForm.pleasureLevel}/10
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="10"
+                              step="1"
+                              value={depressionForm.pleasureLevel}
+                              onChange={(e) => setDepressionForm({ ...depressionForm, pleasureLevel: Number(e.target.value) })}
+                              className="w-full accent-amber-500 cursor-pointer"
+                            />
+                          </div>
+
+                          {/* Mastery Slider */}
+                          <div className="space-y-2 bg-[#2E3C2B]/5 p-3 rounded-xl border border-border-ui">
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
+                                Nível de Maestria (Sensação de dever cumprido / conquista)
+                              </span>
+                              <span className="font-bold text-blue-400 bg-blue-500/20 px-2 py-0.5 rounded-full text-xs">
+                                {depressionForm.masteryLevel}/10
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="10"
+                              step="1"
+                              value={depressionForm.masteryLevel}
+                              onChange={(e) => setDepressionForm({ ...depressionForm, masteryLevel: Number(e.target.value) })}
+                              className="w-full accent-blue-500 cursor-pointer"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              Como se sentiu antes vs depois? (Opcional)
+                            </label>
+                            <textarea
+                              rows={3}
+                              placeholder="Ex: Estava sem vontade nenhuma no início, mas depois que terminei me senti mais leve..."
+                              value={depressionForm.notes}
+                              onChange={(e) => setDepressionForm({ ...depressionForm, notes: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-amber-500 resize-none"
+                            />
+                          </div>
+
+                          <div className="flex justify-end gap-2 pt-2 border-t border-border-ui">
+                            <button
+                              type="button"
+                              onClick={() => setActiveModuleModal(null)}
+                              className="px-4 py-2.5 text-xs font-semibold text-text-muted hover:text-text-main"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={submittingModule}
+                              className="px-6 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                              {submittingModule ? <Loader2 className="animate-spin" size={13} /> : null}
+                              <span>Salvar Atividade</span>
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        /* DEPRESSION DAILY EVOLUTION FORM */
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            handleSaveModuleEntry(
+                              'depression',
+                              {
+                                entryCategory: 'daily_evolution',
+                                energyLevel: depressionForm.energyLevel,
+                                dailyVictories: depressionForm.notes,
+                                generalThoughts: depressionForm.generalThoughts
+                              },
+                              depressionForm.notes || `Evolução Depressão: Nível de energia ${depressionForm.energyLevel}/10. Pensamentos: "${depressionForm.generalThoughts || 'Não especificados'}".`,
+                              depressionForm.energyLevel
+                            );
+                          }}
+                          className="space-y-4 text-left"
+                        >
+                          {/* Energy Slider */}
+                          <div className="space-y-2 bg-[#2E3C2B]/5 p-3 rounded-xl border border-border-ui">
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
+                                1. Nível de Energia e Disposição de hoje
+                              </span>
+                              <span className="font-bold text-amber-400 bg-amber-500/20 px-2 py-0.5 rounded-full text-xs">
+                                {depressionForm.energyLevel}/10
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="10"
+                              step="1"
+                              value={depressionForm.energyLevel}
+                              onChange={(e) => setDepressionForm({ ...depressionForm, energyLevel: Number(e.target.value) })}
+                              className="w-full accent-amber-500 cursor-pointer"
+                            />
+                            <div className="flex justify-between text-[10px] text-text-muted px-1">
+                              <span>0 (Sem energia)</span>
+                              <span>5 (Razoável)</span>
+                              <span>10 (Muito disposto)</span>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              2. Pensamentos que passaram na cabeça hoje
+                            </label>
+                            <textarea
+                              rows={3}
+                              placeholder="Ex: Tive pensamentos de desânimo, mas tentei não me culpar e focar no que dava para fazer..."
+                              value={depressionForm.generalThoughts}
+                              onChange={(e) => setDepressionForm({ ...depressionForm, generalThoughts: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-amber-500 resize-none"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              3. Pequenas vitórias ou momentos positivos do dia (Opcional)
+                            </label>
+                            <input
+                              placeholder="Ex: Consegui tomar um banho demorado, liguei para um amigo..."
+                              value={depressionForm.notes}
+                              onChange={(e) => setDepressionForm({ ...depressionForm, notes: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-3 text-xs text-text-main outline-none focus:border-amber-500"
+                            />
+                          </div>
+
+                          <div className="flex justify-end gap-2 pt-2 border-t border-border-ui">
+                            <button
+                              type="button"
+                              onClick={() => setActiveModuleModal(null)}
+                              className="px-4 py-2.5 text-xs font-semibold text-text-muted hover:text-text-main"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={submittingModule}
+                              className="px-6 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                              {submittingModule ? <Loader2 className="animate-spin" size={13} /> : null}
+                              <span>Salvar Evolução Diária</span>
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* MODAL: ANXIETY FORM */}
+                {activeModuleModal === 'anxiety' && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+                    <div className="bg-card border border-border-ui rounded-[28px] max-w-lg w-full p-6 space-y-4 shadow-2xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto custom-scrollbar">
+                      <div className="flex items-center justify-between pb-3 border-b border-border-ui">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-xl bg-orange-500/20 text-orange-400 flex items-center justify-center">
+                            <Heart size={18} />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold text-orange-400 uppercase tracking-wider">TAG & Ansiedade</span>
+                            <h4 className="font-bold text-sm text-text-main">
+                              {anxietyForm.mode === 'episode' ? 'Registrar Preocupação / Pico' : 'Evolução Diária & Nível de Tensão'}
+                            </h4>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setActiveModuleModal(null)}
+                          className="p-1.5 text-text-muted hover:text-text-main rounded-lg hover:bg-white/5"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+
+                      {/* Mode Switcher Tabs */}
+                      <div className="flex bg-[#2E3C2B]/5 p-1 rounded-xl border border-border-ui">
+                        <button
+                          type="button"
+                          onClick={() => setAnxietyForm({ ...anxietyForm, mode: 'episode' })}
+                          className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                            anxietyForm.mode === 'episode'
+                              ? 'bg-orange-600 text-white shadow-sm'
+                              : 'text-text-muted hover:text-text-main'
+                          }`}
+                        >
+                          <Heart size={13} />
+                          <span>Preocupação Específica</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAnxietyForm({ ...anxietyForm, mode: 'evolution' })}
+                          className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                            anxietyForm.mode === 'evolution'
+                              ? 'bg-orange-600 text-white shadow-sm'
+                              : 'text-text-muted hover:text-text-main'
+                          }`}
+                        >
+                          <TrendingUp size={13} />
+                          <span>Evolução & Tensão</span>
+                        </button>
+                      </div>
+
+                      {/* ANXIETY EPISODE FORM */}
+                      {anxietyForm.mode === 'episode' ? (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            handleSaveModuleEntry(
+                              'anxiety',
+                              {
+                                entryCategory: 'episode',
+                                anxietyLevel: anxietyForm.anxietyLevel,
+                                concern: anxietyForm.concern,
+                                inControl: anxietyForm.inControl,
+                                actionPlan: anxietyForm.actionPlan
+                              },
+                              anxietyForm.notes || `Preocupação: "${anxietyForm.concern}". Controle: ${anxietyForm.inControl ? 'Sob controle' : 'Fora de controle'}.`,
+                              10 - anxietyForm.anxietyLevel
+                            );
+                          }}
+                          className="space-y-4 text-left"
+                        >
+                          {/* Anxiety Slider */}
+                          <div className="space-y-2 bg-[#2E3C2B]/5 p-3 rounded-xl border border-border-ui">
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
+                                Nível de Ansiedade no Momento
+                              </span>
+                              <span className="font-bold text-orange-400 bg-orange-500/20 px-2 py-0.5 rounded-full text-xs">
+                                {anxietyForm.anxietyLevel}/10
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="10"
+                              step="1"
+                              value={anxietyForm.anxietyLevel}
+                              onChange={(e) => setAnxietyForm({ ...anxietyForm, anxietyLevel: Number(e.target.value) })}
+                              className="w-full accent-orange-500 cursor-pointer"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              Qual é a sua preocupação principal agora? *
+                            </label>
+                            <textarea
+                              required
+                              rows={3}
+                              placeholder="Descreva o que está gerando angústia ou medo..."
+                              value={anxietyForm.concern}
+                              onChange={(e) => setAnxietyForm({ ...anxietyForm, concern: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-orange-500 resize-none"
+                            />
+                          </div>
+
+                          {/* Sphere of Control */}
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              Essa situação está no seu controle direto? *
+                            </label>
+                            <div className="grid grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setAnxietyForm({ ...anxietyForm, inControl: true })}
+                                className={`p-3 rounded-xl border text-xs font-semibold text-center transition-all ${
+                                  anxietyForm.inControl
+                                    ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400 font-bold'
+                                    : 'bg-[#2E3C2B]/5 border-border-ui text-text-muted hover:text-text-main'
+                                }`}
+                              >
+                                ✓ Sim, posso agir
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setAnxietyForm({ ...anxietyForm, inControl: false })}
+                                className={`p-3 rounded-xl border text-xs font-semibold text-center transition-all ${
+                                  !anxietyForm.inControl
+                                    ? 'bg-rose-500/20 border-rose-500 text-rose-400 font-bold'
+                                    : 'bg-[#2E3C2B]/5 border-border-ui text-text-muted hover:text-text-main'
+                                }`}
+                              >
+                                ✕ Não, foge do meu alcance
+                              </button>
+                            </div>
+                          </div>
+
+                          {anxietyForm.inControl ? (
+                            <div className="space-y-1.5">
+                              <label className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest pl-1">
+                                Qual pequeno passo você pode dar hoje para resolver?
+                              </label>
+                              <input
+                                placeholder="Ex: Mandar mensagem para fulano, organizar a planilha..."
+                                value={anxietyForm.actionPlan}
+                                onChange={(e) => setAnxietyForm({ ...anxietyForm, actionPlan: e.target.value })}
+                                className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-emerald-500"
+                              />
+                            </div>
+                          ) : (
+                            <div className="bg-orange-500/10 p-3 rounded-xl border border-orange-500/20 text-xs text-text-muted leading-relaxed">
+                              💡 <em>Dica terapêutica:</em> Quando algo está fora do nosso controle, a melhor estratégia é a aceitação radical e redirecionar a atenção para o presente.
+                            </div>
+                          )}
+
+                          <div className="flex justify-end gap-2 pt-2 border-t border-border-ui">
+                            <button
+                              type="button"
+                              onClick={() => setActiveModuleModal(null)}
+                              className="px-4 py-2.5 text-xs font-semibold text-text-muted hover:text-text-main"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={submittingModule}
+                              className="px-6 py-2.5 bg-orange-600 hover:bg-orange-500 text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                              {submittingModule ? <Loader2 className="animate-spin" size={13} /> : null}
+                              <span>Salvar Registro de Ansiedade</span>
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        /* ANXIETY DAILY EVOLUTION FORM */
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            handleSaveModuleEntry(
+                              'anxiety',
+                              {
+                                entryCategory: 'daily_evolution',
+                                anxietyLevel: anxietyForm.anxietyLevel,
+                                generalThoughts: anxietyForm.generalThoughts,
+                                dailyVictories: anxietyForm.dailyVictories
+                              },
+                              anxietyForm.notes || `Evolução Ansiedade: Tensão média ${anxietyForm.anxietyLevel}/10. Pensamentos: "${anxietyForm.generalThoughts || 'Não especificados'}".`,
+                              10 - anxietyForm.anxietyLevel
+                            );
+                          }}
+                          className="space-y-4 text-left"
+                        >
+                          {/* Average Tension Slider */}
+                          <div className="space-y-2 bg-[#2E3C2B]/5 p-3 rounded-xl border border-border-ui">
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
+                                1. Nível médio de ansiedade e tensão corporal de hoje
+                              </span>
+                              <span className="font-bold text-orange-400 bg-orange-500/20 px-2 py-0.5 rounded-full text-xs">
+                                {anxietyForm.anxietyLevel}/10
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="10"
+                              step="1"
+                              value={anxietyForm.anxietyLevel}
+                              onChange={(e) => setAnxietyForm({ ...anxietyForm, anxietyLevel: Number(e.target.value) })}
+                              className="w-full accent-orange-500 cursor-pointer"
+                            />
+                            <div className="flex justify-between text-[10px] text-text-muted px-1">
+                              <span>0 (Relaxado)</span>
+                              <span>5 (Tenso)</span>
+                              <span>10 (Hiperalerta)</span>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              2. Principais pensamentos ou preocupações recorrentes do dia
+                            </label>
+                            <textarea
+                              rows={3}
+                              placeholder="O que mais ficou martelando na sua cabeça durante o dia?"
+                              value={anxietyForm.generalThoughts}
+                              onChange={(e) => setAnxietyForm({ ...anxietyForm, generalThoughts: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-orange-500 resize-none"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              3. O que você fez que te ajudou a desacelerar ou acalmar? (Opcional)
+                            </label>
+                            <input
+                              placeholder="Ex: Fiz uma pausa, tomei água, fiz respiração lenta, conversei..."
+                              value={anxietyForm.dailyVictories}
+                              onChange={(e) => setAnxietyForm({ ...anxietyForm, dailyVictories: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-3 text-xs text-text-main outline-none focus:border-orange-500"
+                            />
+                          </div>
+
+                          <div className="flex justify-end gap-2 pt-2 border-t border-border-ui">
+                            <button
+                              type="button"
+                              onClick={() => setActiveModuleModal(null)}
+                              className="px-4 py-2.5 text-xs font-semibold text-text-muted hover:text-text-main"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={submittingModule}
+                              className="px-6 py-2.5 bg-orange-600 hover:bg-orange-500 text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                              {submittingModule ? <Loader2 className="animate-spin" size={13} /> : null}
+                              <span>Salvar Evolução Diária</span>
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* MODAL: SLEEP FORM */}
+                {activeModuleModal === 'sleep' && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+                    <div className="bg-card border border-border-ui rounded-[28px] max-w-lg w-full p-6 space-y-4 shadow-2xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto custom-scrollbar">
+                      <div className="flex items-center justify-between pb-3 border-b border-border-ui">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center">
+                            <Moon size={18} />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">Higiene do Sono</span>
+                            <h4 className="font-bold text-sm text-text-main">Registrar Noite de Sono</h4>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setActiveModuleModal(null)}
+                          className="p-1.5 text-text-muted hover:text-text-main rounded-lg hover:bg-white/5"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          handleSaveModuleEntry(
+                            'sleep',
+                            {
+                              bedTime: sleepForm.bedTime,
+                              wakeTime: sleepForm.wakeTime,
+                              sleepQuality: sleepForm.sleepQuality,
+                              awakenings: sleepForm.awakenings
+                            },
+                            sleepForm.notes || `Sono: Deitou às ${sleepForm.bedTime}, acordou às ${sleepForm.wakeTime}. Qualidade: ${sleepForm.sleepQuality}/5 estrelas.`,
+                            sleepForm.sleepQuality * 2
+                          );
+                        }}
+                        className="space-y-4 text-left"
+                      >
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              Que horas foi dormir?
+                            </label>
+                            <input
+                              type="time"
+                              required
+                              value={sleepForm.bedTime}
+                              onChange={(e) => setSleepForm({ ...sleepForm, bedTime: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-indigo-500"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                              Que horas levantou?
+                            </label>
+                            <input
+                              type="time"
+                              required
+                              value={sleepForm.wakeTime}
+                              onChange={(e) => setSleepForm({ ...sleepForm, wakeTime: e.target.value })}
+                              className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-indigo-500"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Sleep Quality Stars */}
+                        <div className="space-y-2 bg-[#2E3C2B]/5 p-3 rounded-xl border border-border-ui">
+                          <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
+                            Qualidade do Sono (Estrelas)
+                          </span>
+                          <div className="flex items-center gap-2 pt-1">
+                            {[1, 2, 3, 4, 5].map((star) => (
+                              <button
+                                key={star}
+                                type="button"
+                                onClick={() => setSleepForm({ ...sleepForm, sleepQuality: star })}
+                                className="p-1 text-amber-400 hover:scale-110 transition-transform"
+                              >
+                                <Star
+                                  size={24}
+                                  className={star <= sleepForm.sleepQuality ? 'fill-amber-400 text-amber-400' : 'text-text-muted/30'}
+                                />
+                              </button>
+                            ))}
+                            <span className="text-xs font-bold text-indigo-300 ml-2">
+                              {sleepForm.sleepQuality === 5 ? 'Excelente' : sleepForm.sleepQuality === 4 ? 'Bom' : sleepForm.sleepQuality === 3 ? 'Regular' : sleepForm.sleepQuality === 2 ? 'Ruim' : 'Péssimo'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                            Quantas vezes acordou durante a noite?
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="20"
+                            value={sleepForm.awakenings}
+                            onChange={(e) => setSleepForm({ ...sleepForm, awakenings: Number(e.target.value) })}
+                            className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-indigo-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                            Anotações sobre o sono ou sonhos (Opcional)
+                          </label>
+                          <textarea
+                            rows={2}
+                            placeholder="Sonhou com algo marcante? Tomou chá ou remédio para dormir?"
+                            value={sleepForm.notes}
+                            onChange={(e) => setSleepForm({ ...sleepForm, notes: e.target.value })}
+                            className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-indigo-500 resize-none"
+                          />
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-2 border-t border-border-ui">
+                          <button
+                            type="button"
+                            onClick={() => setActiveModuleModal(null)}
+                            className="px-4 py-2.5 text-xs font-semibold text-text-muted hover:text-text-main"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={submittingModule}
+                            className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center gap-1.5 disabled:opacity-50"
+                          >
+                            {submittingModule ? <Loader2 className="animate-spin" size={13} /> : null}
+                            <span>Salvar Diário do Sono</span>
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                )}
+
+                {/* MODAL: RPD FORM */}
+                {activeModuleModal === 'rpd' && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+                    <div className="bg-card border border-border-ui rounded-[28px] max-w-lg w-full p-6 space-y-4 shadow-2xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto custom-scrollbar">
+                      <div className="flex items-center justify-between pb-3 border-b border-border-ui">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-xl bg-sky-500/20 text-sky-400 flex items-center justify-center">
+                            <FileText size={18} />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold text-sky-400 uppercase tracking-wider">TCC Clássica</span>
+                            <h4 className="font-bold text-sm text-text-main">RPD - Registro de Pensamentos</h4>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setActiveModuleModal(null)}
+                          className="p-1.5 text-text-muted hover:text-text-main rounded-lg hover:bg-white/5"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          handleSaveModuleEntry(
+                            'rpd',
+                            {
+                              situation: rpdForm.situation,
+                              automaticThought: rpdForm.automaticThought,
+                              emotion: rpdForm.emotion,
+                              alternativeThought: rpdForm.alternativeThought
+                            },
+                            rpdForm.notes || `RPD: Situação "${rpdForm.situation}". Pensamento: "${rpdForm.automaticThought}". Alternativa: "${rpdForm.alternativeThought}".`,
+                            6
+                          );
+                        }}
+                        className="space-y-4 text-left"
+                      >
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                            1. Situação Gatilho *
+                          </label>
+                          <input
+                            required
+                            placeholder="O que estava acontecendo quando a emoção surgiu?"
+                            value={rpdForm.situation}
+                            onChange={(e) => setRpdForm({ ...rpdForm, situation: e.target.value })}
+                            className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-sky-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-amber-400 uppercase tracking-widest pl-1">
+                            2. Pensamento Automático *
+                          </label>
+                          <textarea
+                            required
+                            rows={2}
+                            placeholder="O que passou pela sua cabeça naquele exato momento?"
+                            value={rpdForm.automaticThought}
+                            onChange={(e) => setRpdForm({ ...rpdForm, automaticThought: e.target.value })}
+                            className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-amber-500 resize-none"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-rose-400 uppercase tracking-widest pl-1">
+                            3. Emoção Sentida *
+                          </label>
+                          <input
+                            required
+                            placeholder="Ex: Ansiedade (80%), Tristeza (70%), Raiva (50%)..."
+                            value={rpdForm.emotion}
+                            onChange={(e) => setRpdForm({ ...rpdForm, emotion: e.target.value })}
+                            className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-rose-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest pl-1">
+                            4. Pensamento Alternativo / Resposta Realista *
+                          </label>
+                          <textarea
+                            required
+                            rows={3}
+                            placeholder="Qual seria uma forma mais equilibrada e racional de enxergar essa situação?"
+                            value={rpdForm.alternativeThought}
+                            onChange={(e) => setRpdForm({ ...rpdForm, alternativeThought: e.target.value })}
+                            className="w-full bg-[#2E3C2B]/5 border border-border-ui rounded-xl px-4 py-2.5 text-xs text-text-main outline-none focus:border-emerald-500 resize-none"
+                          />
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-2 border-t border-border-ui">
+                          <button
+                            type="button"
+                            onClick={() => setActiveModuleModal(null)}
+                            className="px-4 py-2.5 text-xs font-semibold text-text-muted hover:text-text-main"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={submittingModule}
+                            className="px-6 py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center gap-1.5 disabled:opacity-50"
+                          >
+                            {submittingModule ? <Loader2 className="animate-spin" size={13} /> : null}
+                            <span>Salvar RPD</span>
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                )}
+
+                {/* MODAL / FORM: GENERAL DIARY CHECK-IN */}
+                {isAddingDiary && (
+                  <form onSubmit={handleAddDiaryEntry} className="bg-card border border-border-ui rounded-[24px] p-5 space-y-4 animate-in slide-in-from-top-3 duration-200">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Smile size={16} className="text-emerald-500" />
+                        <h4 className="font-bold text-xs uppercase tracking-widest text-[#2E3C2B]">Check-in de Humor & Diário</h4>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingDiary(false)}
+                        className="text-xs font-semibold text-text-muted hover:text-text-main"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+
+                    {/* Mood scale from 0 to 10 */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-[#2E3C2B]/60 uppercase tracking-widest pl-1">
+                        Como está seu humor hoje? (Nota de 0 a 10)
+                      </label>
+                      <div className="flex justify-between gap-1 overflow-x-auto py-1">
+                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((score) => {
+                          let btnColor = 'bg-[#2E3C2B]/5 border-[#2E3C2B]/10 text-[#2E3C2B]';
+                          if (newDiaryForm.mood === score) {
+                            if (score >= 8) btnColor = 'bg-emerald-500 border-emerald-500 text-white font-bold scale-105';
+                            else if (score >= 5) btnColor = 'bg-amber-500 border-amber-500 text-black font-bold scale-105';
+                            else btnColor = 'bg-rose-500 border-rose-500 text-white font-bold scale-105';
+                          }
+                          return (
+                            <button
+                              key={score}
+                              type="button"
+                              onClick={() => setNewDiaryForm({ ...newDiaryForm, mood: score })}
+                              className={`w-8 h-8 rounded-full border text-xs flex items-center justify-center shrink-0 transition-all ${btnColor}`}
+                            >
+                              {score}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-[#2E3C2B]/60 uppercase tracking-widest pl-1">
+                        Como está se sentindo? O que está acontecendo?
+                      </label>
+                      <textarea
+                        required
+                        rows={4}
+                        placeholder="Descreva aqui o que sentiu, pensou, ou eventos importantes da semana..."
+                        value={newDiaryForm.text}
+                        onChange={(e) => setNewDiaryForm({...newDiaryForm, text: e.target.value})}
+                        className="w-full bg-[#2E3C2B]/5 border border-[#2E3C2B]/10 rounded-xl px-4 py-3 text-xs text-[#2E3C2B] outline-none focus:border-primary resize-y"
+                      />
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        type="submit"
+                        disabled={submittingDiary}
+                        className="px-5 py-2.5 bg-primary hover:bg-primary/95 text-white font-semibold text-xs rounded-xl transition-all shadow-md flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        {submittingDiary ? <Loader2 className="animate-spin" size={12} /> : null}
+                        <span>Enviar para Psicólogo</span>
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* Patient Diary & Clinical History List */}
+                <div className="space-y-3 pt-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <h4 className="font-bold text-xs text-text-muted uppercase tracking-widest pl-1">
+                      Meus Registros ({diaryEntries.length})
+                    </h4>
+
+                    {/* Filter Pills */}
+                    {diaryEntries.length > 0 && (
+                      <div className="flex items-center gap-1 overflow-x-auto pb-1">
+                        {[
+                          { key: 'all', label: 'Todos' },
+                          { key: 'toc', label: 'TOC' },
+                          { key: 'panic', label: 'Pânico' },
+                          { key: 'depression', label: 'Ativação' },
+                          { key: 'anxiety', label: 'Ansiedade' },
+                          { key: 'sleep', label: 'Sono' },
+                          { key: 'rpd', label: 'RPD' },
+                          { key: 'habits', label: 'Hábitos' },
+                          { key: 'general_diary', label: 'Humor' }
+                        ].map(f => (
+                          <button
+                            key={f.key}
+                            type="button"
+                            onClick={() => setPatientHistoryFilter(f.key)}
+                            className={`px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all ${
+                              patientHistoryFilter === f.key
+                                ? 'bg-[#2E3C2B] text-white shadow-xs'
+                                : 'bg-[#2E3C2B]/5 text-text-muted hover:text-text-main'
+                            }`}
+                          >
+                            {f.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {diaryError ? (
+                    <div className="bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl p-3 flex items-start gap-2.5 text-xs">
+                      <AlertCircle className="shrink-0 mt-0.5" size={15} />
+                      <span>{diaryError}</span>
+                    </div>
+                  ) : loadingDiary ? (
+                    <div className="flex justify-center py-8">
+                      <Loader2 className="animate-spin text-primary" size={24} />
+                    </div>
+                  ) : (() => {
+                    const filtered = diaryEntries.filter(entry => 
+                      patientHistoryFilter === 'all' ? true : (entry.moduleType || 'general_diary') === patientHistoryFilter
+                    );
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="bg-card border border-border-ui rounded-2xl p-8 text-center text-xs text-text-muted">
+                          {diaryEntries.length === 0 
+                            ? 'Você ainda não possui registros. Use os botões acima para fazer seu primeiro registro!'
+                            : 'Nenhum registro encontrado para este filtro.'}
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-3">
+                        {filtered.map(entry => {
+                          const mod = entry.moduleType || 'general_diary';
+                          const isEvolution = entry.data?.entryCategory === 'daily_evolution';
+
+                          return (
+                            <div key={entry.id} className="bg-card border border-border-ui rounded-[20px] p-4 space-y-3 hover:shadow-sm transition-all">
+                              
+                              {/* Header */}
+                              <div className="flex items-center justify-between gap-4">
+                                <div className="flex items-center gap-2">
+                                  {mod === 'toc' && (
+                                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/15 text-purple-600">
+                                      <Brain size={11} />
+                                      <span>TOC</span>
+                                    </span>
+                                  )}
+                                  {mod === 'panic' && (
+                                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/15 text-rose-600">
+                                      <Zap size={11} />
+                                      <span>Pânico</span>
+                                    </span>
+                                  )}
+                                  {mod === 'depression' && (
+                                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-600">
+                                      <Activity size={11} />
+                                      <span>Ativação</span>
+                                    </span>
+                                  )}
+                                  {mod === 'anxiety' && (
+                                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-500/15 text-orange-600">
+                                      <Heart size={11} />
+                                      <span>Ansiedade</span>
+                                    </span>
+                                  )}
+                                  {mod === 'sleep' && (
+                                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/15 text-indigo-600">
+                                      <Moon size={11} />
+                                      <span>Sono</span>
+                                    </span>
+                                  )}
+                                  {mod === 'rpd' && (
+                                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/15 text-sky-600">
+                                      <FileText size={11} />
+                                      <span>RPD</span>
+                                    </span>
+                                  )}
+                                  {mod === 'habits' && (
+                                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/15 text-teal-600">
+                                      <Target size={11} />
+                                      <span>Hábitos</span>
+                                    </span>
+                                  )}
+                                  {mod === 'general_diary' && (
+                                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-600">
+                                      <Smile size={11} />
+                                      <span>Humor</span>
+                                    </span>
+                                  )}
+
+                                  {/* Subcategory Pill */}
+                                  {isEvolution && (
+                                    <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-emerald-500/10 text-emerald-600 flex items-center gap-1">
+                                      <TrendingUp size={10} />
+                                      <span>Evolução Diária</span>
+                                    </span>
+                                  )}
+
+                                  <div className="flex items-center gap-1.5 text-xs text-text-muted">
+                                    <Calendar size={12} />
+                                    <span>{entry.date.split('-').reverse().join('/')}</span>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  {mod === 'toc' && entry.data?.anxietyLevel !== undefined && !isEvolution && (
+                                    <span className="text-[10px] font-bold text-purple-600 bg-purple-500/10 px-2 py-0.5 rounded-full">
+                                      Ansiedade: {entry.data.anxietyLevel}/10
+                                    </span>
+                                  )}
+                                  {mod === 'toc' && isEvolution && entry.data?.dailyControlScore !== undefined && (
+                                    <span className="text-[10px] font-bold text-purple-600 bg-purple-500/10 px-2 py-0.5 rounded-full">
+                                      Controle: {entry.data.dailyControlScore}/10
+                                    </span>
+                                  )}
+                                  {mod === 'panic' && entry.data?.panicIntensity !== undefined && !isEvolution && (
+                                    <span className="text-[10px] font-bold text-rose-600 bg-rose-500/10 px-2 py-0.5 rounded-full">
+                                      Intensidade: {entry.data.panicIntensity}/10
+                                    </span>
+                                  )}
+                                  {mod === 'panic' && isEvolution && entry.data?.anticipatoryAnxiety !== undefined && (
+                                    <span className="text-[10px] font-bold text-rose-600 bg-rose-500/10 px-2 py-0.5 rounded-full">
+                                      Medo Antecipatório: {entry.data.anticipatoryAnxiety}/10
+                                    </span>
+                                  )}
+                                  {mod === 'sleep' && entry.data?.sleepQuality && (
+                                    <span className="text-[10px] font-bold text-indigo-600 bg-indigo-500/10 px-2 py-0.5 rounded-full">
+                                      ⭐ {entry.data.sleepQuality}/5
+                                    </span>
+                                  )}
+                                  {(mod === 'general_diary' || !mod) && (
+                                    <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${getMoodColor(entry.mood)}`}>
+                                      Humor: {entry.mood}/10
+                                    </div>
+                                  )}
+
+                                  <button
+                                    onClick={() => handleDeleteDiaryEntry(entry.id)}
+                                    className="text-text-muted hover:text-red-500 transition-all p-1"
+                                    title="Excluir Registro"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Specialized Content */}
+                              {/* TOC Display */}
+                              {mod === 'toc' && entry.data && (
+                                <div className="space-y-1 text-xs bg-[#2E3C2B]/5 rounded-xl p-3">
+                                  {entry.data.trigger && (
+                                    <p><strong>Gatilho:</strong> {entry.data.trigger}</p>
+                                  )}
+                                  {entry.data.resisted && (
+                                    <p>
+                                      <strong>Desfecho:</strong>{' '}
+                                      {entry.data.resisted === 'yes' ? '✅ Conseguiu não fazer o ritual (Resistiu)' : entry.data.resisted === 'delayed' ? `⏳ Adiou por ${entry.data.delayMinutes || 'alguns'} minutos` : '⚠️ Realizou o ritual'}
+                                    </p>
+                                  )}
+                                  {entry.data.dailyVictories && (
+                                    <p className="text-emerald-600 font-semibold">
+                                      <strong>Vitória do dia:</strong> {entry.data.dailyVictories}
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Panic Display */}
+                              {mod === 'panic' && entry.data && (
+                                <div className="space-y-1.5 text-xs bg-[#2E3C2B]/5 rounded-xl p-3">
+                                  {entry.data.symptoms && entry.data.symptoms.length > 0 && (
+                                    <div className="flex flex-wrap gap-1">
+                                      {entry.data.symptoms.map((s, i) => (
+                                        <span key={i} className="px-2 py-0.5 bg-rose-500/10 text-rose-600 rounded-md text-[10px] font-medium">
+                                          {s}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {entry.data.exposureSituation && (
+                                    <p className="text-text-main">
+                                      <strong className="text-rose-600">Enfrentamento / Exposição:</strong> {entry.data.exposureSituation}
+                                    </p>
+                                  )}
+                                  {entry.data.dailyVictories && (
+                                    <p className="text-emerald-600 font-semibold">
+                                      <strong>Vitória do dia:</strong> {entry.data.dailyVictories}
+                                    </p>
+                                  )}
+                                  {entry.data.copingUsed && (
+                                    <p className="text-text-muted">
+                                      <strong>Autorregulação usada:</strong> {entry.data.copingUsed}
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Anxiety Display */}
+                              {mod === 'anxiety' && entry.data && (
+                                <div className="space-y-1 text-xs bg-[#2E3C2B]/5 rounded-xl p-3">
+                                  {entry.data.concern && (
+                                    <p><strong>Preocupação:</strong> {entry.data.concern}</p>
+                                  )}
+                                  {entry.data.generalThoughts && (
+                                    <p><strong>Pensamentos:</strong> {entry.data.generalThoughts}</p>
+                                  )}
+                                  {entry.data.dailyVictories && (
+                                    <p className="text-emerald-600"><strong>O que ajudou:</strong> {entry.data.dailyVictories}</p>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Depression Display */}
+                              {mod === 'depression' && entry.data && (
+                                <div className="space-y-1 text-xs bg-[#2E3C2B]/5 rounded-xl p-3">
+                                  {entry.data.activity && (
+                                    <p><strong>Atividade:</strong> {entry.data.activity}</p>
+                                  )}
+                                  {entry.data.generalThoughts && (
+                                    <p><strong>Pensamentos do dia:</strong> {entry.data.generalThoughts}</p>
+                                  )}
+                                </div>
+                              )}
+
+                              {entry.text && (
+                                <p className="text-xs text-text-main leading-relaxed whitespace-pre-wrap pl-1 border-l-2 border-primary/20">
+                                  {entry.text}
+                                </p>
+                              )}
+
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* SAFETY PLAN TAB */}
           {activeTab === 'safety' && hasSafetyPlan && (

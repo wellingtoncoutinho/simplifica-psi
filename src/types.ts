@@ -37,6 +37,7 @@ export interface Patient {
   recurrence?: 'Semanal' | 'Quinzenal' | 'Mensal' | 'Nenhuma';
   recurrenceStart?: string;
   modality?: 'Online' | 'Presencial';
+  meetingLink?: string;
   // Contrato Terapêutico
   contractSigned?: boolean;
   contractSignedAt?: string;
@@ -226,7 +227,33 @@ export interface PatientPortal {
   contractManualOverride?: boolean;
   contractManualNotes?: string;
 
+  // Módulos Clínicos & Monitoramento de Sintomas Personalizável
+  clinicalModules?: ClinicalModulesConfig;
+
   updatedAt: string;
+}
+
+export type ClinicalModuleKey = 
+  | 'general_diary'
+  | 'toc'
+  | 'panic'
+  | 'depression'
+  | 'anxiety'
+  | 'sleep'
+  | 'rpd'
+  | 'habits';
+
+export interface ClinicalModulesConfig {
+  general_diary?: boolean;
+  toc?: boolean;
+  panic?: boolean;
+  depression?: boolean;
+  anxiety?: boolean;
+  sleep?: boolean;
+  rpd?: boolean;
+  habits?: boolean;
+  customHabits?: string[];
+  updatedAt?: string;
 }
 
 export interface PdfLibraryItem {
@@ -238,6 +265,54 @@ export interface PdfLibraryItem {
   createdAt: string;
 }
 
+export interface DiaryEntryData {
+  // Categoria do registro (episódio agudo vs evolução diária/pensamentos)
+  entryCategory?: 'episode' | 'daily_evolution';
+
+  // TOC
+  trigger?: string;
+  anxietyLevel?: number;
+  compulsion?: string;
+  resisted?: 'yes' | 'delayed' | 'no';
+  delayMinutes?: number;
+  dailyControlScore?: number; // Para evolução diária
+
+  // Pânico & Agorafobia
+  panicIntensity?: number;
+  symptoms?: string[];
+  copingUsed?: string;
+  anticipatoryAnxiety?: number; // Ansiedade antecipatória do dia (0-10)
+  exposureSituation?: string;   // Enfrentamento de situação desafiadora
+  dailyVictories?: string;      // Vitórias/conquistas do dia
+  generalThoughts?: string;     // Pensamentos e reflexões
+
+  // Depressão / Ativação Comportamental
+  activity?: string;
+  pleasureLevel?: number;
+  masteryLevel?: number;
+  energyLevel?: number;
+
+  // Ansiedade & Preocupações
+  concern?: string;
+  inControl?: boolean;
+  actionPlan?: string;
+
+  // Sono
+  bedTime?: string;
+  wakeTime?: string;
+  sleepQuality?: number;
+  awakenings?: number;
+
+  // RPD (TCC)
+  situation?: string;
+  automaticThought?: string;
+  emotion?: string;
+  alternativeThought?: string;
+
+  // Hábitos
+  completedHabits?: string[];
+}
+
 export interface DiaryEntry {
   id: string;
   patientId: string;
@@ -246,5 +321,7 @@ export interface DiaryEntry {
   mood: number;
   text: string;
   createdAt: string;
+  moduleType?: ClinicalModuleKey;
+  data?: DiaryEntryData;
 }
 

@@ -29,25 +29,39 @@ import {
   AlertCircle, 
   FileDown, 
   ArrowRight, 
-  ExternalLink,
-  CheckCircle2,
-  PenTool,
-  Eye,
-  Download,
-  FileCheck,
-  Undo2,
-  X
+  ExternalLink, 
+  CheckCircle2, 
+  PenTool, 
+  Eye, 
+  Download, 
+  FileCheck, 
+  Undo2, 
+  X,
+  Sliders,
+  Activity,
+  Moon,
+  Heart,
+  Brain,
+  Zap,
+  Target,
+  Sparkles,
+  Filter,
+  Smile,
+  HelpCircle,
+  CheckSquare,
+  Clock,
+  TrendingUp
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Patient, PatientPortal, PdfLibraryItem, DiaryEntry } from '../types';
+import { Patient, PatientPortal, PdfLibraryItem, DiaryEntry, ClinicalModuleKey, ClinicalModulesConfig, DiaryEntryData } from '../types';
 import { DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE, fillContractTemplate } from '../utils/contractDefaults';
 
 interface PsychologistPatientPortalViewProps {
   user: any;
   patients: Patient[];
   initialPatientId?: string;
-  initialSubTab?: 'pdfs' | 'safety' | 'diary' | 'contract' | 'access';
+  initialSubTab?: 'pdfs' | 'safety' | 'diary' | 'contract' | 'access' | 'modules';
 }
 
 export default function PsychologistPatientPortalView({ 
@@ -58,7 +72,7 @@ export default function PsychologistPatientPortalView({
 }: PsychologistPatientPortalViewProps) {
   const [selectedPatientId, setSelectedPatientId] = useState<string>(initialPatientId || '');
   const [portalData, setPortalData] = useState<PatientPortal | null>(null);
-  const [activeSubTab, setActiveSubTab] = useState<'pdfs' | 'safety' | 'diary' | 'contract' | 'access'>(initialSubTab || 'pdfs');
+  const [activeSubTab, setActiveSubTab] = useState<'pdfs' | 'safety' | 'diary' | 'contract' | 'access' | 'modules'>(initialSubTab || 'modules');
   const [loadingPortal, setLoadingPortal] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
 
@@ -71,6 +85,11 @@ export default function PsychologistPatientPortalView({
   const [markingManualModal, setMarkingManualModal] = useState<boolean>(false);
   const [manualNote, setManualNote] = useState<string>('Assinado fisicamente em consultório');
   const [copiedContractText, setCopiedContractText] = useState<boolean>(false);
+
+  // Clinical Modules & Habit Management State
+  const [savingModules, setSavingModules] = useState<boolean>(false);
+  const [newCustomHabit, setNewCustomHabit] = useState<string>('');
+  const [diaryModuleFilter, setDiaryModuleFilter] = useState<string>('all');
 
   // PDF Library State
   const [pdfLibrary, setPdfLibrary] = useState<PdfLibraryItem[]>([]);
@@ -506,6 +525,84 @@ export default function PsychologistPatientPortalView({
     }
   };
 
+  const handleToggleModule = async (key: ClinicalModuleKey) => {
+    if (!portalData) return;
+    const current = portalData.clinicalModules || { general_diary: true };
+    const updated: ClinicalModulesConfig = {
+      ...current,
+      [key]: !current[key],
+      updatedAt: new Date().toISOString()
+    };
+    setSavingModules(true);
+    try {
+      const portalRef = doc(db, 'patient_portal', portalData.patientId);
+      await updateDoc(portalRef, {
+        clinicalModules: updated,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error("Erro ao atualizar módulo clínico:", err);
+      alert("Erro ao salvar configuração do módulo.");
+    } finally {
+      setSavingModules(false);
+    }
+  };
+
+  const handleAddCustomHabit = async () => {
+    if (!portalData || !newCustomHabit.trim()) return;
+    const current = portalData.clinicalModules || { general_diary: true };
+    const currentHabits = current.customHabits || [];
+    if (currentHabits.includes(newCustomHabit.trim())) {
+      alert("Este hábito já está na lista.");
+      return;
+    }
+    const updated: ClinicalModulesConfig = {
+      ...current,
+      habits: true,
+      customHabits: [...currentHabits, newCustomHabit.trim()],
+      updatedAt: new Date().toISOString()
+    };
+    setSavingModules(true);
+    try {
+      const portalRef = doc(db, 'patient_portal', portalData.patientId);
+      await updateDoc(portalRef, {
+        clinicalModules: updated,
+        updatedAt: new Date().toISOString()
+      });
+      setNewCustomHabit('');
+    } catch (err) {
+      console.error("Erro ao adicionar hábito:", err);
+      alert("Erro ao adicionar hábito.");
+    } finally {
+      setSavingModules(false);
+    }
+  };
+
+  const handleRemoveCustomHabit = async (habitIndex: number) => {
+    if (!portalData) return;
+    const current = portalData.clinicalModules || { general_diary: true };
+    const currentHabits = current.customHabits || [];
+    const updatedHabits = currentHabits.filter((_, idx) => idx !== habitIndex);
+    const updated: ClinicalModulesConfig = {
+      ...current,
+      customHabits: updatedHabits,
+      updatedAt: new Date().toISOString()
+    };
+    setSavingModules(true);
+    try {
+      const portalRef = doc(db, 'patient_portal', portalData.patientId);
+      await updateDoc(portalRef, {
+        clinicalModules: updated,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error("Erro ao remover hábito:", err);
+      alert("Erro ao remover hábito.");
+    } finally {
+      setSavingModules(false);
+    }
+  };
+
   const handleSaveSafetyPlan = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!portalData) return;
@@ -754,6 +851,28 @@ export default function PsychologistPatientPortalView({
             {/* Sub-tab Switcher */}
             <div className="flex border-b border-white/5 pb-1 gap-2 overflow-x-auto">
               <button
+                onClick={() => setActiveSubTab('modules')}
+                className={`px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-lg transition-all whitespace-nowrap ${
+                  activeSubTab === 'modules' ? 'bg-primary/10 text-primary border border-primary/20' : 'text-text-muted hover:text-text-main'
+                }`}
+              >
+                <div className="flex items-center gap-1.5">
+                  <Sliders size={14} />
+                  <span>Módulos & Tarefas</span>
+                </div>
+              </button>
+              <button
+                onClick={() => setActiveSubTab('diary')}
+                className={`px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-lg transition-all whitespace-nowrap ${
+                  activeSubTab === 'diary' ? 'bg-primary/10 text-primary border border-primary/20' : 'text-text-muted hover:text-text-main'
+                }`}
+              >
+                <div className="flex items-center gap-1.5">
+                  <Calendar size={14} />
+                  <span>Diários Recebidos ({diaryEntries.length})</span>
+                </div>
+              </button>
+              <button
                 onClick={() => setActiveSubTab('pdfs')}
                 className={`px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-lg transition-all whitespace-nowrap ${
                   activeSubTab === 'pdfs' ? 'bg-primary/10 text-primary border border-primary/20' : 'text-text-muted hover:text-text-main'
@@ -773,17 +892,6 @@ export default function PsychologistPatientPortalView({
                 <div className="flex items-center gap-1.5">
                   <ShieldAlert size={14} />
                   <span>Plano de Segurança</span>
-                </div>
-              </button>
-              <button
-                onClick={() => setActiveSubTab('diary')}
-                className={`px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-lg transition-all whitespace-nowrap ${
-                  activeSubTab === 'diary' ? 'bg-primary/10 text-primary border border-primary/20' : 'text-text-muted hover:text-text-main'
-                }`}
-              >
-                <div className="flex items-center gap-1.5">
-                  <Calendar size={14} />
-                  <span>Diários Recebidos ({diaryEntries.length})</span>
                 </div>
               </button>
               <button
@@ -1098,51 +1206,918 @@ export default function PsychologistPatientPortalView({
                 </form>
               )}
 
-              {/* Diary Entries Received */}
+              {/* Clinical Modules Prescription */}
+              {activeSubTab === 'modules' && (
+                <div className="space-y-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Sliders className="text-primary" size={18} />
+                        <h4 className="font-bold text-sm text-text-main">Módulos & Acompanhamento Clínico</h4>
+                      </div>
+                      <p className="text-xs text-text-muted mt-0.5">
+                        Escolha quais ferramentas de automonitoramento estarão ativas na Área do Paciente.
+                      </p>
+                    </div>
+                    {savingModules && (
+                      <div className="flex items-center gap-1.5 text-xs text-primary font-medium animate-pulse">
+                        <Loader2 className="animate-spin" size={13} />
+                        <span>Salvando alterações...</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Modules Cards Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    
+                    {/* 1. General Mood Diary */}
+                    {(() => {
+                      const isActive = portalData?.clinicalModules?.general_diary ?? true;
+                      return (
+                        <div className={`p-4 rounded-2xl border transition-all ${
+                          isActive 
+                            ? 'bg-emerald-500/10 border-emerald-500/35 shadow-xs' 
+                            : 'bg-card border-border-ui'
+                        }`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                                <Smile size={18} />
+                              </div>
+                              <div>
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">Autocuidado</span>
+                                <h5 className="font-bold text-xs text-text-main">Check-in de Humor & Diário Livre</h5>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-bold ${isActive ? 'text-emerald-500' : 'text-text-muted'}`}>
+                                {isActive ? 'Ativo' : 'Desativado'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleModule('general_diary')}
+                                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 transition-colors duration-200 ease-in-out focus:outline-none shadow-xs ${
+                                  isActive 
+                                    ? 'bg-emerald-500 border-emerald-500' 
+                                    : 'bg-gray-300 dark:bg-gray-700 border-gray-400 dark:border-gray-500'
+                                }`}
+                              >
+                                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                                  isActive ? 'translate-x-5' : 'translate-x-0'
+                                }`} />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-[11px] text-text-muted mt-2.5 leading-relaxed">
+                            Permite ao paciente fazer check-in diário com escala de humor (1 a 10) e anotações livres de sentimentos.
+                          </p>
+                        </div>
+                      );
+                    })()}
+
+                    {/* 2. TOC & ERP */}
+                    {(() => {
+                      const isActive = !!portalData?.clinicalModules?.toc;
+                      return (
+                        <div className={`p-4 rounded-2xl border transition-all ${
+                          isActive 
+                            ? 'bg-purple-500/10 border-purple-500/35 shadow-xs' 
+                            : 'bg-card border-border-ui'
+                        }`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-9 h-9 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center shrink-0">
+                                <Brain size={18} />
+                              </div>
+                              <div>
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400">EPR & Obsessões</span>
+                                <h5 className="font-bold text-xs text-text-main">Monitor de TOC & Rituais</h5>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-bold ${isActive ? 'text-purple-400' : 'text-text-muted'}`}>
+                                {isActive ? 'Ativo' : 'Desativado'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleModule('toc')}
+                                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 transition-colors duration-200 ease-in-out focus:outline-none shadow-xs ${
+                                  isActive 
+                                    ? 'bg-purple-600 border-purple-600' 
+                                    : 'bg-gray-300 dark:bg-gray-700 border-gray-400 dark:border-gray-500'
+                                }`}
+                              >
+                                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                                  isActive ? 'translate-x-5' : 'translate-x-0'
+                                }`} />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-[11px] text-text-muted mt-2.5 leading-relaxed">
+                            Exposição e Prevenção de Resposta: registro de gatilhos, intensidade da ansiedade (0-10), compulsão e taxa de prevenção/adiamento.
+                          </p>
+                        </div>
+                      );
+                    })()}
+
+                    {/* 3. Panic & Crises */}
+                    {(() => {
+                      const isActive = !!portalData?.clinicalModules?.panic;
+                      return (
+                        <div className={`p-4 rounded-2xl border transition-all ${
+                          isActive 
+                            ? 'bg-rose-500/10 border-rose-500/35 shadow-xs' 
+                            : 'bg-card border-border-ui'
+                        }`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-9 h-9 rounded-xl bg-rose-500/20 text-rose-400 flex items-center justify-center shrink-0">
+                                <Zap size={18} />
+                              </div>
+                              <div>
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-rose-400">Agorafobia & Pânico</span>
+                                <h5 className="font-bold text-xs text-text-main">Diário de Crises de Pânico</h5>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-bold ${isActive ? 'text-rose-400' : 'text-text-muted'}`}>
+                                {isActive ? 'Ativo' : 'Desativado'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleModule('panic')}
+                                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 transition-colors duration-200 ease-in-out focus:outline-none shadow-xs ${
+                                  isActive 
+                                    ? 'bg-rose-600 border-rose-600' 
+                                    : 'bg-gray-300 dark:bg-gray-700 border-gray-400 dark:border-gray-500'
+                                }`}
+                              >
+                                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                                  isActive ? 'translate-x-5' : 'translate-x-0'
+                                }`} />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-[11px] text-text-muted mt-2.5 leading-relaxed">
+                            Registro imediato de episódios ansiosos: seleção de sintomas corporais em tags rápidas, intensidade e ferramenta de alívio usada.
+                          </p>
+                        </div>
+                      );
+                    })()}
+
+                    {/* 4. Depression Behavioral Activation */}
+                    {(() => {
+                      const isActive = !!portalData?.clinicalModules?.depression;
+                      return (
+                        <div className={`p-4 rounded-2xl border transition-all ${
+                          isActive 
+                            ? 'bg-amber-500/10 border-amber-500/35 shadow-xs' 
+                            : 'bg-card border-border-ui'
+                        }`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
+                                <Activity size={18} />
+                              </div>
+                              <div>
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Depressão</span>
+                                <h5 className="font-bold text-xs text-text-main">Ativação Comportamental</h5>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-bold ${isActive ? 'text-amber-400' : 'text-text-muted'}`}>
+                                {isActive ? 'Ativo' : 'Desativado'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleModule('depression')}
+                                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 transition-colors duration-200 ease-in-out focus:outline-none shadow-xs ${
+                                  isActive 
+                                    ? 'bg-amber-600 border-amber-600' 
+                                    : 'bg-gray-300 dark:bg-gray-700 border-gray-400 dark:border-gray-500'
+                                }`}
+                              >
+                                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                                  isActive ? 'translate-x-5' : 'translate-x-0'
+                                }`} />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-[11px] text-text-muted mt-2.5 leading-relaxed">
+                            Registro de atividades cotidianas com pontuação dupla de Prazer e Maestria/Dever Cumprido (0 a 10) para combater a desmotivação.
+                          </p>
+                        </div>
+                      );
+                    })()}
+
+                    {/* 5. Anxiety & Worries */}
+                    {(() => {
+                      const isActive = !!portalData?.clinicalModules?.anxiety;
+                      return (
+                        <div className={`p-4 rounded-2xl border transition-all ${
+                          isActive 
+                            ? 'bg-orange-500/10 border-orange-500/35 shadow-xs' 
+                            : 'bg-card border-border-ui'
+                        }`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-9 h-9 rounded-xl bg-orange-500/20 text-orange-400 flex items-center justify-center shrink-0">
+                                <Heart size={18} />
+                              </div>
+                              <div>
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-orange-400">TAG & Estresse</span>
+                                <h5 className="font-bold text-xs text-text-main">Termômetro de Ansiedade & Preocupações</h5>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-bold ${isActive ? 'text-orange-400' : 'text-text-muted'}`}>
+                                {isActive ? 'Ativo' : 'Desativado'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleModule('anxiety')}
+                                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 transition-colors duration-200 ease-in-out focus:outline-none shadow-xs ${
+                                  isActive 
+                                    ? 'bg-orange-600 border-orange-600' 
+                                    : 'bg-gray-300 dark:bg-gray-700 border-gray-400 dark:border-gray-500'
+                                }`}
+                              >
+                                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                                  isActive ? 'translate-x-5' : 'translate-x-0'
+                                }`} />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-[11px] text-text-muted mt-2.5 leading-relaxed">
+                            Mapeamento de preocupações diárias, separação em 'No meu controle' vs 'Fora de controle' e pequenos planos de ação.
+                          </p>
+                        </div>
+                      );
+                    })()}
+
+                    {/* 6. Sleep Diary */}
+                    {(() => {
+                      const isActive = !!portalData?.clinicalModules?.sleep;
+                      return (
+                        <div className={`p-4 rounded-2xl border transition-all ${
+                          isActive 
+                            ? 'bg-indigo-500/10 border-indigo-500/35 shadow-xs' 
+                            : 'bg-card border-border-ui'
+                        }`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-9 h-9 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+                                <Moon size={18} />
+                              </div>
+                              <div>
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">Insônia</span>
+                                <h5 className="font-bold text-xs text-text-main">Diário do Sono & Descanso</h5>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-bold ${isActive ? 'text-indigo-400' : 'text-text-muted'}`}>
+                                {isActive ? 'Ativo' : 'Desativado'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleModule('sleep')}
+                                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 transition-colors duration-200 ease-in-out focus:outline-none shadow-xs ${
+                                  isActive 
+                                    ? 'bg-indigo-600 border-indigo-600' 
+                                    : 'bg-gray-300 dark:bg-gray-700 border-gray-400 dark:border-gray-500'
+                                }`}
+                              >
+                                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                                  isActive ? 'translate-x-5' : 'translate-x-0'
+                                }`} />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-[11px] text-text-muted mt-2.5 leading-relaxed">
+                            Horários de dormir/acordar, tempo para adormecer, despertares noturnos e avaliação subjetiva da qualidade (1 a 5 estrelas).
+                          </p>
+                        </div>
+                      );
+                    })()}
+
+                    {/* 7. RPD TCC */}
+                    {(() => {
+                      const isActive = !!portalData?.clinicalModules?.rpd;
+                      return (
+                        <div className={`p-4 rounded-2xl border transition-all ${
+                          isActive 
+                            ? 'bg-sky-500/10 border-sky-500/35 shadow-xs' 
+                            : 'bg-card border-border-ui'
+                        }`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-9 h-9 rounded-xl bg-sky-500/20 text-sky-400 flex items-center justify-center shrink-0">
+                                <FileText size={18} />
+                              </div>
+                              <div>
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-sky-400">TCC Clássica</span>
+                                <h5 className="font-bold text-xs text-text-main">RPD Digital (Registro de Pensamentos)</h5>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-bold ${isActive ? 'text-sky-400' : 'text-text-muted'}`}>
+                                {isActive ? 'Ativo' : 'Desativado'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleModule('rpd')}
+                                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 transition-colors duration-200 ease-in-out focus:outline-none shadow-xs ${
+                                  isActive 
+                                    ? 'bg-sky-600 border-sky-600' 
+                                    : 'bg-gray-300 dark:bg-gray-700 border-gray-400 dark:border-gray-500'
+                                }`}
+                              >
+                                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                                  isActive ? 'translate-x-5' : 'translate-x-0'
+                                }`} />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-[11px] text-text-muted mt-2.5 leading-relaxed">
+                            Estrutura terapêutica de TCC: Situação ➔ Pensamento Automático ➔ Emoção Sentida ➔ Reestruturação com Pensamento Alternativo.
+                          </p>
+                        </div>
+                      );
+                    })()}
+
+                    {/* 8. Habits & Routines */}
+                    {(() => {
+                      const isActive = !!portalData?.clinicalModules?.habits;
+                      const customHabits = portalData?.clinicalModules?.customHabits || [
+                        'Tomar medicação prescrita no horário',
+                        'Caminhada ou atividade física (15-30 min)',
+                        'Higiene do sono (desligar telas às 22h)'
+                      ];
+                      return (
+                        <div className={`p-4 rounded-2xl border transition-all md:col-span-2 ${
+                          isActive 
+                            ? 'bg-teal-500/10 border-teal-500/35 shadow-xs' 
+                            : 'bg-card border-border-ui'
+                        }`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-9 h-9 rounded-xl bg-teal-500/20 text-teal-400 flex items-center justify-center shrink-0">
+                                <Target size={18} />
+                              </div>
+                              <div>
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-teal-400">TDAH & Rotina</span>
+                                <h5 className="font-bold text-xs text-text-main">Metas & Hábitos Semanais</h5>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-bold ${isActive ? 'text-teal-400' : 'text-text-muted'}`}>
+                                {isActive ? 'Ativo' : 'Desativado'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleModule('habits')}
+                                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 transition-colors duration-200 ease-in-out focus:outline-none shadow-xs ${
+                                  isActive 
+                                    ? 'bg-teal-600 border-teal-600' 
+                                    : 'bg-gray-300 dark:bg-gray-700 border-gray-400 dark:border-gray-500'
+                                }`}
+                              >
+                                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                                  isActive ? 'translate-x-5' : 'translate-x-0'
+                                }`} />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-[11px] text-text-muted mt-2.5 leading-relaxed">
+                            Checklist diário com hábitos prescritos pelo psicólogo para acompanhamento de rotina e compromisso.
+                          </p>
+
+                          {/* Custom Habits Management when active */}
+                          {isActive && (
+                            <div className="mt-4 pt-4 border-t border-teal-500/20 space-y-3">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Hábitos Prescritos ({customHabits.length})</span>
+                              </div>
+
+                              <div className="space-y-2">
+                                {customHabits.map((habit, idx) => (
+                                  <div key={idx} className="flex items-center justify-between gap-2 bg-card/60 border border-teal-500/20 rounded-xl px-3 py-2 text-xs text-text-main">
+                                    <div className="flex items-center gap-2">
+                                      <CheckSquare size={14} className="text-teal-400 shrink-0" />
+                                      <span>{habit}</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveCustomHabit(idx)}
+                                      className="text-text-muted hover:text-red-400 p-1 transition-all"
+                                      title="Remover Hábito"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+
+                              {/* Add Habit Form */}
+                              <div className="flex gap-2 pt-1">
+                                <input
+                                  type="text"
+                                  placeholder="Novo hábito (Ex: Respiração guiada 5 min)..."
+                                  value={newCustomHabit}
+                                  onChange={(e) => setNewCustomHabit(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCustomHabit(); }}}
+                                  className="flex-1 bg-card border border-border-ui rounded-xl px-3 py-2 text-xs text-text-main outline-none focus:border-primary"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={handleAddCustomHabit}
+                                  disabled={!newCustomHabit.trim()}
+                                  className="px-3.5 py-2 bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs rounded-xl transition-all shadow-sm disabled:opacity-40 flex items-center gap-1"
+                                >
+                                  <Plus size={13} />
+                                  <span>Adicionar</span>
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                  </div>
+                </div>
+              )}
+
+              {/* Diary & Clinical Entries Received */}
               {activeSubTab === 'diary' && (
-                <div className="space-y-4">
-                  <div>
-                    <h4 className="font-bold text-sm text-text-main">Diários Enviados pelo Paciente</h4>
-                    <p className="text-xs text-text-muted mt-0.5">Aqui estão as notas de acompanhamento preenchidas pelo paciente no portal dele durante a semana.</p>
+                <div className="space-y-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Calendar className="text-primary" size={18} />
+                        <h4 className="font-bold text-sm text-text-main">Registros & Diários Enviados</h4>
+                      </div>
+                      <p className="text-xs text-text-muted mt-0.5">
+                        Acompanhe em tempo real os episódios e check-ins preenchidos pelo paciente durante a semana.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Summary Metric Badges */}
+                  {diaryEntries.length > 0 && (() => {
+                    const tocList = diaryEntries.filter(e => e.moduleType === 'toc');
+                    const panicList = diaryEntries.filter(e => e.moduleType === 'panic');
+                    const sleepList = diaryEntries.filter(e => e.moduleType === 'sleep' && e.data?.sleepQuality);
+                    const avgSleep = sleepList.length > 0 ? (sleepList.reduce((acc, curr) => acc + (curr.data?.sleepQuality || 0), 0) / sleepList.length).toFixed(1) : null;
+                    const resistedCount = tocList.filter(e => e.data?.resisted === 'yes' || e.data?.resisted === 'delayed').length;
+
+                    return (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                        <div className="bg-surface-muted border border-border-ui rounded-xl p-3">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Total de Registros</span>
+                          <p className="text-lg font-bold text-text-main mt-0.5">{diaryEntries.length}</p>
+                        </div>
+                        {tocList.length > 0 && (
+                          <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl p-3">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400">TOC: Prevenção</span>
+                            <p className="text-lg font-bold text-text-main mt-0.5">{resistedCount} de {tocList.length} <span className="text-[10px] text-text-muted font-normal">({Math.round((resistedCount/tocList.length)*100)}%)</span></p>
+                          </div>
+                        )}
+                        {panicList.length > 0 && (
+                          <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-3">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-rose-400">Crises de Pânico</span>
+                            <p className="text-lg font-bold text-text-main mt-0.5">{panicList.length} <span className="text-[10px] text-text-muted font-normal">registros</span></p>
+                          </div>
+                        )}
+                        {avgSleep && (
+                          <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-3">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">Média de Sono</span>
+                            <p className="text-lg font-bold text-text-main mt-0.5">⭐ {avgSleep} <span className="text-[10px] text-text-muted font-normal">/ 5</span></p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Filter Pills */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                    {[
+                      { key: 'all', label: `Todos (${diaryEntries.length})` },
+                      { key: 'toc', label: `TOC (${diaryEntries.filter(e => e.moduleType === 'toc').length})` },
+                      { key: 'panic', label: `Pânico (${diaryEntries.filter(e => e.moduleType === 'panic').length})` },
+                      { key: 'depression', label: `Depressão (${diaryEntries.filter(e => e.moduleType === 'depression').length})` },
+                      { key: 'anxiety', label: `Ansiedade (${diaryEntries.filter(e => e.moduleType === 'anxiety').length})` },
+                      { key: 'sleep', label: `Sono (${diaryEntries.filter(e => e.moduleType === 'sleep').length})` },
+                      { key: 'rpd', label: `RPD (${diaryEntries.filter(e => e.moduleType === 'rpd').length})` },
+                      { key: 'habits', label: `Hábitos (${diaryEntries.filter(e => e.moduleType === 'habits').length})` },
+                      { key: 'general_diary', label: `Humor / Geral (${diaryEntries.filter(e => !e.moduleType || e.moduleType === 'general_diary').length})` }
+                    ].map(f => (
+                      <button
+                        key={f.key}
+                        onClick={() => setDiaryModuleFilter(f.key)}
+                        className={`px-3 py-1 text-[11px] font-bold rounded-lg whitespace-nowrap transition-all ${
+                          diaryModuleFilter === f.key
+                            ? 'bg-primary text-white shadow-sm'
+                            : 'bg-surface-muted text-text-muted hover:text-text-main border border-border-ui'
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
                   </div>
 
                   {loadingDiary ? (
                     <div className="flex justify-center py-8">
                       <Loader2 className="animate-spin text-primary" size={24} />
                     </div>
-                  ) : diaryEntries.length === 0 ? (
-                    <div className="bg-surface-muted rounded-2xl p-8 text-center text-xs text-text-muted border border-dashed border-white/10">
-                      O paciente ainda não enviou nenhum diário.
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {diaryEntries.map(entry => (
-                        <div key={entry.id} className="bg-surface-muted border border-border-ui rounded-2xl p-4 space-y-3 hover:border-white/10 transition-all">
-                          <div className="flex items-center justify-between gap-4">
-                            <div className="flex items-center gap-3">
-                              <div className="flex items-center gap-2 text-xs text-text-muted">
-                                <Calendar size={13} />
-                                <span>{entry.date.split('-').reverse().join('/')}</span>
-                              </div>
-                              <button
-                                onClick={() => handleDeleteDiaryEntry(entry.id)}
-                                className="text-text-muted hover:text-red-500 transition-all p-1"
-                                title="Excluir Registro"
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                            <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${getMoodColor(entry.mood)}`}>
-                              Humor: {entry.mood}/10
-                            </div>
-                          </div>
-                          <p className="text-xs text-text-main leading-relaxed whitespace-pre-wrap pl-1 border-l-2 border-primary/20">
-                            {entry.text || 'Sem anotações escritas.'}
-                          </p>
+                  ) : (() => {
+                    const filtered = diaryEntries.filter(entry => 
+                      diaryModuleFilter === 'all' ? true : (entry.moduleType || 'general_diary') === diaryModuleFilter
+                    );
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="bg-surface-muted rounded-2xl p-8 text-center text-xs text-text-muted border border-dashed border-white/10">
+                          {diaryEntries.length === 0 
+                            ? 'O paciente ainda não enviou nenhum registro ou diário.' 
+                            : 'Nenhum registro encontrado para este filtro.'}
                         </div>
-                      ))}
-                    </div>
-                  )}
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-3">
+                        {filtered.map(entry => {
+                          const mod = entry.moduleType || 'general_diary';
+                          return (
+                            <div key={entry.id} className="bg-surface-muted border border-border-ui rounded-2xl p-4 space-y-3 hover:border-white/10 transition-all">
+                              
+                              {/* Header */}
+                              <div className="flex items-center justify-between gap-4">
+                                <div className="flex items-center gap-2.5">
+                                  {/* Badge by module */}
+                                  {mod === 'toc' && (
+                                    <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                                      <Brain size={11} />
+                                      <span>TOC & Rituais</span>
+                                    </span>
+                                  )}
+                                  {mod === 'panic' && (
+                                    <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                                      <Zap size={11} />
+                                      <span>Pânico & Agorafobia</span>
+                                    </span>
+                                  )}
+                                  {mod === 'depression' && (
+                                    <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                      <Activity size={11} />
+                                      <span>Ativação Comportamental</span>
+                                    </span>
+                                  )}
+                                  {mod === 'anxiety' && (
+                                    <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-orange-500/10 text-orange-400 border border-orange-500/20">
+                                      <Heart size={11} />
+                                      <span>Ansiedade & Preocupação</span>
+                                    </span>
+                                  )}
+                                  {mod === 'sleep' && (
+                                    <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                                      <Moon size={11} />
+                                      <span>Diário do Sono</span>
+                                    </span>
+                                  )}
+                                  {mod === 'rpd' && (
+                                    <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                                      <FileText size={11} />
+                                      <span>RPD (TCC)</span>
+                                    </span>
+                                  )}
+                                  {mod === 'habits' && (
+                                    <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/10 text-teal-400 border border-teal-500/20">
+                                      <Target size={11} />
+                                      <span>Hábitos Semanais</span>
+                                    </span>
+                                  )}
+                                  {mod === 'general_diary' && (
+                                    <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                      <Smile size={11} />
+                                      <span>Check-in de Humor</span>
+                                    </span>
+                                  )}
+
+                                  {/* Subcategory Pill */}
+                                  {entry.data?.entryCategory === 'daily_evolution' ? (
+                                    <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                                      <TrendingUp size={10} />
+                                      <span>Evolução Diária</span>
+                                    </span>
+                                  ) : entry.data?.entryCategory === 'episode' ? (
+                                    <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/20 flex items-center gap-1">
+                                      <Zap size={10} />
+                                      <span>Episódio / Crise</span>
+                                    </span>
+                                  ) : null}
+
+                                  <div className="flex items-center gap-1.5 text-xs text-text-muted">
+                                    <Calendar size={12} />
+                                    <span>{entry.date.split('-').reverse().join('/')}</span>
+                                    {entry.createdAt && (
+                                      <span className="text-[10px] opacity-75">
+                                        às {new Date(entry.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  {/* Score Badges */}
+                                  {mod === 'toc' && entry.data?.anxietyLevel !== undefined && entry.data.entryCategory !== 'daily_evolution' && (
+                                    <div className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300">
+                                      Ansiedade: {entry.data.anxietyLevel}/10
+                                    </div>
+                                  )}
+                                  {mod === 'toc' && entry.data?.dailyControlScore !== undefined && (
+                                    <div className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300">
+                                      Controle: {entry.data.dailyControlScore}/10
+                                    </div>
+                                  )}
+                                  {mod === 'panic' && entry.data?.panicIntensity !== undefined && entry.data.entryCategory !== 'daily_evolution' && (
+                                    <div className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-300">
+                                      Intensidade: {entry.data.panicIntensity}/10
+                                    </div>
+                                  )}
+                                  {mod === 'panic' && entry.data?.anticipatoryAnxiety !== undefined && (
+                                    <div className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-300">
+                                      Medo Antecipatório: {entry.data.anticipatoryAnxiety}/10
+                                    </div>
+                                  )}
+                                  {mod === 'depression' && (
+                                    <div className="flex gap-1">
+                                      {entry.data?.pleasureLevel !== undefined && (
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300">
+                                          Prazer: {entry.data.pleasureLevel}/10
+                                        </span>
+                                      )}
+                                      {entry.data?.masteryLevel !== undefined && (
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/20 text-blue-300">
+                                          Maestria: {entry.data.masteryLevel}/10
+                                        </span>
+                                      )}
+                                      {entry.data?.energyLevel !== undefined && (
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300">
+                                          Energia: {entry.data.energyLevel}/10
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                  {mod === 'anxiety' && entry.data?.anxietyLevel !== undefined && (
+                                    <div className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-500/20 text-orange-300">
+                                      Ansiedade: {entry.data.anxietyLevel}/10
+                                    </div>
+                                  )}
+                                  {mod === 'sleep' && entry.data?.sleepQuality && (
+                                    <div className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300">
+                                      ⭐ {entry.data.sleepQuality}/5
+                                    </div>
+                                  )}
+                                  {(mod === 'general_diary' || !mod) && (
+                                    <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${getMoodColor(entry.mood)}`}>
+                                      Humor: {entry.mood}/10
+                                    </div>
+                                  )}
+
+                                  <button
+                                    onClick={() => handleDeleteDiaryEntry(entry.id)}
+                                    className="text-text-muted hover:text-red-500 transition-all p-1"
+                                    title="Excluir Registro"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Specialized Content Rendering */}
+                              {/* TOC Entry */}
+                              {mod === 'toc' && (
+                                <div className="space-y-2 text-xs bg-card/50 rounded-xl p-3 border border-purple-500/10">
+                                  {entry.data?.trigger && (
+                                    <p className="text-text-main">
+                                      <strong className="text-purple-400">Gatilho / Situação:</strong> {entry.data.trigger}
+                                    </p>
+                                  )}
+                                  {entry.data?.compulsion && (
+                                    <p className="text-text-main">
+                                      <strong className="text-text-muted">Compulsão / Vontade:</strong> {entry.data.compulsion}
+                                    </p>
+                                  )}
+                                  {entry.data?.resisted && (
+                                    <div className="flex items-center gap-2 pt-1">
+                                      <strong className="text-text-muted">Desfecho:</strong>
+                                      {entry.data.resisted === 'yes' && (
+                                        <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 font-bold text-[10px]">
+                                          ✓ Conseguiu prevenir o ritual (Resistiu)
+                                        </span>
+                                      )}
+                                      {entry.data.resisted === 'delayed' && (
+                                        <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 font-bold text-[10px]">
+                                          ⏳ Adiou o ritual por {entry.data.delayMinutes || 'alguns'} minutos
+                                        </span>
+                                      )}
+                                      {entry.data.resisted === 'no' && (
+                                        <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-400 font-bold text-[10px]">
+                                          ⚠️ Realizou o ritual
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                  {entry.data?.dailyVictories && (
+                                    <p className="text-text-main">
+                                      <strong className="text-emerald-400">Vitória / Superação:</strong> {entry.data.dailyVictories}
+                                    </p>
+                                  )}
+                                  {entry.text && (
+                                    <p className="text-text-muted italic pt-1 border-t border-white/5">
+                                      "{entry.text}"
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Panic Entry */}
+                              {mod === 'panic' && (
+                                <div className="space-y-2 text-xs bg-card/50 rounded-xl p-3 border border-rose-500/10">
+                                  {entry.data?.symptoms && entry.data.symptoms.length > 0 && (
+                                    <div className="space-y-1">
+                                      <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Sintomas Físicos Relatados:</span>
+                                      <div className="flex flex-wrap gap-1.5">
+                                        {entry.data.symptoms.map((s, i) => (
+                                          <span key={i} className="px-2 py-0.5 bg-rose-500/15 text-rose-300 border border-rose-500/20 rounded-md text-[10px]">
+                                            {s}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {entry.data?.exposureSituation && (
+                                    <p className="text-text-main">
+                                      <strong className="text-rose-400">Enfrentamento / Exposição:</strong> {entry.data.exposureSituation}
+                                    </p>
+                                  )}
+                                  {entry.data?.copingUsed && (
+                                    <p className="text-text-main pt-1">
+                                      <strong className="text-rose-400">O que usou para regular:</strong> {entry.data.copingUsed}
+                                    </p>
+                                  )}
+                                  {entry.data?.dailyVictories && (
+                                    <p className="text-text-main">
+                                      <strong className="text-emerald-400">Vitória do dia:</strong> {entry.data.dailyVictories}
+                                    </p>
+                                  )}
+                                  {entry.data?.generalThoughts && (
+                                    <p className="text-text-main">
+                                      <strong className="text-text-muted">Pensamentos do dia:</strong> {entry.data.generalThoughts}
+                                    </p>
+                                  )}
+                                  {entry.text && (
+                                    <p className="text-text-muted italic pt-1 border-t border-white/5">
+                                      "{entry.text}"
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Depression Activation Entry */}
+                              {mod === 'depression' && (
+                                <div className="space-y-2 text-xs bg-card/50 rounded-xl p-3 border border-amber-500/10">
+                                  {entry.data?.activity && (
+                                    <p className="text-text-main font-semibold">
+                                      <strong className="text-amber-400">Atividade:</strong> {entry.data.activity}
+                                    </p>
+                                  )}
+                                  {entry.text && (
+                                    <p className="text-text-muted italic pt-1 border-t border-white/5">
+                                      "{entry.text}"
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Anxiety Entry */}
+                              {mod === 'anxiety' && (
+                                <div className="space-y-2 text-xs bg-card/50 rounded-xl p-3 border border-orange-500/10">
+                                  {entry.data?.concern && (
+                                    <p className="text-text-main">
+                                      <strong className="text-orange-400">Preocupação:</strong> {entry.data.concern}
+                                    </p>
+                                  )}
+                                  {entry.data?.inControl !== undefined && (
+                                    <p className="text-text-main">
+                                      <strong className="text-text-muted">Esfera de Controle:</strong> {entry.data.inControl ? '✅ Sob meu controle direto' : '❌ Fora do meu controle'}
+                                    </p>
+                                  )}
+                                  {entry.data?.actionPlan && (
+                                    <p className="text-text-main">
+                                      <strong className="text-emerald-400">Plano de Ação:</strong> {entry.data.actionPlan}
+                                    </p>
+                                  )}
+                                  {entry.text && (
+                                    <p className="text-text-muted italic pt-1 border-t border-white/5">
+                                      "{entry.text}"
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Sleep Entry */}
+                              {mod === 'sleep' && (
+                                <div className="space-y-2 text-xs bg-card/50 rounded-xl p-3 border border-indigo-500/10">
+                                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-text-main">
+                                    {entry.data?.bedTime && (
+                                      <div><strong className="text-indigo-300">Deitou:</strong> {entry.data.bedTime}</div>
+                                    )}
+                                    {entry.data?.wakeTime && (
+                                      <div><strong className="text-indigo-300">Levantou:</strong> {entry.data.wakeTime}</div>
+                                    )}
+                                    {entry.data?.awakenings !== undefined && (
+                                      <div><strong className="text-indigo-300">Despertares:</strong> {entry.data.awakenings}x</div>
+                                    )}
+                                  </div>
+                                  {entry.text && (
+                                    <p className="text-text-muted italic pt-1 border-t border-white/5">
+                                      "{entry.text}"
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* RPD Entry */}
+                              {mod === 'rpd' && (
+                                <div className="space-y-2 text-xs bg-card/50 rounded-xl p-3 border border-sky-500/10">
+                                  {entry.data?.situation && (
+                                    <p className="text-text-main">
+                                      <strong className="text-sky-400">Situação Gatilho:</strong> {entry.data.situation}
+                                    </p>
+                                  )}
+                                  {entry.data?.automaticThought && (
+                                    <p className="text-text-main">
+                                      <strong className="text-amber-400">Pensamento Automático:</strong> {entry.data.automaticThought}
+                                    </p>
+                                  )}
+                                  {entry.data?.emotion && (
+                                    <p className="text-text-main">
+                                      <strong className="text-rose-400">Emoção Sentida:</strong> {entry.data.emotion}
+                                    </p>
+                                  )}
+                                  {entry.data?.alternativeThought && (
+                                    <p className="text-text-main">
+                                      <strong className="text-emerald-400">Pensamento Alternativo:</strong> {entry.data.alternativeThought}
+                                    </p>
+                                  )}
+                                  {entry.text && (
+                                    <p className="text-text-muted italic pt-1 border-t border-white/5">
+                                      "{entry.text}"
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Habits Entry */}
+                              {mod === 'habits' && (
+                                <div className="space-y-2 text-xs bg-card/50 rounded-xl p-3 border border-teal-500/10">
+                                  <span className="text-[10px] font-bold text-teal-400 uppercase tracking-wider">Hábitos Cumpridos no Dia:</span>
+                                  <div className="space-y-1">
+                                    {entry.data?.completedHabits && entry.data.completedHabits.length > 0 ? (
+                                      entry.data.completedHabits.map((h, i) => (
+                                        <div key={i} className="flex items-center gap-1.5 text-emerald-400">
+                                          <CheckCircle2 size={13} />
+                                          <span>{h}</span>
+                                        </div>
+                                      ))
+                                    ) : (
+                                      <span className="text-text-muted italic">Nenhum hábito marcado neste dia.</span>
+                                    )}
+                                  </div>
+                                  {entry.text && (
+                                    <p className="text-text-muted italic pt-1 border-t border-white/5">
+                                      "{entry.text}"
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* General Diary Entry */}
+                              {mod === 'general_diary' && entry.text && (
+                                <p className="text-xs text-text-main leading-relaxed whitespace-pre-wrap pl-1 border-l-2 border-primary/20">
+                                  {entry.text}
+                                </p>
+                              )}
+
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 
