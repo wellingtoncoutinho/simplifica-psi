@@ -205,6 +205,7 @@ import PaywallScreen from './components/PaywallScreen';
 import AdminPanel from './components/AdminPanel';
 import PatientPortalDashboard from './components/PatientPortalDashboard';
 import PsychologistPatientPortalView from './components/PsychologistPatientPortalView';
+import { GoogleMeetExtensionModal, CHROME_EXTENSION_STORE_URL, TCLE_TEMPLATE_TEXT } from './components/GoogleMeetExtensionModal';
 import { 
   Patient, 
   Session, 
@@ -474,6 +475,9 @@ Como posso te ajudar hoje?`
     return profileSettings.isTrial && trialRemainingDays < 0;
   }, [profileSettings.isTrial, trialRemainingDays]);
   const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(localStorage.getItem('google_calendar_access_token'));
+  const [showExtensionModal, setShowExtensionModal] = useState(false);
+  const [hasAcceptedExtensionTerms, setHasAcceptedExtensionTerms] = useState(() => localStorage.getItem("simplepsi_meet_extension_consent") === "true");
+  const [isExtensionBannerDismissed, setIsExtensionBannerDismissed] = useState(() => localStorage.getItem("simplepsi_meet_banner_dismissed") === "true");
   const [patients, setPatients] = useState<Patient[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -1519,9 +1523,46 @@ Como posso te ajudar hoje?`
 
   const formatLocalIsoString = (dateStr: string, timeStr: string, durationStr: string) => {
     try {
-      const [hours, minutes] = timeStr.split(':').map(Number);
-      const [year, month, day] = dateStr.split('-').map(Number);
-      const d = new Date(year, month - 1, day, hours, minutes);
+      if (!timeStr) timeStr = "08:00";
+      if (!dateStr) dateStr = new Date().toISOString().split('T')[0];
+
+      let year = new Date().getFullYear();
+      let month = new Date().getMonth() + 1;
+      let day = new Date().getDate();
+
+      if (dateStr.includes('/')) {
+        const parts = dateStr.split('/').map(p => parseInt(p, 10));
+        if (parts.length === 3) {
+          if (parts[2] > 1000) {
+            day = parts[0];
+            month = parts[1];
+            year = parts[2];
+          } else {
+            year = parts[0];
+            month = parts[1];
+            day = parts[2];
+          }
+        }
+      } else if (dateStr.includes('-')) {
+        const parts = dateStr.split('-').map(p => parseInt(p, 10));
+        if (parts.length === 3) {
+          if (parts[0] > 1000) {
+            year = parts[0];
+            month = parts[1];
+            day = parts[2];
+          } else {
+            day = parts[0];
+            month = parts[1];
+            year = parts[2];
+          }
+        }
+      }
+
+      const timeParts = (timeStr || "08:00").split(':').map(p => parseInt(p, 10));
+      const hours = !isNaN(timeParts[0]) ? timeParts[0] : 8;
+      const minutes = !isNaN(timeParts[1]) ? timeParts[1] : 0;
+
+      const d = new Date(year, month - 1, day, hours, minutes, 0);
 
       let durationMinutes = 50;
       if (durationStr?.includes('h')) {
@@ -1529,11 +1570,15 @@ Como posso te ajudar hoje?`
       } else if (durationStr?.includes('min')) {
         durationMinutes = parseFloat(durationStr);
       }
+      if (isNaN(durationMinutes) || durationMinutes <= 0) durationMinutes = 50;
 
       const endD = new Date(d.getTime() + durationMinutes * 60000);
 
-      const pad = (num: number) => num.toString().padStart(2, '0');
+      const pad = (num: number) => (isNaN(num) ? "00" : num.toString().padStart(2, '0'));
       const formatTz = (dateObj: Date) => {
+        if (isNaN(dateObj.getTime())) {
+          return new Date().toISOString();
+        }
         const tzo = -dateObj.getTimezoneOffset();
         const dif = tzo >= 0 ? '+' : '-';
         return dateObj.getFullYear() +
@@ -1551,10 +1596,10 @@ Como posso te ajudar hoje?`
         end: formatTz(endD)
       };
     } catch (e) {
-      console.error("Erro ao formatar data/hora:", e);
+      console.error("Erro ao formatar data/hora para Google Calendar:", e);
       return {
-        start: `${dateStr}T${timeStr}:00-03:00`,
-        end: `${dateStr}T${timeStr}:00-03:00`
+        start: `${dateStr}T${timeStr || '08:00'}:00-03:00`,
+        end: `${dateStr}T${timeStr || '08:50'}:00-03:00`
       };
     }
   };
@@ -1565,27 +1610,54 @@ Como posso te ajudar hoje?`
     const expiresAt = expiresAtStr ? parseInt(expiresAtStr) : 0;
     const now = new Date().getTime();
     
-    // If we have a token and it is NOT expired (with 2 min buffer), return it
+    // Se o token existe e ainda é válido (com margem de 2 minutos), retorna o token
     if (token && now < expiresAt - 2 * 60 * 1000) {
       return token;
     }
-    
-    // Otherwise, we need to refresh it by opening the Google Calendar sign in popup
-    try {
-      console.log("Token do Google Agenda expirado ou ausente. Solicitando novo token...");
-      const result = await signInWithGoogleCalendar();
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      if (credential && credential.accessToken) {
-        const newExpiresAt = new Date().getTime() + 3500 * 1000; // ~1 hour
-        localStorage.setItem('google_calendar_access_token', credential.accessToken);
-        localStorage.setItem('google_calendar_expires_at', newExpiresAt.toString());
-        setGoogleAccessToken(credential.accessToken);
-        return credential.accessToken;
-      }
-    } catch (err) {
-      console.error("Erro ao renovar token do Google Agenda:", err);
+
+    // Se expirou, limpa o token local para que a UI mostre status real (desconectado/reconectar)
+    if (token && now >= expiresAt - 2 * 60 * 1000) {
+      localStorage.removeItem('google_calendar_access_token');
+      localStorage.removeItem('google_calendar_expires_at');
+      setGoogleAccessToken(null);
     }
+    
+    // NUNCA dispara popup/redirect de autenticação do Google automaticamente em segundo plano!
+    // Isso evita redirecionamentos repentinos quando o psicólogo está realizando ações comuns (apagar sessão, emitir nota, etc.)
     return null;
+  };
+
+  const handleManualSyncGoogleCalendar = async () => {
+    let token = await ensureValidCalendarToken();
+    if (!token) {
+      try {
+        const result = await signInWithGoogleCalendar();
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (credential && credential.accessToken) {
+          const expiresAt = new Date().getTime() + 3500 * 1000;
+          localStorage.setItem('google_calendar_access_token', credential.accessToken);
+          localStorage.setItem('google_calendar_expires_at', expiresAt.toString());
+          setGoogleAccessToken(credential.accessToken);
+          token = credential.accessToken;
+          if (user) {
+            const profileRef = doc(db, 'profiles', user.uid);
+            await setDoc(profileRef, { isGoogleCalendarEnabled: true }, { merge: true });
+          }
+        }
+      } catch (err: any) {
+        console.error("Erro na autenticação manual do Google Agenda:", err);
+        if (err.code === 'auth/popup-blocked') {
+          alert("A janela de conexão foi bloqueada pelo seu navegador. Por favor, libere pop-ups e tente novamente.");
+        } else {
+          alert("Erro ao conectar Google Agenda: " + (err.message || err));
+        }
+        return;
+      }
+    }
+
+    if (token) {
+      await syncAllFutureSessionsToGoogle(token, false);
+    }
   };
 
   const syncSessionToGoogleCalendar = async (sessionData: any, sessionId: string, bypassEnabledCheck = false): Promise<boolean> => {
@@ -1625,7 +1697,10 @@ Como posso te ajudar hoje?`
       });
 
       if (response.status === 401) {
-        console.warn("Token da Google Agenda expirou.");
+        console.warn("Token da Google Agenda expirou (401).");
+        localStorage.removeItem('google_calendar_access_token');
+        localStorage.removeItem('google_calendar_expires_at');
+        setGoogleAccessToken(null);
         return false;
       }
 
@@ -1637,11 +1712,11 @@ Como posso te ajudar hoje?`
       } else {
         const errText = await response.text();
         console.error("Erro da API do Google Calendar:", errText);
-        throw new Error(errText);
+        return false;
       }
     } catch (err: any) {
       console.error("Erro ao sincronizar com Google Agenda:", err);
-      throw err;
+      return false;
     }
   };
 
@@ -1683,7 +1758,10 @@ Como posso te ajudar hoje?`
       });
 
       if (response.status === 401) {
-        console.warn("Token da Google Agenda expirou.");
+        console.warn("Token da Google Agenda expirou (401).");
+        localStorage.removeItem('google_calendar_access_token');
+        localStorage.removeItem('google_calendar_expires_at');
+        setGoogleAccessToken(null);
         return false;
       }
       return response.ok;
@@ -1709,7 +1787,10 @@ Como posso te ajudar hoje?`
       });
 
       if (response.status === 401) {
-        console.warn("Token da Google Agenda expirou.");
+        console.warn("Token da Google Agenda expirou (401).");
+        localStorage.removeItem('google_calendar_access_token');
+        localStorage.removeItem('google_calendar_expires_at');
+        setGoogleAccessToken(null);
       }
     } catch (err) {
       console.error("Erro ao excluir evento da Google Agenda:", err);
@@ -2570,6 +2651,13 @@ Como posso te ajudar hoje?`
                   setPortalInitialSubTab(tab);
                   setActiveTab('area-paciente');
                 }}
+                hasAcceptedExtensionTerms={hasAcceptedExtensionTerms}
+                onOpenExtensionModal={() => setShowExtensionModal(true)}
+                isExtensionBannerDismissed={isExtensionBannerDismissed}
+                onDismissExtensionBanner={() => {
+                  setIsExtensionBannerDismissed(true);
+                  localStorage.setItem('simplepsi_meet_banner_dismissed', 'true');
+                }}
               />
             )}
             {activeTab === 'pacientes' && !selectedPatient && (
@@ -2597,6 +2685,8 @@ Como posso te ajudar hoje?`
                 onDeletePatient={handleDeletePatient}
                 onBack={() => setSelectedPatient(null)} 
                 profileSettings={profileSettings}
+                hasAcceptedExtensionTerms={hasAcceptedExtensionTerms}
+                onOpenExtensionModal={() => setShowExtensionModal(true)}
               />
             )}
             
@@ -2622,6 +2712,8 @@ Como posso te ajudar hoje?`
                 onDeletePatient={handleDeletePatient}
                 onBack={() => setSelectedPatient(null)} 
                 profileSettings={profileSettings}
+                hasAcceptedExtensionTerms={hasAcceptedExtensionTerms}
+                onOpenExtensionModal={() => setShowExtensionModal(true)}
               />
             )}
 
@@ -2649,6 +2741,8 @@ Como posso te ajudar hoje?`
                 isGoogleCalendarEnabled={profileSettings.isGoogleCalendarEnabled}
                 googleAccessToken={googleAccessToken}
                 onOpenSettings={() => setIsSettingsOpen(true)}
+                onSyncGoogleCalendar={handleManualSyncGoogleCalendar}
+                onConnectGoogleCalendar={handleConnectGoogleCalendar}
                 onTriageToPatient={(name, day, time, sessionId) => {
                   setTriageInitialName(name);
                   setTriageInitialDay(day);
@@ -2664,6 +2758,7 @@ Como posso te ajudar hoje?`
                 key="import-transcript" 
                 patients={patients}
                 clinicalApproach={profileSettings.clinicalApproach || 'tcc'}
+                onOpenExtensionModal={() => setShowExtensionModal(true)}
                 onSaveSession={async (patientId, date, time, duration, amount, type, note) => {
                   try {
                     const p = patients.find(pat => pat.id === patientId);
@@ -2803,6 +2898,8 @@ Como posso te ajudar hoje?`
               onClose={() => setIsSettingsOpen(false)}
               googleAccessToken={googleAccessToken}
               onConnectGoogleCalendar={handleConnectGoogleCalendar}
+              hasAcceptedExtensionTerms={hasAcceptedExtensionTerms}
+              onOpenExtensionModal={() => setShowExtensionModal(true)}
               onSave={async (data: any) => {
                 if (user) {
                   try {
@@ -2836,6 +2933,17 @@ Como posso te ajudar hoje?`
             />
           )}
         </AnimatePresence>
+
+        {/* Modal da Extensão do Google Meet */}
+        <GoogleMeetExtensionModal 
+          isOpen={showExtensionModal}
+          onClose={() => setShowExtensionModal(false)}
+          hasAccepted={hasAcceptedExtensionTerms}
+          onAccept={() => {
+            setHasAcceptedExtensionTerms(true);
+            localStorage.setItem("simplepsi_meet_extension_consent", "true");
+          }}
+        />
 
         {/* Support & Feedback Modal */}
         <AnimatePresence>
@@ -3008,7 +3116,11 @@ function DashboardView({
   onGoToFinanceiro,
   onGoToPacientes,
   onDeletePatient,
-  onGoToPortalTab
+  onGoToPortalTab,
+  hasAcceptedExtensionTerms = false,
+  onOpenExtensionModal,
+  isExtensionBannerDismissed = false,
+  onDismissExtensionBanner
 }: { 
   user: User | null,
   onPatientSelect: (id: string) => void, 
@@ -3021,7 +3133,11 @@ function DashboardView({
   onGoToFinanceiro: () => void,
   onGoToPacientes: () => void,
   onDeletePatient: (id: string) => void,
-  onGoToPortalTab: (patientId: string, tab: 'pdfs' | 'safety' | 'diary' | 'access') => void
+  onGoToPortalTab: (patientId: string, tab: 'pdfs' | 'safety' | 'diary' | 'access') => void,
+  hasAcceptedExtensionTerms?: boolean,
+  onOpenExtensionModal?: () => void,
+  isExtensionBannerDismissed?: boolean,
+  onDismissExtensionBanner?: () => void
 }) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -3332,6 +3448,85 @@ function DashboardView({
         <p className="text-text-muted mt-2">Você está no controle da sua rotina. Vamos começar?</p>
         <p className="text-[10px] text-text-muted mt-1 uppercase tracking-wider">Última atualização: {new Date().toLocaleTimeString()}</p>
       </div>
+
+      {/* Banner da Extensão do Google Meet */}
+      {!hasAcceptedExtensionTerms ? (
+        !isExtensionBannerDismissed && (
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-gradient-to-r from-primary/20 via-primary/10 to-surface-muted border border-primary/30 rounded-3xl p-5 sm:p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-5 relative shadow-lg shadow-primary/5 text-left"
+          >
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-primary text-white flex items-center justify-center shrink-0 shadow-md shadow-primary/25 mt-0.5">
+                <Video size={24} />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] bg-primary text-white px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                    Novidade Oficial
+                  </span>
+                  <h4 className="text-sm sm:text-base font-bold text-text-main">
+                    Transcreva suas consultas online pelo Google Meet
+                  </h4>
+                </div>
+                <p className="text-xs text-text-muted leading-relaxed max-w-2xl">
+                  Instale nossa extensão oficial para o Google Chrome. Ela captura as falas com 100% de sigilo local e gera a evolução clínica na sua abordagem em 1 clique.
+                </p>
+                <p className="text-[10.5px] text-primary font-bold">
+                  ⭐ * Requisito: manter legendas ativadas em Português no Google Meet durante a chamada.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 w-full md:w-auto shrink-0">
+              <button
+                type="button"
+                onClick={onOpenExtensionModal}
+                className="flex-1 md:flex-none px-5 py-3 bg-primary text-white hover:opacity-90 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/20 cursor-pointer"
+              >
+                <Chrome size={15} />
+                Ativar Extensão
+              </button>
+              {onDismissExtensionBanner && (
+                <button
+                  type="button"
+                  onClick={onDismissExtensionBanner}
+                  className="p-3 text-text-muted hover:text-text-main rounded-2xl hover:bg-surface-muted transition-colors cursor-pointer"
+                  title="Dispensar do Dashboard"
+                >
+                  <X size={18} />
+                </button>
+              )}
+            </div>
+          </motion.div>
+        )
+      ) : (
+        <div className="bg-surface-muted/60 border border-border-ui rounded-2xl px-5 py-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-left">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-green-500/10 text-green-400 border border-green-500/20 flex items-center justify-center shrink-0">
+              <Chrome size={16} />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-text-main flex items-center gap-2">
+                Extensão do Google Meet Ativa
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+              </p>
+              <p className="text-[10px] text-text-muted">
+                Suas teleconsultas com legendas ativadas geram relatos automáticos com IA no SimplePsi.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenExtensionModal}
+            className="px-3.5 py-2 bg-surface-muted hover:bg-border-ui text-text-main border border-border-ui rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
+          >
+            <ExternalLink size={12} />
+            Instruções & Termo TCLE
+          </button>
+        </div>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -4530,7 +4725,9 @@ function PatientDetailsView({
   profileSettings,
   sessions = [],
   currentUserEmail = '',
-  defaultSubTab = 'perfil' 
+  defaultSubTab = 'perfil',
+  hasAcceptedExtensionTerms = false,
+  onOpenExtensionModal
 }: { 
   patientId: string, 
   onBack: () => void, 
@@ -4543,7 +4740,9 @@ function PatientDetailsView({
   profileSettings?: any,
   sessions?: any[],
   currentUserEmail?: string,
-  defaultSubTab?: 'perfil' | 'prontuario' | 'anamnese' | 'smartnotes' | 'biblioteca' | 'tratamento' | 'reembolso'
+  defaultSubTab?: 'perfil' | 'prontuario' | 'anamnese' | 'smartnotes' | 'biblioteca' | 'tratamento' | 'reembolso',
+  hasAcceptedExtensionTerms?: boolean,
+  onOpenExtensionModal?: () => void
 }) {
   const patient = patients.find(p => p.id === patientId);
   const user = auth.currentUser;
@@ -4774,11 +4973,6 @@ function PatientDetailsView({
       alert("Ocorreu um erro ao gerar o PDF do Relatório.");
     }
   };
-
-  const [showExtensionModal, setShowExtensionModal] = useState(false);
-  const [hasAcceptedExtensionTerms, setHasAcceptedExtensionTerms] = useState(() => localStorage.getItem("simplepsi_meet_extension_consent") === "true");
-  const [tempCheckedTerms, setTempCheckedTerms] = useState(false);
-  const [copiedTcle, setCopiedTcle] = useState(false);
 
   // Novos estados para a evolução aprimorada
   const [evolutionDate, setEvolutionDate] = useState(new Date().toISOString().split('T')[0]);
@@ -7286,30 +7480,37 @@ Relato:
                             </div>
                             
                             {/* Banner Extensão do Google Meet */}
-                            {auth.currentUser && auth.currentUser.email?.toLowerCase().trim() === 'wellcoutinho99@gmail.com' && (
-                              <div className="p-4 rounded-2xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all">
-                                <div className="flex items-center gap-3 text-left">
-                                  <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
-                                    <Video size={20} />
-                                  </div>
-                                  <div>
-                                    <h5 className="text-xs font-bold text-text-main">Atende pelo Google Meet?</h5>
-                                    <p className="text-[10px] text-text-muted">Instale nossa extensão para transcrever e enviar a sessão em 1 clique.</p>
-                                  </div>
+                            <div className="p-4 rounded-2xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all">
+                              <div className="flex items-center gap-3 text-left">
+                                <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
+                                  <Video size={20} />
                                 </div>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setTempCheckedTerms(hasAcceptedExtensionTerms);
-                                    setShowExtensionModal(true);
-                                  }}
-                                  className="w-full sm:w-auto bg-primary text-white hover:opacity-90 px-4 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all shadow-md shadow-primary/10 flex items-center justify-center gap-2"
-                                >
-                                  <Chrome size={14} />
-                                  {hasAcceptedExtensionTerms ? "Ver Extensão" : "Ativar Extensão"}
-                                </button>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <h5 className="text-xs font-bold text-text-main">Atende pelo Google Meet?</h5>
+                                    {hasAcceptedExtensionTerms && (
+                                      <span className="text-[9px] bg-green-500/15 text-green-400 border border-green-500/25 px-2 py-0.5 rounded-full font-bold uppercase">
+                                        Ativa
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-[10px] text-text-muted">
+                                    Instale nossa extensão oficial para transcrever e enviar a sessão em 1 clique.
+                                  </p>
+                                  <p className="text-[9.5px] text-primary/90 mt-0.5 font-medium">
+                                    ⭐ * Requer legendas ativadas em Português no Google Meet.
+                                  </p>
+                                </div>
                               </div>
-                            )}
+                              <button
+                                type="button"
+                                onClick={onOpenExtensionModal}
+                                className="w-full sm:w-auto bg-primary text-white hover:opacity-90 px-4 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all shadow-md shadow-primary/10 flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+                              >
+                                <Chrome size={14} />
+                                {hasAcceptedExtensionTerms ? "Ver Extensão / Reinstalar" : "Ativar Extensão"}
+                              </button>
+                            </div>
 
                             <textarea 
                               id="transcription-textarea"
@@ -8872,158 +9073,6 @@ Relato:
            </section>
         </div>
       </div>
-
-      {/* Modal da Extensão do Google Meet & Consentimento */}
-      <AnimatePresence>
-        {showExtensionModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="glass-card w-full max-w-2xl bg-card border border-primary/20 rounded-3xl p-6 md:p-8 space-y-6 shadow-2xl relative my-8"
-            >
-              {/* Fechar */}
-              <button
-                type="button"
-                onClick={() => setShowExtensionModal(false)}
-                className="absolute top-4 right-4 p-2 text-text-muted hover:text-text-main rounded-xl hover:bg-surface-muted transition-colors"
-              >
-                <X size={20} />
-              </button>
-
-              {/* Cabeçalho */}
-              <div className="flex items-center gap-3 border-b border-white/5 pb-4">
-                <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center">
-                  <Chrome size={28} />
-                </div>
-                <div className="text-left">
-                  <h3 className="text-base font-bold text-text-main">Extensão do Google Meet</h3>
-                  <p className="text-xs text-text-muted">Escreva relatos clínicos automaticamente em tempo real.</p>
-                </div>
-              </div>
-
-              {/* Como Funciona & Privacidade */}
-              <div className="space-y-4 text-left text-xs leading-relaxed text-text-main">
-                <div className="bg-surface-muted border border-border-ui rounded-2xl p-4 space-y-2">
-                  <h4 className="font-bold text-primary flex items-center gap-1.5">
-                    🔒 Processamento 100% Local e Seguro (LGPD)
-                  </h4>
-                  <p className="text-text-muted text-[11px]">
-                    Nossa extensão lê as **legendas em tempo real** do seu Google Meet e as envia de forma criptografada apenas para o seu navegador de forma local. Nenhuma conversa é salva em nossos servidores externos, respeitando 100% o sigilo profissional.
-                  </p>
-                </div>
-
-                {/* ALERTA LEGAL IMPORTANTE */}
-                <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 space-y-2">
-                  <h4 className="font-bold text-red-400 flex items-center gap-1.5">
-                    ⚠️ Atenção: Obrigatoriedade Ética e Legal do Consentimento
-                  </h4>
-                  <p className="text-red-300 text-[11px]">
-                    De acordo com as normas da **LGPD (Lei Geral de Proteção de Dados)** e do **Código de Ética do CFP (Conselho Federal de Psicologia)**, é expressamente obrigatório que o profissional de psicologia obtenha o **consentimento prévio e expresso do paciente** antes de iniciar qualquer tipo de registro, gravação ou transcrição de sessões.
-                  </p>
-                  <p className="text-red-300 text-[11px] font-bold">
-                    O Simple Psi fornece apenas a ferramenta de automatização local. Nós nos eximimos integralmente de qualquer responsabilidade ética, jurídica ou civil decorrente do uso desta tecnologia sem a devida e documentada autorização do seu paciente.
-                  </p>
-                </div>
-
-                {/* Modelo de TCLE para Cópia */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Modelo de Consentimento Clínico (TCLE)</label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const tcleText = `TERMO DE CONSENTIMENTO PARA TRANSCRIÇÃO DE SESSÃO\n\nEu autorizo o(a) psicólogo(a) a realizar a transcrição automatizada em tempo real dos diálogos ocorridos em nossas sessões online. Compreendo que esta transcrição é de uso estritamente terapêutico e confidencial, servindo unicamente de base para a elaboração de prontuários clínicos protegidos por criptografia na plataforma Simple Psi, em conformidade com o Código de Ética do CFP e com a Lei Geral de Proteção de Dados (LGPD). A transcrição bruta será processada localmente no computador do profissional e deletada imediatamente após a geração do prontuário resumido pela IA.`;
-                        navigator.clipboard.writeText(tcleText);
-                        setCopiedTcle(true);
-                        setTimeout(() => setCopiedTcle(false), 2000);
-                      }}
-                      className="flex items-center gap-1 text-[10px] text-primary hover:underline font-bold"
-                    >
-                      {copiedTcle ? <CheckCircle2 size={12} className="text-green-400" /> : <Copy size={12} />}
-                      {copiedTcle ? "Copiado!" : "Copiar Modelo de Termo"}
-                    </button>
-                  </div>
-                  <div className="bg-surface-muted/50 border border-border-ui rounded-xl p-3 text-[10.5px] text-text-muted select-all font-mono leading-relaxed max-h-[100px] overflow-y-auto">
-                    "Eu autorizo o(a) psicólogo(a) a realizar a transcrição automatizada em tempo real dos diálogos ocorridos em nossas sessões online. Compreendo que esta transcrição é de uso estritamente terapêutico e confidencial, servindo unicamente de base para a elaboração de prontuários clínicos protegidos por criptografia na plataforma Simple Psi, em conformidade com o Código de Ética do CFP e com a Lei Geral de Proteção de Dados (LGPD)..."
-                  </div>
-                </div>
-
-                {/* Checkbox de Aceite */}
-                <label className="flex items-start gap-3 p-3 bg-primary/5 border border-primary/10 rounded-2xl cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={tempCheckedTerms}
-                    onChange={(e) => setTempCheckedTerms(e.target.checked)}
-                    className="mt-0.5 rounded border-border-ui text-primary focus:ring-primary bg-surface-muted h-4 w-4"
-                  />
-                  <div className="text-left space-y-0.5">
-                    <span className="font-bold text-[11px] text-text-main block">Declaro-me Ciente e Responsável</span>
-                    <span className="text-[10px] text-text-muted block">
-                      Declaro que obtive/obterei o consentimento prévio do paciente para a realização de transcrições e que o Simple Psi atua estritamente como operador da tecnologia, eximindo-se de responsabilidade pela ausência deste aceite.
-                    </span>
-                  </div>
-                </label>
-              </div>
-
-              {/* Botões de Ação */}
-              <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-white/5">
-                <button
-                  type="button"
-                  onClick={() => setShowExtensionModal(false)}
-                  className="flex-1 bg-surface-muted text-text-muted hover:text-text-main py-3 rounded-2xl text-xs font-bold uppercase tracking-widest transition-all"
-                >
-                  Voltar
-                </button>
-                <button
-                  type="button"
-                  disabled={!tempCheckedTerms}
-                  onClick={() => {
-                    localStorage.setItem("simplepsi_meet_extension_consent", "true");
-                    setHasAcceptedExtensionTerms(true);
-                    alert("Termo de responsabilidade aceito com sucesso!\n\nAgora você está pronto para instalar a extensão. Siga o passo a passo na tela para carregá-la no seu Google Chrome.");
-                  }}
-                  className={`flex-1 py-3 rounded-2xl text-xs font-bold uppercase tracking-widest transition-all ${
-                    tempCheckedTerms
-                      ? "bg-primary text-white shadow-lg shadow-primary/20 hover:opacity-90 animate-pulse"
-                      : "bg-surface-muted text-text-muted cursor-not-allowed opacity-50"
-                  }`}
-                >
-                  Confirmar e Ativar
-                </button>
-              </div>
-
-              {/* Passo a Passo de Instalação (Exibido apenas após aceitar os termos) */}
-              {hasAcceptedExtensionTerms && (
-                <div className="border-t border-dashed border-white/10 pt-6 space-y-4 text-left">
-                  <h4 className="text-xs font-bold text-primary uppercase tracking-widest flex items-center gap-1.5">
-                    ⚙️ Como instalar a extensão no seu Chrome (1 minuto)
-                  </h4>
-                  <ol className="list-decimal pl-4 space-y-2 text-[11px] text-text-muted leading-relaxed">
-                    <li>
-                      Abra uma nova guia no seu navegador Chrome e acesse o endereço:{" "}
-                      <code className="bg-surface-muted border border-border-ui px-1.5 py-0.5 rounded text-primary font-bold">chrome://extensions</code>
-                    </li>
-                    <li>
-                      Ative a chave do **"Modo do desenvolvedor"** no canto superior direito da tela.
-                    </li>
-                    <li>
-                      No canto superior esquerdo, clique no botão **"Carregar sem compactação"** (Load unpacked).
-                    </li>
-                    <li>
-                      Navegue no seu computador e selecione a pasta <strong className="text-text-main">`extension`</strong> que foi criada dentro da pasta do projeto <strong className="text-text-main">`prontupsi---gestao-psicologica`</strong>.
-                    </li>
-                    <li>
-                      **Pronto!** O ícone do Simple Psi estará ativo. Ao entrar no Google Meet, certifique-se de ativar o **Closed Captions (CC) em Português** para que a transcrição funcione.
-                    </li>
-                  </ol>
-                </div>
-              )}
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </motion.div>
   );
 }
@@ -9852,7 +9901,9 @@ function CalendarView({
   lastAction,
   isGoogleCalendarEnabled,
   googleAccessToken,
-  onOpenSettings
+  onOpenSettings,
+  onSyncGoogleCalendar,
+  onConnectGoogleCalendar
 }: { 
   sessions: any[], 
   patients: any[], 
@@ -9863,7 +9914,9 @@ function CalendarView({
   lastAction?: any,
   isGoogleCalendarEnabled?: boolean,
   googleAccessToken?: string | null,
-  onOpenSettings?: () => void
+  onOpenSettings?: () => void,
+  onSyncGoogleCalendar?: () => void,
+  onConnectGoogleCalendar?: () => void
 }) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -10000,18 +10053,32 @@ function CalendarView({
           <div className="flex flex-wrap items-center gap-3">
             <h2 className="text-3xl font-bold tracking-tight text-text-main">Agenda Mensal</h2>
             {isGoogleCalendarEnabled && googleAccessToken ? (
-              <span className="flex items-center gap-1.5 px-3 py-1 bg-green-500/10 text-green-400 border border-green-500/20 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm select-none">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                Google Sincronizado
-              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="flex items-center gap-1.5 px-3 py-1 bg-green-500/10 text-green-400 border border-green-500/20 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm select-none">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                  Google Sincronizado
+                </span>
+                {onSyncGoogleCalendar && (
+                  <button
+                    type="button"
+                    onClick={onSyncGoogleCalendar}
+                    className="flex items-center gap-1.5 px-3 py-1 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/25 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm transition-all cursor-pointer"
+                    title="Forçar sincronização de todas as consultas futuras com o Google Agenda"
+                  >
+                    <RefreshCw size={11} />
+                    Sincronizar Agora
+                  </button>
+                )}
+              </div>
             ) : (
               <button
-                onClick={onOpenSettings}
+                type="button"
+                onClick={onConnectGoogleCalendar || onOpenSettings}
                 className="flex items-center gap-1.5 px-3 py-1 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-500 border border-yellow-500/20 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm transition-all shrink-0 cursor-pointer"
-                title="Configurar Google Agenda"
+                title="Conectar ou renovar token da Google Agenda"
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-yellow-500" />
-                Google Desconectado
+                {isGoogleCalendarEnabled ? 'Reconectar Google Agenda' : 'Conectar Google Agenda'}
               </button>
             )}
           </div>
@@ -10628,7 +10695,15 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
   );
 }
 
-function ProfileSettingsModal({ initialData, onClose, onSave, googleAccessToken, onConnectGoogleCalendar }: any) {
+function ProfileSettingsModal({ 
+  initialData, 
+  onClose, 
+  onSave, 
+  googleAccessToken, 
+  onConnectGoogleCalendar,
+  hasAcceptedExtensionTerms = false,
+  onOpenExtensionModal
+}: any) {
   const [formData, setFormData] = useState(initialData);
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [adminTickets, setAdminTickets] = useState<any[]>([]);
@@ -10876,6 +10951,49 @@ function ProfileSettingsModal({ initialData, onClose, onSave, googleAccessToken,
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Google Meet Extension Panel */}
+          <div className="space-y-3 pt-4 border-t border-white/5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-text-main uppercase tracking-tight">Extensão Oficial Google Meet</p>
+                <p className="text-[10px] text-text-muted">Transcrição e evolução clínica com IA.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${hasAcceptedExtensionTerms ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
+                <span className="text-[10px] font-bold text-text-main uppercase tracking-wider">
+                  {hasAcceptedExtensionTerms ? 'ATIVADA' : 'PENDENTE'}
+                </span>
+              </div>
+            </div>
+
+            <div className="glass-card p-3.5 rounded-xl border border-white/5 bg-white/5 space-y-3 text-left">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={onOpenExtensionModal}
+                  className="flex-1 px-3 py-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Chrome size={13} />
+                  {hasAcceptedExtensionTerms ? 'Gerenciar & Reinstalar' : 'Ativar Extensão'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(TCLE_TEMPLATE_TEXT);
+                    alert("Modelo de termo TCLE copiado com sucesso!");
+                  }}
+                  className="px-3 py-2 bg-surface-muted hover:bg-border-ui text-text-muted hover:text-text-main border border-border-ui rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Copy size={13} />
+                  Copiar Termo TCLE
+                </button>
+              </div>
+              <p className="text-[9.5px] text-text-muted leading-relaxed">
+                ⭐ <em>Lembrete:</em> Durante a teleconsulta, <strong>mantenha as legendas em Português ativadas no Google Meet</strong> para que a extensão faça a captura das falas.
+              </p>
+            </div>
           </div>
           
           {(auth.currentUser?.email === 'wellcoutinho99@gmail.com' || auth.currentUser?.email === 'juniorcoutinho58@gmail.com') && (
@@ -11165,12 +11283,14 @@ function ImportTranscriptView({
   patients, 
   clinicalApproach,
   onSaveSession, 
-  onCancel 
+  onCancel,
+  onOpenExtensionModal
 }: { 
   patients: any[], 
   clinicalApproach: string,
   onSaveSession: (patientId: string, date: string, time: string, duration: string, amount: string, type: 'Presencial' | 'Online', note: string) => void,
-  onCancel: () => void 
+  onCancel: () => void,
+  onOpenExtensionModal?: () => void
 }) {
   const [transcriptText, setTranscriptText] = useState('');
   const [selectedPatientId, setSelectedPatientId] = useState('');
@@ -11488,17 +11608,45 @@ function ImportTranscriptView({
       <button id="simplepsi-trigger-import" style={{ display: 'none' }} onClick={handleImportTriggered} />
 
       <div className="flex items-center gap-4">
-        <button onClick={onCancel} className="p-2 rounded-xl bg-surface-muted hover:opacity-80 text-text-muted transition-all">
+        <button onClick={onCancel} className="p-2 rounded-xl bg-surface-muted hover:opacity-80 text-text-muted transition-all cursor-pointer">
           <ChevronRight className="rotate-180" size={24} />
         </button>
         <div>
           <h2 className="text-2xl font-bold uppercase text-text-main">
-            {currentUser?.email?.toLowerCase().trim() === 'wellcoutinho99@gmail.com'
-              ? "📥 Importar Transcrição do Google Meet"
-              : "📥 Importar Transcrição"}
+            📥 Importar Transcrição do Google Meet
           </h2>
           <p className="text-xs text-text-muted mt-0.5">Vincule a chamada capturada ao prontuário de um paciente</p>
         </div>
+      </div>
+
+      {/* Banner Extensão Oficial do Google Meet */}
+      <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-left">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+            <Chrome size={20} />
+          </div>
+          <div>
+            <h4 className="text-xs font-bold text-text-main">
+              Extensão Oficial Google Meet
+            </h4>
+            <p className="text-[11px] text-text-muted">
+              Envie a transcrição da sua sessão online diretamente para esta tela com 1 clique.
+            </p>
+            <p className="text-[9.5px] text-primary/90 mt-0.5 font-medium">
+              ⭐ * Lembrete: A legenda em Português no Google Meet deve permanecer ativada durante a chamada.
+            </p>
+          </div>
+        </div>
+        {onOpenExtensionModal && (
+          <button
+            type="button"
+            onClick={onOpenExtensionModal}
+            className="w-full sm:w-auto px-4 py-2.5 bg-primary text-white hover:opacity-90 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-sm"
+          >
+            <Chrome size={13} />
+            Ver Extensão / Reinstalar
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -11550,9 +11698,7 @@ function ImportTranscriptView({
                 />
                 {!transcriptText && (
                   <p className="text-[10px] text-text-muted mt-2 pl-1 animate-pulse">
-                    {currentUser?.email?.toLowerCase().trim() === 'wellcoutinho99@gmail.com'
-                      ? "💡 Aguardando extensão... Cole a transcrição manualmente ou envie os dados pela extensão do Google Meet."
-                      : "💡 Cole a transcrição bruta da sessão manualmente para iniciar."}
+                    💡 Aguardando dados da extensão... Cole a transcrição da sessão manualmente ou envie os dados capturados pela extensão do Google Meet.
                   </p>
                 )}
               </div>
