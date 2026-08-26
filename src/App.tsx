@@ -195,7 +195,10 @@ import {
   Check,
   X,
   ShieldCheck,
-  Smile
+  Smile,
+  RefreshCw,
+  ExternalLink,
+  AlertTriangle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency, getWhatsAppLink } from './lib/utils';
@@ -350,12 +353,71 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
+// Safe LocalStorage helpers (prevent Safari SecurityError & JSON parse exceptions)
+function safeGetStorage(key: string, fallback: string = ''): string {
+  try {
+    return localStorage.getItem(key) || fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function safeGetStorageJSON<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw);
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function safeSetStorage(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    console.warn(`Could not set localStorage key "${key}":`, e);
+  }
+}
+
+// Safe Date parser (robust against Safari ISO parsing, DD/MM/YYYY, undefined, etc.)
+export function safeDateParse(dateInput: any, fallbackDate: Date = new Date()): Date {
+  if (!dateInput) return fallbackDate;
+  if (dateInput instanceof Date) {
+    return isNaN(dateInput.getTime()) ? fallbackDate : dateInput;
+  }
+  if (typeof dateInput === 'string') {
+    const trimmed = dateInput.trim();
+    if (!trimmed) return fallbackDate;
+    
+    // ISO string with T already (e.g. 2026-08-26T18:53:19.123Z)
+    if (trimmed.includes('T')) {
+      const d = new Date(trimmed);
+      return isNaN(d.getTime()) ? fallbackDate : d;
+    }
+    // Format YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      const d = new Date(`${trimmed}T12:00:00`);
+      return isNaN(d.getTime()) ? fallbackDate : d;
+    }
+    // Format DD/MM/YYYY
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
+      const [dd, mm, yyyy] = trimmed.split('/');
+      const d = new Date(`${yyyy}-${mm}-${dd}T12:00:00`);
+      return isNaN(d.getTime()) ? fallbackDate : d;
+    }
+    const d = new Date(trimmed);
+    return isNaN(d.getTime()) ? fallbackDate : d;
+  }
+  return fallbackDate;
+}
+
 const calculateIncomePrediction = (start: Date, end: Date, sessions: any[], patients: any[]) => {
   let predictedTotal = 0;
   
   // 1. Calculate from recorded non-cancelled sessions
   const recordedInRange = sessions.filter(s => {
-    const d = new Date(s.date + 'T12:00:00');
+    const d = safeDateParse(s.date);
     return d >= start && d <= end && s.status !== 'Cancelada';
   });
   
@@ -373,13 +435,13 @@ const calculateIncomePrediction = (start: Date, end: Date, sessions: any[], pati
         const capitalized = dayName.charAt(0).toUpperCase() + dayName.slice(1);
         if (capitalized !== p.sessionDay) return;
         
-        const pRecurrenceStart = p.recurrenceStart ? new Date(p.recurrenceStart + 'T12:00:00') : new Date(p.createdAt || p.birthDate || '2024-01-01');
+        const pRecurrenceStart = safeDateParse(p.recurrenceStart || p.createdAt || p.birthDate, new Date('2024-01-01T12:00:00'));
         if (startOfDay(d) < startOfDay(pRecurrenceStart)) return;
 
-        const hasRecorded = recordedInRange.some(s => s.patientId === p.id && isSameDay(new Date(s.date + 'T12:00:00'), d));
+        const hasRecorded = recordedInRange.some(s => s.patientId === p.id && isSameDay(safeDateParse(s.date), d));
         if (hasRecorded) return;
 
-        const hasCancelled = sessions.some(s => s.patientId === p.id && s.status === 'Cancelada' && isSameDay(new Date(s.date + 'T12:00:00'), d));
+        const hasCancelled = sessions.some(s => s.patientId === p.id && s.status === 'Cancelada' && isSameDay(safeDateParse(s.date), d));
         if (hasCancelled) return;
 
         const weeksDiff = Math.abs(differenceInWeeks(startOfDay(d), startOfDay(pRecurrenceStart)));
@@ -439,27 +501,27 @@ Como posso te ajudar hoje?`
   const [supportSessionId, setSupportSessionId] = useState('');
   const [runTour, setRunTour] = useState(false);
   const [profileSettings, setProfileSettings] = useState({
-    name: localStorage.getItem('prof_name') || '',
-    crp: localStorage.getItem('prof_crp') || '',
-    logo: localStorage.getItem('prof_logo') || '',
-    isGoogleCalendarEnabled: localStorage.getItem('prof_gcal_enabled') === 'true',
-    clinicalApproach: localStorage.getItem('prof_approach') || 'tcc',
-    trialStartDate: localStorage.getItem('prof_trial_start') || null,
-    isTrial: localStorage.getItem('prof_is_trial') === 'true',
-    tccAiUsage: JSON.parse(localStorage.getItem('prof_tcc_ai_usage') || '[]') as string[],
-    cpfCnpj: localStorage.getItem('prof_cpf_cnpj') || '',
-    address: localStorage.getItem('prof_address') || '',
-    phone: localStorage.getItem('prof_phone') || '',
-    signatureText: localStorage.getItem('prof_signature_text') || '',
-    pixKey: localStorage.getItem('prof_pix_key') || '',
-    pixType: localStorage.getItem('prof_pix_type') || '',
-    pixName: localStorage.getItem('prof_pix_name') || ''
+    name: safeGetStorage('prof_name'),
+    crp: safeGetStorage('prof_crp'),
+    logo: safeGetStorage('prof_logo'),
+    isGoogleCalendarEnabled: safeGetStorage('prof_gcal_enabled') === 'true',
+    clinicalApproach: safeGetStorage('prof_approach', 'tcc'),
+    trialStartDate: safeGetStorage('prof_trial_start') || null,
+    isTrial: safeGetStorage('prof_is_trial') === 'true',
+    tccAiUsage: safeGetStorageJSON<string[]>('prof_tcc_ai_usage', []),
+    cpfCnpj: safeGetStorage('prof_cpf_cnpj'),
+    address: safeGetStorage('prof_address'),
+    phone: safeGetStorage('prof_phone'),
+    signatureText: safeGetStorage('prof_signature_text'),
+    pixKey: safeGetStorage('prof_pix_key'),
+    pixType: safeGetStorage('prof_pix_type'),
+    pixName: safeGetStorage('prof_pix_name')
   });
 
   // Helper to calculate trial remaining days
   const trialRemainingDays = useMemo(() => {
     if (!profileSettings.trialStartDate) return 7;
-    const start = new Date(profileSettings.trialStartDate);
+    const start = safeDateParse(profileSettings.trialStartDate);
     const today = new Date();
     
     // Set times to midnight to calculate pure date differences
@@ -474,10 +536,10 @@ Como posso te ajudar hoje?`
   const isTrialExpired = useMemo(() => {
     return profileSettings.isTrial && trialRemainingDays < 0;
   }, [profileSettings.isTrial, trialRemainingDays]);
-  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(localStorage.getItem('google_calendar_access_token'));
+  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(() => safeGetStorage('google_calendar_access_token') || null);
   const [showExtensionModal, setShowExtensionModal] = useState(false);
-  const [hasAcceptedExtensionTerms, setHasAcceptedExtensionTerms] = useState(() => localStorage.getItem("simplepsi_meet_extension_consent") === "true");
-  const [isExtensionBannerDismissed, setIsExtensionBannerDismissed] = useState(() => localStorage.getItem("simplepsi_meet_banner_dismissed") === "true");
+  const [hasAcceptedExtensionTerms, setHasAcceptedExtensionTerms] = useState(() => safeGetStorage("simplepsi_meet_extension_consent") === "true");
+  const [isExtensionBannerDismissed, setIsExtensionBannerDismissed] = useState(() => safeGetStorage("simplepsi_meet_banner_dismissed") === "true");
   const [patients, setPatients] = useState<Patient[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -9118,7 +9180,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
 
   const monthlyReceived = useMemo(() => {
     return sessions.filter(s => {
-      const d = new Date(s.date + 'T12:00:00');
+      const d = safeDateParse(s.date);
       return isSameMonth(d, new Date()) && s.paid;
     }).reduce((acc, s) => acc + (s.amount || 0), 0);
   }, [sessions]);
@@ -9126,26 +9188,26 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
   const prevMonthlyReceived = useMemo(() => {
     const lastMonth = subMonths(new Date(), 1);
     return sessions.filter(s => {
-      const d = new Date(s.date + 'T12:00:00');
+      const d = safeDateParse(s.date);
       return isSameMonth(d, lastMonth) && s.paid;
     }).reduce((acc, s) => acc + (s.amount || 0), 0);
   }, [sessions]);
 
   const monthlyPending = useMemo(() => {
     return sessions.filter(s => {
-      const d = new Date(s.date + 'T12:00:00');
+      const d = safeDateParse(s.date);
       return isSameMonth(d, new Date()) && !s.paid && s.status !== 'Cancelada';
     }).reduce((acc, s) => acc + (s.amount || 0), 0);
   }, [sessions]);
 
   const manualExpenses = useMemo(() => {
-    return transactions.filter(t => t.type === 'Despesa' && isSameMonth(new Date(t.date + 'T12:00:00'), new Date()))
+    return transactions.filter(t => t.type === 'Despesa' && isSameMonth(safeDateParse(t.date), new Date()))
       .reduce((acc, t) => acc + (t.amount || 0), 0);
   }, [transactions]);
 
   const prevManualExpenses = useMemo(() => {
     const lastMonth = subMonths(new Date(), 1);
-    return transactions.filter(t => t.type === 'Despesa' && isSameMonth(new Date(t.date + 'T12:00:00'), lastMonth))
+    return transactions.filter(t => t.type === 'Despesa' && isSameMonth(safeDateParse(t.date), lastMonth))
       .reduce((acc, t) => acc + (t.amount || 0), 0);
   }, [transactions]);
 
@@ -9187,7 +9249,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
       if (selectedPatientId !== 'all' && p.id !== selectedPatientId) return;
 
       if (p.sessionDay && p.recurrence && p.recurrence !== 'Nenhuma') {
-        const genStart = selectedPatientId === 'all' ? start : new Date(p.recurrenceStart || p.createdAt || '2024-01-01');
+        const genStart = selectedPatientId === 'all' ? start : safeDateParse(p.recurrenceStart || p.createdAt, new Date('2024-01-01T12:00:00'));
         const genEnd = selectedPatientId === 'all' ? end : currentWeekEnd;
 
         if (genStart <= genEnd) {
@@ -9197,7 +9259,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
             const capitalized = dayName.charAt(0).toUpperCase() + dayName.slice(1);
             if (capitalized !== p.sessionDay) return;
             
-            const pRecurrenceStart = p.recurrenceStart ? new Date(p.recurrenceStart + 'T12:00:00') : new Date(p.createdAt || p.birthDate || '2024-01-01');
+            const pRecurrenceStart = safeDateParse(p.recurrenceStart || p.createdAt || p.birthDate, new Date('2024-01-01T12:00:00'));
             if (startOfDay(d) < startOfDay(pRecurrenceStart)) return;
 
             const weeksDiff = Math.abs(differenceInWeeks(startOfDay(d), startOfDay(pRecurrenceStart)));
@@ -9208,8 +9270,8 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
 
             if (!isRecurrenceDay) return;
 
-            const hasRecorded = list.some(s => s.patientId === p.id && isSameDay(new Date(s.date + 'T12:00:00'), d));
-            const hasCancelled = sessions.some(s => s.patientId === p.id && s.status === 'Cancelada' && isSameDay(new Date(s.date + 'T12:00:00'), d));
+            const hasRecorded = list.some(s => s.patientId === p.id && isSameDay(safeDateParse(s.date), d));
+            const hasCancelled = sessions.some(s => s.patientId === p.id && s.status === 'Cancelada' && isSameDay(safeDateParse(s.date), d));
 
             if (!hasRecorded && !hasCancelled) {
               list.push({
@@ -9234,7 +9296,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
     }
 
     list = list.filter(s => {
-      const d = new Date(s.date + 'T12:00:00');
+      const d = safeDateParse(s.date);
       
       if (selectedPatientId === 'all') {
         const isSelectedWeek = d >= start && d <= end;
@@ -9265,7 +9327,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
   }, [sessions, patients, filter, currentFinanceDate, selectedPatientId]);
 
   const displayExpenses = useMemo(() => {
-    return transactions.filter(t => t.type === 'Despesa').sort((a, b) => b.date.localeCompare(a.date));
+    return transactions.filter(t => t.type === 'Despesa').sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   }, [transactions]);
 
   const handleSaveExpense = () => {
@@ -9298,10 +9360,10 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
         if (type === 'receita') {
           val = calculatePrediction(s, e);
         } else if (type === 'despesa') {
-          val = transactions.filter(t => t.type === 'Despesa' && isSameMonth(new Date(t.date + 'T12:00:00'), m)).reduce((acc, t) => acc + (t.amount || 0), 0);
+          val = transactions.filter(t => t.type === 'Despesa' && isSameMonth(safeDateParse(t.date), m)).reduce((acc, t) => acc + (t.amount || 0), 0);
         } else if (type === 'lucro') {
-          const rec = sessions.filter(x => isSameMonth(new Date(x.date + 'T12:00:00'), m) && x.paid).reduce((acc, x) => acc + (x.amount || 0), 0);
-          const desp = transactions.filter(t => t.type === 'Despesa' && isSameMonth(new Date(t.date + 'T12:00:00'), m)).reduce((acc, t) => acc + (t.amount || 0), 0);
+          const rec = sessions.filter(x => isSameMonth(safeDateParse(x.date), m) && x.paid).reduce((acc, x) => acc + (x.amount || 0), 0);
+          const desp = transactions.filter(t => t.type === 'Despesa' && isSameMonth(safeDateParse(t.date), m)).reduce((acc, t) => acc + (t.amount || 0), 0);
           val = rec - desp;
         }
         data.push({ label: format(m, 'MMMM yyyy', { locale: ptBR }), value: val });
@@ -9941,7 +10003,7 @@ function CalendarView({
     const daySessions: any[] = [];
 
     // 1. Recorded Sessions from 'sessions' collection
-    const recordedSessions = sessions.filter(s => s.status !== 'Cancelada' && isSameDay(new Date(s.date + 'T12:00:00'), day));
+    const recordedSessions = sessions.filter(s => s.status !== 'Cancelada' && isSameDay(safeDateParse(s.date), day));
     recordedSessions.forEach(s => {
       // Show cancelled sessions but with distinct style (handled by CSS)
       const p = patients.find(pat => pat.id === s.patientId);
@@ -9961,11 +10023,11 @@ function CalendarView({
       if (p.sessionDay === capitalizedDayName && p.sessionTime && p.sessionDay !== '' && p.sessionDay !== 'Nenhum') {
         // Skip if there's already a recorded session for this patient today
         const hasRecorded = recordedSessions.some(s => s.patientId === p.id);
-        const hasCancelled = sessions.some(s => s.patientId === p.id && s.status === 'Cancelada' && isSameDay(new Date(s.date + 'T12:00:00'), day));
+        const hasCancelled = sessions.some(s => s.patientId === p.id && s.status === 'Cancelada' && isSameDay(safeDateParse(s.date), day));
         
         if (hasRecorded || hasCancelled) return;
 
-        const pRecurrenceStart = p.recurrenceStart ? new Date(p.recurrenceStart + 'T12:00:00') : new Date(p.createdAt || p.birthDate || '2024-01-01');
+        const pRecurrenceStart = safeDateParse(p.recurrenceStart || p.createdAt || p.birthDate, new Date('2024-01-01T12:00:00'));
         if (startOfDay(day) < startOfDay(pRecurrenceStart)) return;
         const weeksDiff = Math.abs(differenceInWeeks(startOfDay(day), startOfDay(pRecurrenceStart)));
         
@@ -9992,12 +10054,14 @@ function CalendarView({
       }
     });
 
-    return daySessions.sort((a, b) => a.time.localeCompare(b.time));
+    return daySessions.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
   };
 
   const calculateSessionNumber = (patient: any, targetDay: Date) => {
-    const baseCount = parseInt(patient.sessions) || 0;
-    const pRecurrenceStart = patient.recurrenceStart ? new Date(patient.recurrenceStart + 'T12:00:00') : new Date(patient.createdAt || '2024-01-01');
+    const baseCount = parseInt(patient?.sessions) || 0;
+    if (!patient?.sessionDay || patient.sessionDay === 'Nenhum') return baseCount;
+
+    const pRecurrenceStart = safeDateParse(patient.recurrenceStart || patient.createdAt || '2024-01-01T12:00:00');
     const start = startOfDay(pRecurrenceStart);
     const end = startOfDay(targetDay);
     

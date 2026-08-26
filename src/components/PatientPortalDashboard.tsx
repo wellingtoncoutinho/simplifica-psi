@@ -855,10 +855,47 @@ export default function PatientPortalDashboard() {
       });
       setActiveModuleModal(null);
       // Reset forms
-      setTocForm({ trigger: '', anxietyLevel: 5, compulsion: '', resisted: 'yes', delayMinutes: 15, notes: '' });
-      setPanicForm({ intensity: 7, symptoms: [], copingUsed: '', thoughts: '', notes: '' });
-      setDepressionForm({ activity: '', pleasureLevel: 5, masteryLevel: 5, notes: '' });
-      setAnxietyForm({ anxietyLevel: 6, concern: '', inControl: true, actionPlan: '', notes: '' });
+      setTocForm({
+        mode: 'episode',
+        trigger: '',
+        anxietyLevel: 5,
+        compulsion: '',
+        resisted: 'yes',
+        delayMinutes: 15,
+        dailyControlScore: 7,
+        dailyVictories: '',
+        notes: ''
+      });
+      setPanicForm({
+        mode: 'episode',
+        intensity: 7,
+        symptoms: [],
+        copingUsed: '',
+        anticipatoryAnxiety: 4,
+        exposureSituation: '',
+        dailyVictories: '',
+        generalThoughts: '',
+        notes: ''
+      });
+      setDepressionForm({
+        mode: 'episode',
+        activity: '',
+        pleasureLevel: 5,
+        masteryLevel: 5,
+        energyLevel: 5,
+        generalThoughts: '',
+        notes: ''
+      });
+      setAnxietyForm({
+        mode: 'episode',
+        anxietyLevel: 6,
+        concern: '',
+        inControl: true,
+        actionPlan: '',
+        generalThoughts: '',
+        dailyVictories: '',
+        notes: ''
+      });
       setSleepForm({ bedTime: '23:00', wakeTime: '07:00', sleepQuality: 4, awakenings: 0, notes: '' });
       setRpdForm({ situation: '', automaticThought: '', emotion: '', alternativeThought: '', notes: '' });
     } catch (err) {
