@@ -357,18 +357,24 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Safe LocalStorage helpers (prevent Safari SecurityError & JSON parse exceptions)
+// Safe LocalStorage helpers with memory fallback (prevent Safari Private Browsing SecurityError & QuotaExceededError)
+const memoryStorage: Record<string, string> = {};
+
 function safeGetStorage(key: string, fallback: string = ''): string {
   try {
-    return localStorage.getItem(key) || fallback;
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const val = localStorage.getItem(key);
+      if (val !== null && val !== undefined) return val;
+    }
   } catch (e) {
-    return fallback;
+    // Fallback to memory
   }
+  return memoryStorage[key] ?? fallback;
 }
 
 function safeGetStorageJSON<T>(key: string, fallback: T): T {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = safeGetStorage(key);
     if (!raw) return fallback;
     return JSON.parse(raw);
   } catch (e) {
@@ -378,9 +384,23 @@ function safeGetStorageJSON<T>(key: string, fallback: T): T {
 
 function safeSetStorage(key: string, value: string): void {
   try {
-    localStorage.setItem(key, value);
+    memoryStorage[key] = value;
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem(key, value);
+    }
   } catch (e) {
-    console.warn(`Could not set localStorage key "${key}":`, e);
+    // Silently fall back to in-memory in Safari Private Mode
+  }
+}
+
+function safeRemoveStorage(key: string): void {
+  try {
+    delete memoryStorage[key];
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.removeItem(key);
+    }
+  } catch (e) {
+    // Silently ignore in Safari Private Mode
   }
 }
 
@@ -767,22 +787,22 @@ Como posso te ajudar hoje?`
           pixType: data.pixType || '',
           pixName: data.pixName || ''
         });
-        // Also update localStorage as backup/cache
-        localStorage.setItem('prof_name', data.name || '');
-        localStorage.setItem('prof_crp', data.crp || '');
-        localStorage.setItem('prof_logo', data.logo || '');
-        localStorage.setItem('prof_gcal_enabled', data.isGoogleCalendarEnabled ? 'true' : 'false');
-        localStorage.setItem('prof_approach', data.clinicalApproach || 'tcc');
-        localStorage.setItem('prof_trial_start', data.trialStartDate || '');
-        localStorage.setItem('prof_is_trial', data.isTrial ? 'true' : 'false');
-        localStorage.setItem('prof_tcc_ai_usage', JSON.stringify(data.tccAiUsage || []));
-        localStorage.setItem('prof_cpf_cnpj', data.cpfCnpj || '');
-        localStorage.setItem('prof_address', data.address || '');
-        localStorage.setItem('prof_phone', data.phone || '');
-        localStorage.setItem('prof_signature_text', data.signatureText || '');
-        localStorage.setItem('prof_pix_key', data.pixKey || '');
-        localStorage.setItem('prof_pix_type', data.pixType || '');
-        localStorage.setItem('prof_pix_name', data.pixName || '');
+        // Also update storage as backup/cache
+        safeSetStorage('prof_name', data.name || '');
+        safeSetStorage('prof_crp', data.crp || '');
+        safeSetStorage('prof_logo', data.logo || '');
+        safeSetStorage('prof_gcal_enabled', data.isGoogleCalendarEnabled ? 'true' : 'false');
+        safeSetStorage('prof_approach', data.clinicalApproach || 'tcc');
+        safeSetStorage('prof_trial_start', data.trialStartDate || '');
+        safeSetStorage('prof_is_trial', data.isTrial ? 'true' : 'false');
+        safeSetStorage('prof_tcc_ai_usage', JSON.stringify(data.tccAiUsage || []));
+        safeSetStorage('prof_cpf_cnpj', data.cpfCnpj || '');
+        safeSetStorage('prof_address', data.address || '');
+        safeSetStorage('prof_phone', data.phone || '');
+        safeSetStorage('prof_signature_text', data.signatureText || '');
+        safeSetStorage('prof_pix_key', data.pixKey || '');
+        safeSetStorage('prof_pix_type', data.pixType || '');
+        safeSetStorage('prof_pix_name', data.pixName || '');
       }
     });
 
@@ -978,7 +998,7 @@ Como posso te ajudar hoje?`
   // Trigger Tour on first login if name/CRP are not set and tour not completed
   useEffect(() => {
     if (!loading && user) {
-      const isTourCompleted = localStorage.getItem('simplepsi_tour_completed') === 'true';
+      const isTourCompleted = safeGetStorage('simplepsi_tour_completed') === 'true';
       if (isTourCompleted) return;
 
       const isProfileEmpty = !profileSettings?.name && !profileSettings?.crp;
@@ -994,8 +1014,8 @@ Como posso te ajudar hoje?`
 
   useEffect(() => {
     if (user && profileSettings.isGoogleCalendarEnabled && patients.length > 0 && !hasRunSilentSync.current) {
-      const token = localStorage.getItem('google_calendar_access_token');
-      const expiresAtStr = localStorage.getItem('google_calendar_expires_at');
+      const token = safeGetStorage('google_calendar_access_token');
+      const expiresAtStr = safeGetStorage('google_calendar_expires_at');
       const expiresAt = expiresAtStr ? parseInt(expiresAtStr) : 0;
       const now = new Date().getTime();
 
@@ -1110,7 +1130,7 @@ Como posso te ajudar hoje?`
 
     if (status === STATUS.FINISHED || status === STATUS.SKIPPED) {
       setRunTour(false);
-      localStorage.setItem('simplepsi_tour_completed', 'true');
+      safeSetStorage('simplepsi_tour_completed', 'true');
       setIsMobileMenuOpen(false);
     }
   };
@@ -1386,7 +1406,7 @@ Como posso te ajudar hoje?`
       const result = await signInWithGoogle();
       const credential = GoogleAuthProvider.credentialFromResult(result);
       if (credential && credential.accessToken) {
-        localStorage.setItem('google_calendar_access_token', credential.accessToken);
+        safeSetStorage('google_calendar_access_token', credential.accessToken);
         setGoogleAccessToken(credential.accessToken);
       }
     } catch (err) {
@@ -1495,7 +1515,7 @@ Como posso te ajudar hoje?`
       console.log(`Iniciando reconciliação em lote de ${futureSlots.length} consultas futuras...`);
       
       // Temporary override to ensure local token is active
-      localStorage.setItem('google_calendar_access_token', accessToken);
+      safeSetStorage('google_calendar_access_token', accessToken);
 
       let successCount = 0;
       let failCount = 0;
@@ -1566,8 +1586,8 @@ Como posso te ajudar hoje?`
       const credential = GoogleAuthProvider.credentialFromResult(result);
       if (credential && credential.accessToken) {
         const expiresAt = new Date().getTime() + 3500 * 1000; // ~1 hour
-        localStorage.setItem('google_calendar_access_token', credential.accessToken);
-        localStorage.setItem('google_calendar_expires_at', expiresAt.toString());
+        safeSetStorage('google_calendar_access_token', credential.accessToken);
+        safeSetStorage('google_calendar_expires_at', expiresAt.toString());
         setGoogleAccessToken(credential.accessToken);
         
         // Turn on the toggle in profiles document too!
@@ -1679,8 +1699,8 @@ Como posso te ajudar hoje?`
   };
 
   const ensureValidCalendarToken = async (): Promise<string | null> => {
-    const token = localStorage.getItem('google_calendar_access_token');
-    const expiresAtStr = localStorage.getItem('google_calendar_expires_at');
+    const token = safeGetStorage('google_calendar_access_token');
+    const expiresAtStr = safeGetStorage('google_calendar_expires_at');
     const expiresAt = expiresAtStr ? parseInt(expiresAtStr) : 0;
     const now = new Date().getTime();
     
@@ -1691,8 +1711,8 @@ Como posso te ajudar hoje?`
 
     // Se expirou, limpa o token local para que a UI mostre status real (desconectado/reconectar)
     if (token && now >= expiresAt - 2 * 60 * 1000) {
-      localStorage.removeItem('google_calendar_access_token');
-      localStorage.removeItem('google_calendar_expires_at');
+      safeRemoveStorage('google_calendar_access_token');
+      safeRemoveStorage('google_calendar_expires_at');
       setGoogleAccessToken(null);
     }
     
@@ -1709,8 +1729,8 @@ Como posso te ajudar hoje?`
         const credential = GoogleAuthProvider.credentialFromResult(result);
         if (credential && credential.accessToken) {
           const expiresAt = new Date().getTime() + 3500 * 1000;
-          localStorage.setItem('google_calendar_access_token', credential.accessToken);
-          localStorage.setItem('google_calendar_expires_at', expiresAt.toString());
+          safeSetStorage('google_calendar_access_token', credential.accessToken);
+          safeSetStorage('google_calendar_expires_at', expiresAt.toString());
           setGoogleAccessToken(credential.accessToken);
           token = credential.accessToken;
           if (user) {
@@ -1772,8 +1792,8 @@ Como posso te ajudar hoje?`
 
       if (response.status === 401) {
         console.warn("Token da Google Agenda expirou (401).");
-        localStorage.removeItem('google_calendar_access_token');
-        localStorage.removeItem('google_calendar_expires_at');
+        safeRemoveStorage('google_calendar_access_token');
+        safeRemoveStorage('google_calendar_expires_at');
         setGoogleAccessToken(null);
         return false;
       }
@@ -1833,8 +1853,8 @@ Como posso te ajudar hoje?`
 
       if (response.status === 401) {
         console.warn("Token da Google Agenda expirou (401).");
-        localStorage.removeItem('google_calendar_access_token');
-        localStorage.removeItem('google_calendar_expires_at');
+        safeRemoveStorage('google_calendar_access_token');
+        safeRemoveStorage('google_calendar_expires_at');
         setGoogleAccessToken(null);
         return false;
       }
@@ -1862,8 +1882,8 @@ Como posso te ajudar hoje?`
 
       if (response.status === 401) {
         console.warn("Token da Google Agenda expirou (401).");
-        localStorage.removeItem('google_calendar_access_token');
-        localStorage.removeItem('google_calendar_expires_at');
+        safeRemoveStorage('google_calendar_access_token');
+        safeRemoveStorage('google_calendar_expires_at');
         setGoogleAccessToken(null);
       }
     } catch (err) {
@@ -2730,7 +2750,7 @@ Como posso te ajudar hoje?`
                 isExtensionBannerDismissed={isExtensionBannerDismissed}
                 onDismissExtensionBanner={() => {
                   setIsExtensionBannerDismissed(true);
-                  localStorage.setItem('simplepsi_meet_banner_dismissed', 'true');
+                  safeSetStorage('simplepsi_meet_banner_dismissed', 'true');
                 }}
                 isMigrationAllowed={isMigrationAllowed}
                 onOpenMigrationModal={() => setShowMigrationModal(true)}
@@ -2992,18 +3012,18 @@ Como posso te ajudar hoje?`
                     alert("Erro ao salvar configurações do perfil no banco de dados.");
                   }
                 } else {
-                  // Fallback to localStorage if no user
-                  localStorage.setItem('prof_name', data.name);
-                  localStorage.setItem('prof_crp', data.crp);
-                  localStorage.setItem('prof_logo', data.logo);
-                  localStorage.setItem('prof_approach', data.clinicalApproach || 'tcc');
-                  localStorage.setItem('prof_cpf_cnpj', data.cpfCnpj || '');
-                  localStorage.setItem('prof_address', data.address || '');
-                  localStorage.setItem('prof_phone', data.phone || '');
-                  localStorage.setItem('prof_signature_text', data.signatureText || '');
-                  localStorage.setItem('prof_pix_key', data.pixKey || '');
-                  localStorage.setItem('prof_pix_type', data.pixType || '');
-                  localStorage.setItem('prof_pix_name', data.pixName || '');
+                  // Fallback to storage if no user
+                  safeSetStorage('prof_name', data.name);
+                  safeSetStorage('prof_crp', data.crp);
+                  safeSetStorage('prof_logo', data.logo);
+                  safeSetStorage('prof_approach', data.clinicalApproach || 'tcc');
+                  safeSetStorage('prof_cpf_cnpj', data.cpfCnpj || '');
+                  safeSetStorage('prof_address', data.address || '');
+                  safeSetStorage('prof_phone', data.phone || '');
+                  safeSetStorage('prof_signature_text', data.signatureText || '');
+                  safeSetStorage('prof_pix_key', data.pixKey || '');
+                  safeSetStorage('prof_pix_type', data.pixType || '');
+                  safeSetStorage('prof_pix_name', data.pixName || '');
                   setProfileSettings(data);
                   setIsSettingsOpen(false);
                 }
@@ -3019,7 +3039,7 @@ Como posso te ajudar hoje?`
           hasAccepted={hasAcceptedExtensionTerms}
           onAccept={() => {
             setHasAcceptedExtensionTerms(true);
-            localStorage.setItem("simplepsi_meet_extension_consent", "true");
+            safeSetStorage("simplepsi_meet_extension_consent", "true");
           }}
         />
 

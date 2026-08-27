@@ -24,6 +24,44 @@
     
     <!-- Android / Samsung Chrome Icon -->
     <link rel="icon" type="image/png" sizes="192x192" href="/android-chrome-192x192.png?v=2" />
+
+    <!-- Safari / WebKit Compatibility & Private Browsing Polyfill -->
+    <script>
+      (function() {
+        if (typeof Promise !== 'undefined' && typeof Promise.withResolvers === 'undefined') {
+          Promise.withResolvers = function() {
+            var resolve, reject;
+            var promise = new Promise(function(res, rej) {
+              resolve = res;
+              reject = rej;
+            });
+            return { promise: promise, resolve: resolve, reject: reject };
+          };
+        }
+        try {
+          var testKey = '__simplepsi_probe__';
+          window.localStorage.setItem(testKey, '1');
+          window.localStorage.removeItem(testKey);
+        } catch (e) {
+          console.warn('Safari Private Window: using in-memory storage proxy');
+          var mem = {};
+          try {
+            Object.defineProperty(window, 'localStorage', {
+              value: {
+                getItem: function(k) { return mem[k] || null; },
+                setItem: function(k, v) { mem[k] = String(v); },
+                removeItem: function(k) { delete mem[k]; },
+                clear: function() { mem = {}; },
+                key: function(i) { return Object.keys(mem)[i] || null; },
+                get length() { return Object.keys(mem).length; }
+              },
+              writable: true,
+              configurable: true
+            });
+          } catch(err) {}
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
