@@ -135,7 +135,7 @@ export async function parseMigrationDataWithGemini(
 
   const prompt = `
 Você é um especialista em migração de dados clínicos para a plataforma SimplePsi (prontuários psicológicos).
-Analise o texto a seguir extraído de relatórios, prontuários, planilhas ou documentos de outros sistemas de psicologia (como Cintropia, Psicomanager, Zenklub, Vittude, anotações de consultório).
+Analise o texto a seguir extraído de relatórios, prontuários, planilhas ou documentos clínicos (exportados de qualquer sistema de psicologia ou anotações de consultório).
 
 TEXTO BRUTO EXTRAÍDO:
 ---

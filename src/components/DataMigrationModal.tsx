@@ -287,7 +287,7 @@ export function DataMigrationModal({
                 </span>
               </div>
               <p className="text-xs text-text-muted mt-0.5">
-                Importe prontuários e históricos da <strong>Cintropia, Psicomanager, Zenklub</strong> ou planilhas em segundos com IA.
+                Importe prontuários, cadastros e históricos clínicos de qualquer plataforma ou planilha em segundos com IA.
               </p>
             </div>
           </div>
@@ -402,10 +402,10 @@ export function DataMigrationModal({
                   <div className="bg-surface-muted/40 border border-border-ui rounded-2xl p-4 space-y-1.5">
                     <div className="flex items-center gap-2 text-xs font-bold text-text-main">
                       <FileCheck size={16} className="text-primary" />
-                      <span>Sistemas Compatíveis</span>
+                      <span>Compatibilidade Universal</span>
                     </div>
                     <p className="text-[11px] text-text-muted leading-relaxed">
-                      Compatível com relatórios e prontuários exportados da <strong>Cintropia, Psicomanager, Zenklub, Vittude, Psymeet</strong> ou documentos de texto.
+                      Compatível com PDFs de prontuários, relatórios clínicos, evoluções de sessões e planilhas exportadas de <strong>qualquer plataforma ou sistema</strong>.
                     </p>
                   </div>
                   <div className="bg-surface-muted/40 border border-border-ui rounded-2xl p-4 space-y-1.5">

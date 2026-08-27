@@ -3640,7 +3640,7 @@ function DashboardView({
                 </span>
               </div>
               <p className="text-[11px] text-text-muted mt-0.5">
-                Arraste seus PDFs ou planilhas da <strong>Cintropia, Psicomanager ou Zenklub</strong> para importar pacientes e histórico clínico automaticamente.
+                Arraste seus PDFs de prontuários ou planilhas de pacientes para importar cadastros e histórico clínico automaticamente com IA.
               </p>
             </div>
           </div>
