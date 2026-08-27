@@ -28,6 +28,7 @@
     <!-- Safari / WebKit Compatibility & Private Browsing Polyfill -->
     <script>
       (function() {
+        // 1. Polyfill Promise.withResolvers for Safari < 17.4
         if (typeof Promise !== 'undefined' && typeof Promise.withResolvers === 'undefined') {
           Promise.withResolvers = function() {
             var resolve, reject;
@@ -38,27 +39,68 @@
             return { promise: promise, resolve: resolve, reject: reject };
           };
         }
+
+        // 2. Safe Storage Polyfill for Safari Private Browsing & Cookie Blocking
+        var memStorage = {};
+        if (typeof Storage !== 'undefined') {
+          var origSet = Storage.prototype.setItem;
+          var origGet = Storage.prototype.getItem;
+          var origRemove = Storage.prototype.removeItem;
+          var origClear = Storage.prototype.clear;
+
+          Storage.prototype.setItem = function(key, val) {
+            try {
+              origSet.call(this, key, val);
+            } catch (e) {
+              memStorage[key] = String(val);
+            }
+          };
+
+          Storage.prototype.getItem = function(key) {
+            try {
+              var res = origGet.call(this, key);
+              if (res !== null) return res;
+            } catch (e) {}
+            return memStorage.hasOwnProperty(key) ? memStorage[key] : null;
+          };
+
+          Storage.prototype.removeItem = function(key) {
+            try {
+              origRemove.call(this, key);
+            } catch (e) {}
+            delete memStorage[key];
+          };
+
+          Storage.prototype.clear = function() {
+            try {
+              origClear.call(this);
+            } catch (e) {}
+            memStorage = {};
+          };
+        }
+
+        // 3. Fallback in case window.localStorage throws SecurityError on access
         try {
-          var testKey = '__simplepsi_probe__';
-          window.localStorage.setItem(testKey, '1');
-          window.localStorage.removeItem(testKey);
+          var _probe = window.localStorage;
         } catch (e) {
-          console.warn('Safari Private Window: using in-memory storage proxy');
-          var mem = {};
           try {
-            Object.defineProperty(window, 'localStorage', {
-              value: {
-                getItem: function(k) { return mem[k] || null; },
-                setItem: function(k, v) { mem[k] = String(v); },
-                removeItem: function(k) { delete mem[k]; },
-                clear: function() { mem = {}; },
-                key: function(i) { return Object.keys(mem)[i] || null; },
-                get length() { return Object.keys(mem).length; }
-              },
-              writable: true,
+            var dummyStorage = {
+              getItem: function(k) { return memStorage[k] || null; },
+              setItem: function(k, v) { memStorage[k] = String(v); },
+              removeItem: function(k) { delete memStorage[k]; },
+              clear: function() { memStorage = {}; },
+              key: function(i) { return Object.keys(memStorage)[i] || null; },
+              get length() { return Object.keys(memStorage).length; }
+            };
+            Object.defineProperty(Window.prototype, 'localStorage', {
+              get: function() { return dummyStorage; },
               configurable: true
             });
-          } catch(err) {}
+            Object.defineProperty(Window.prototype, 'sessionStorage', {
+              get: function() { return dummyStorage; },
+              configurable: true
+            });
+          } catch (err) {}
         }
       })();
     </script>

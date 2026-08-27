@@ -1,14 +1,8 @@
-import * as pdfjsLib from 'pdfjs-dist';
 import JSZip from 'jszip';
 import { GoogleGenAI } from '@google/genai';
 import { collection, writeBatch, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Patient } from '../types';
-
-// Configure PDF.js worker safely
-if (typeof window !== 'undefined') {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
-}
 
 export interface ImportedEvolutionPreview {
   id?: string;
@@ -44,6 +38,11 @@ export interface ImportedPatientPreview {
 
 export async function extractTextFromPdfFile(file: File): Promise<string> {
   try {
+    const pdfjsLib = await import('pdfjs-dist');
+    if (typeof window !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+    }
+
     const arrayBuffer = await file.arrayBuffer();
     const loadingTask = pdfjsLib.getDocument({
       data: new Uint8Array(arrayBuffer),
