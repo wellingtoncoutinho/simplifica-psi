@@ -1,10 +1,11 @@
 import * as pdfjsLib from 'pdfjs-dist';
+import JSZip from 'jszip';
 import { GoogleGenAI } from '@google/genai';
 import { collection, writeBatch, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Patient } from '../types';
 
-// Configure PDF.js worker
+// Configure PDF.js worker safely
 if (typeof window !== 'undefined') {
   pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 }
@@ -66,6 +67,38 @@ export async function extractTextFromPdfFile(file: File): Promise<string> {
   }
 }
 
+export async function extractTextFromDocxFile(file: File): Promise<string> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const zip = await JSZip.loadAsync(arrayBuffer);
+    const docXmlFile = zip.file('word/document.xml');
+    if (!docXmlFile) {
+      throw new Error('Formato Word inválido: arquivo word/document.xml não encontrado');
+    }
+    const docXml = await docXmlFile.async('text');
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(docXml, 'application/xml');
+    const paragraphs = xmlDoc.getElementsByTagName('w:p');
+    const lines: string[] = [];
+
+    for (let i = 0; i < paragraphs.length; i++) {
+      const p = paragraphs[i];
+      const textNodes = p.getElementsByTagName('w:t');
+      let paragraphText = '';
+      for (let j = 0; j < textNodes.length; j++) {
+        paragraphText += textNodes[j].textContent || '';
+      }
+      if (paragraphText.trim().length > 0) {
+        lines.push(paragraphText.trim());
+      }
+    }
+    return lines.join('\n');
+  } catch (error: any) {
+    console.error('Erro ao ler arquivo Word (.docx):', error);
+    throw new Error(`Falha ao ler o arquivo Word (.docx) "${file.name}": ${error.message || 'Arquivo corrompido ou formato incompatível'}`);
+  }
+}
+
 export function extractTextFromPlainFile(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -79,6 +112,9 @@ export async function extractTextFromFile(file: File): Promise<string> {
   const fileNameLower = file.name.toLowerCase();
   if (fileNameLower.endsWith('.pdf')) {
     return extractTextFromPdfFile(file);
+  }
+  if (fileNameLower.endsWith('.docx')) {
+    return extractTextFromDocxFile(file);
   }
   return extractTextFromPlainFile(file);
 }

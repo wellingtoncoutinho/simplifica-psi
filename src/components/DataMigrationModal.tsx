@@ -93,14 +93,14 @@ export function DataMigrationModal({
   };
 
   const addFiles = (newFiles: File[]) => {
-    const validExtensions = ['.pdf', '.csv', '.txt', '.json', '.tsv'];
+    const validExtensions = ['.pdf', '.docx', '.doc', '.csv', '.txt', '.json', '.tsv'];
     const validFiles = newFiles.filter(f => {
       const lower = f.name.toLowerCase();
       return validExtensions.some(ext => lower.endsWith(ext));
     });
 
     if (validFiles.length < newFiles.length) {
-      alert("Alguns arquivos foram ignorados por não serem PDFs ou planilhas/textos (.pdf, .csv, .txt, .json).");
+      alert("Alguns arquivos foram ignorados por não serem suportados (.pdf, .docx, .csv, .txt, .json).");
     }
 
     setFiles(prev => [...prev, ...validFiles]);
@@ -321,7 +321,7 @@ export function DataMigrationModal({
                     ref={fileInputRef}
                     type="file"
                     multiple
-                    accept=".pdf,.csv,.txt,.json,.tsv"
+                    accept=".pdf,.docx,.doc,.csv,.txt,.json,.tsv"
                     onChange={handleFileInputChange}
                     className="hidden"
                   />
@@ -330,15 +330,18 @@ export function DataMigrationModal({
                   </div>
                   <div>
                     <p className="text-sm font-bold text-text-main">
-                      Arraste seus PDFs de Prontuários ou Planilhas para cá
+                      Arraste seus PDFs, Documentos Word (.docx) ou Planilhas para cá
                     </p>
                     <p className="text-xs text-text-muted mt-1">
-                      Você pode selecionar múltiplos arquivos PDF de uma vez só (ex: 30 prontuários).
+                      Você pode selecionar múltiplos arquivos (PDFs, Word ou Planilhas) de uma vez só.
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 mt-2">
+                  <div className="flex items-center gap-2 mt-2 flex-wrap justify-center">
                     <span className="px-3 py-1 bg-surface-muted border border-border-ui rounded-full text-[10px] font-bold text-text-muted uppercase tracking-wider">
                       PDFs de Prontuário
+                    </span>
+                    <span className="px-3 py-1 bg-surface-muted border border-border-ui rounded-full text-[10px] font-bold text-text-muted uppercase tracking-wider">
+                      Word (.docx)
                     </span>
                     <span className="px-3 py-1 bg-surface-muted border border-border-ui rounded-full text-[10px] font-bold text-text-muted uppercase tracking-wider">
                       Planilhas CSV / Excel

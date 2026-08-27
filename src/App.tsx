@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { 
   format, 
   startOfMonth, 
@@ -210,7 +210,9 @@ import AdminPanel from './components/AdminPanel';
 import PatientPortalDashboard from './components/PatientPortalDashboard';
 import PsychologistPatientPortalView from './components/PsychologistPatientPortalView';
 import { GoogleMeetExtensionModal, CHROME_EXTENSION_STORE_URL, TCLE_TEMPLATE_TEXT } from './components/GoogleMeetExtensionModal';
-import { DataMigrationModal } from './components/DataMigrationModal';
+const DataMigrationModal = React.lazy(() => 
+  import('./components/DataMigrationModal').then(m => ({ default: m.DataMigrationModal }))
+);
 import { 
   Patient, 
   Session, 
@@ -3022,18 +3024,20 @@ Como posso te ajudar hoje?`
         />
 
         {/* Modal de Migração de Dados (Apenas para Contas de Teste Autorizadas) */}
-        {isMigrationAllowed && (
-          <DataMigrationModal 
-            isOpen={showMigrationModal}
-            onClose={() => setShowMigrationModal(false)}
-            currentUserId={user?.uid || ''}
-            currentUserEmail={user?.email || ''}
-            onSuccess={() => {
-              setShowMigrationModal(false);
-              setActiveTab('pacientes');
-              setSelectedPatient(null);
-            }}
-          />
+        {isMigrationAllowed && showMigrationModal && (
+          <Suspense fallback={null}>
+            <DataMigrationModal 
+              isOpen={showMigrationModal}
+              onClose={() => setShowMigrationModal(false)}
+              currentUserId={user?.uid || ''}
+              currentUserEmail={user?.email || ''}
+              onSuccess={() => {
+                setShowMigrationModal(false);
+                setActiveTab('pacientes');
+                setSelectedPatient(null);
+              }}
+            />
+          </Suspense>
         )}
 
         {/* Support & Feedback Modal */}
