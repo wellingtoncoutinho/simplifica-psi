@@ -568,7 +568,7 @@ Como posso te ajudar hoje?`
 
   const isMigrationAllowed = useMemo(() => {
     const email = user?.email?.toLowerCase().trim();
-    return email === 'wellcoutinho99@gmail.com' || email === 'cristyanlf@gmail.com';
+    return email === 'wellcoutinho99@gmail.com' || email === 'cristyanlf@gmail.com' || email === 'viniciusfelix.psi@gmail.com';
   }, [user]);
 
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -624,7 +624,8 @@ Como posso te ajudar hoje?`
           'wellingtoncoutinho58@gmail.com',
           'acessoriavitrinni@gmail.com',
           'wellcoutinho99@gmail.com',
-          'cristyanlf@gmail.com'
+          'cristyanlf@gmail.com',
+          'viniciusfelix.psi@gmail.com'
         ];
         const userEmail = user.email ? user.email.toLowerCase().trim() : '';
 
