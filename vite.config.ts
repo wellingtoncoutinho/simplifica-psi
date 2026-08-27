@@ -25,7 +25,7 @@ export default defineConfig(({mode}) => {
               if (id.includes('firebase')) {
                 return 'vendor-firebase';
               }
-              if (id.includes('jspdf') || id.includes('html2canvas')) {
+              if (id.includes('jspdf') || id.includes('html2canvas') || id.includes('pdfjs-dist')) {
                 return 'vendor-pdf';
               }
               if (id.includes('lucide-react')) {

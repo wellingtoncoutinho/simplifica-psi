@@ -198,7 +198,8 @@ import {
   Smile,
   RefreshCw,
   ExternalLink,
-  AlertTriangle
+  AlertTriangle,
+  Upload
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency, getWhatsAppLink } from './lib/utils';
@@ -209,6 +210,7 @@ import AdminPanel from './components/AdminPanel';
 import PatientPortalDashboard from './components/PatientPortalDashboard';
 import PsychologistPatientPortalView from './components/PsychologistPatientPortalView';
 import { GoogleMeetExtensionModal, CHROME_EXTENSION_STORE_URL, TCLE_TEMPLATE_TEXT } from './components/GoogleMeetExtensionModal';
+import { DataMigrationModal } from './components/DataMigrationModal';
 import { 
   Patient, 
   Session, 
@@ -538,8 +540,15 @@ Como posso te ajudar hoje?`
   }, [profileSettings.isTrial, trialRemainingDays]);
   const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(() => safeGetStorage('google_calendar_access_token') || null);
   const [showExtensionModal, setShowExtensionModal] = useState(false);
+  const [showMigrationModal, setShowMigrationModal] = useState(false);
   const [hasAcceptedExtensionTerms, setHasAcceptedExtensionTerms] = useState(() => safeGetStorage("simplepsi_meet_extension_consent") === "true");
   const [isExtensionBannerDismissed, setIsExtensionBannerDismissed] = useState(() => safeGetStorage("simplepsi_meet_banner_dismissed") === "true");
+
+  const isMigrationAllowed = useMemo(() => {
+    const email = user?.email?.toLowerCase().trim();
+    return email === 'wellcoutinho99@gmail.com' || email === 'cristyanlf@gmail.com';
+  }, [user]);
+
   const [patients, setPatients] = useState<Patient[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -592,7 +601,8 @@ Como posso te ajudar hoje?`
           'juniorcoutinho58@gmail.com',
           'wellingtoncoutinho58@gmail.com',
           'acessoriavitrinni@gmail.com',
-          'wellcoutinho99@gmail.com'
+          'wellcoutinho99@gmail.com',
+          'cristyanlf@gmail.com'
         ];
         const userEmail = user.email ? user.email.toLowerCase().trim() : '';
 
@@ -2720,6 +2730,8 @@ Como posso te ajudar hoje?`
                   setIsExtensionBannerDismissed(true);
                   localStorage.setItem('simplepsi_meet_banner_dismissed', 'true');
                 }}
+                isMigrationAllowed={isMigrationAllowed}
+                onOpenMigrationModal={() => setShowMigrationModal(true)}
               />
             )}
             {activeTab === 'pacientes' && !selectedPatient && (
@@ -2731,6 +2743,8 @@ Como posso te ajudar hoje?`
                 onDeletePatient={handleDeletePatient}
                 onUpdatePatient={handleUpdatePatient}
                 onGoToAgenda={() => setActiveTab('agenda')}
+                isMigrationAllowed={isMigrationAllowed}
+                onOpenMigrationModal={() => setShowMigrationModal(true)}
               />
             )}
             {activeTab === 'pacientes' && selectedPatient && (
@@ -3007,6 +3021,21 @@ Como posso te ajudar hoje?`
           }}
         />
 
+        {/* Modal de Migração de Dados (Apenas para Contas de Teste Autorizadas) */}
+        {isMigrationAllowed && (
+          <DataMigrationModal 
+            isOpen={showMigrationModal}
+            onClose={() => setShowMigrationModal(false)}
+            currentUserId={user?.uid || ''}
+            currentUserEmail={user?.email || ''}
+            onSuccess={() => {
+              setShowMigrationModal(false);
+              setActiveTab('pacientes');
+              setSelectedPatient(null);
+            }}
+          />
+        )}
+
         {/* Support & Feedback Modal */}
         <AnimatePresence>
           {isSupportOpen && (
@@ -3182,7 +3211,9 @@ function DashboardView({
   hasAcceptedExtensionTerms = false,
   onOpenExtensionModal,
   isExtensionBannerDismissed = false,
-  onDismissExtensionBanner
+  onDismissExtensionBanner,
+  isMigrationAllowed = false,
+  onOpenMigrationModal
 }: { 
   user: User | null,
   onPatientSelect: (id: string) => void, 
@@ -3199,7 +3230,9 @@ function DashboardView({
   hasAcceptedExtensionTerms?: boolean,
   onOpenExtensionModal?: () => void,
   isExtensionBannerDismissed?: boolean,
-  onDismissExtensionBanner?: () => void
+  onDismissExtensionBanner?: () => void,
+  isMigrationAllowed?: boolean,
+  onOpenMigrationModal?: () => void
 }) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -3586,6 +3619,38 @@ function DashboardView({
           >
             <ExternalLink size={12} />
             Instruções & Termo TCLE
+          </button>
+        </div>
+      )}
+
+      {/* Banner de Migração de Dados (Apenas Contas Autorizadas) */}
+      {isMigrationAllowed && (
+        <div className="bg-gradient-to-r from-primary/15 via-surface-muted to-card border border-primary/25 rounded-3xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-left shadow-sm">
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-2xl bg-primary/20 text-primary flex items-center justify-center shrink-0 border border-primary/30 shadow-md shadow-primary/10">
+              <Sparkles size={22} className="animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h4 className="text-xs sm:text-sm font-bold text-text-main uppercase tracking-tight">
+                  Migração Mágica de Prontuários (BETA)
+                </h4>
+                <span className="text-[9px] bg-primary/20 text-primary border border-primary/30 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                  Disponível para seu perfil
+                </span>
+              </div>
+              <p className="text-[11px] text-text-muted mt-0.5">
+                Arraste seus PDFs ou planilhas da <strong>Cintropia, Psicomanager ou Zenklub</strong> para importar pacientes e histórico clínico automaticamente.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenMigrationModal}
+            className="w-full sm:w-auto px-5 py-2.5 bg-primary text-white hover:opacity-90 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-md shadow-primary/20 shrink-0 cursor-pointer active:scale-[0.98]"
+          >
+            <Upload size={14} />
+            Testar Migração
           </button>
         </div>
       )}
@@ -4370,14 +4435,18 @@ function PatientsListView({
   onAddClick,
   onDeletePatient,
   onUpdatePatient,
-  onGoToAgenda
+  onGoToAgenda,
+  isMigrationAllowed = false,
+  onOpenMigrationModal
 }: { 
   onSelect: (id: string) => void, 
   filteredPatients: any[], 
   onAddClick: () => void,
   onDeletePatient: (id: string) => void,
   onUpdatePatient: (patient: any) => void,
-  onGoToAgenda: () => void
+  onGoToAgenda: () => void,
+  isMigrationAllowed?: boolean,
+  onOpenMigrationModal?: () => void
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'ativos' | 'inativos'>('ativos');
@@ -4508,13 +4577,26 @@ function PatientsListView({
             </div>
           </div>
         </div>
-        <button 
-          onClick={onAddClick}
-          className="w-full sm:w-auto bg-primary hover:bg-primary-dark text-white px-6 py-2.5 rounded-xl font-medium flex items-center justify-center gap-2 transition-all shadow-lg shadow-primary/20"
-        >
-          <Plus size={20} />
-          Novo Paciente
-        </button>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto">
+          {isMigrationAllowed && onOpenMigrationModal && (
+            <button 
+              type="button"
+              onClick={onOpenMigrationModal}
+              className="w-full sm:w-auto bg-primary/15 hover:bg-primary/25 text-primary border border-primary/30 px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-sm cursor-pointer active:scale-[0.98]"
+              title="Importar prontuários de outros sistemas"
+            >
+              <Sparkles size={16} className="text-primary animate-pulse" />
+              Migrar de Outro Sistema
+            </button>
+          )}
+          <button 
+            onClick={onAddClick}
+            className="w-full sm:w-auto bg-primary hover:bg-primary-dark text-white px-6 py-2.5 rounded-xl font-medium flex items-center justify-center gap-2 transition-all shadow-lg shadow-primary/20"
+          >
+            <Plus size={20} />
+            Novo Paciente
+          </button>
+        </div>
       </div>
 
       <div className="glass-card rounded-3xl overflow-visible">
