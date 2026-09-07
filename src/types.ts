@@ -138,11 +138,12 @@ export interface TccSituation {
 export interface Session {
   id: string;
   patientId: string;
+  patientName?: string;
   date: string;
   time: string;
   duration: string;
   type: 'Presencial' | 'Online';
-  status: 'Agendada' | 'Realizada' | 'Cancelada';
+  status: 'Agendada' | 'Realizada' | 'Cancelada' | 'Confirmada' | 'Em Atendimento' | 'Desmarcou';
   recurrence?: 'Semanal' | 'Quinzenal' | 'Mensal' | 'Nenhuma';
   isTriage?: boolean;
   triageName?: string;
@@ -152,6 +153,12 @@ export interface Session {
   paid?: boolean;
   nfIssued?: boolean;
   cost?: number;
+  // Clinic fields
+  clinicId?: string;
+  psychologistId?: string;
+  psychologistName?: string;
+  room?: string;
+  notes?: string;
 }
 
 export interface Transaction {
@@ -324,4 +331,101 @@ export interface DiaryEntry {
   moduleType?: ClinicalModuleKey;
   data?: DiaryEntryData;
 }
+
+// ==========================================
+// MÓDULO MULTI-TENANT PARA CLÍNICAS (B2B)
+// ==========================================
+
+export type ClinicUserRole = 'clinic_admin' | 'psychologist' | 'supervisor' | 'receptionist';
+
+export interface ClinicTheme {
+  primaryColor?: string;
+  secondaryColor?: string;
+  logoUrl?: string;
+  accentColor?: string;
+}
+
+export interface ClinicSettings {
+  allowPsychologistManageAgenda?: boolean;
+  allowPsychologistSetPrice?: boolean;
+  allowSupervision?: boolean;
+  defaultSessionDuration?: number; // minutos
+  rooms?: string[]; // Lista de salas disponíveis (ex: ["Sala 1 - Principal", "Sala 2 - Infantil"])
+}
+
+export interface ClinicMember {
+  id: string;
+  email: string;
+  name?: string;
+  role: ClinicUserRole;
+  status: 'active' | 'invited' | 'disabled';
+  clinicId: string;
+  crp?: string;
+  phone?: string;
+  supervisorId?: string; // ID do supervisor responsável caso seja supervisionado
+  joinedAt?: string;
+  invitedAt?: string;
+}
+
+export interface Clinic {
+  id: string;
+  name: string;
+  slug: string; // Ex: 'reinventar' para reinventar.simplepsi.com ou ?clinic=reinventar
+  ownerEmail: string;
+  maxSeats: number;
+  activeSeats?: number;
+  phone?: string;
+  address?: string;
+  theme?: ClinicTheme;
+  settings?: ClinicSettings;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface SupervisionFeedback {
+  id: string;
+  supervisorId: string;
+  supervisorName: string;
+  patientId: string;
+  patientName: string;
+  psychologistId: string;
+  psychologistName: string;
+  feedback: string;
+  recommendations?: string;
+  status: 'pending' | 'reviewed';
+  createdAt: string;
+}
+
+export type ClinicCrmStage = 
+  | 'contacted'       // Entrou em contato / Novo lead
+  | 'triage'          // Triagem & Encaminhamento
+  | 'scheduled'       // 1ª Sessão agendada
+  | 'paid'            // Pagamento confirmado
+  | 'completed'       // Sessão realizada
+  | 'receipt_issued'  // Recibo / Nota fiscal emitida
+  | 'archived';       // Desistência / Arquivado
+
+export interface ClinicCrmLead {
+  id: string;
+  clinicId: string;
+  name: string;
+  phone: string;
+  email?: string;
+  complaint?: string;
+  stage: ClinicCrmStage;
+  assignedPsychologistId?: string;
+  assignedPsychologistName?: string;
+  scheduledDate?: string;
+  scheduledTime?: string;
+  sessionRoom?: string;
+  amount?: number;
+  paymentMethod?: 'pix' | 'cartao' | 'dinheiro' | 'convenio' | 'outro';
+  paymentStatus?: 'pending' | 'paid';
+  receiptIssued?: boolean;
+  receiptNumber?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 

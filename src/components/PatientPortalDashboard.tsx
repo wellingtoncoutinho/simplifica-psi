@@ -60,6 +60,9 @@ import {
   Award
 } from 'lucide-react';
 import jsPDF from 'jspdf';
+import { format } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
+import { getWhatsAppLink, safeDateParse } from '../lib/utils';
 import { PatientPortal, Session, Transaction, DiaryEntry, ClinicalModuleKey, DiaryEntryData, ClinicalModulesConfig } from '../types';
 import { DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE, fillContractTemplate } from '../utils/contractDefaults';
 
@@ -242,8 +245,10 @@ export default function PatientPortalDashboard() {
   const loggingInRef = React.useRef<boolean>(false);
 
   // Dashboard state
-  const [activeTab, setActiveTab] = useState<'finance' | 'safety' | 'diary' | 'materials' | 'contract'>('diary');
+  const [activeTab, setActiveTab] = useState<'overview' | 'finance' | 'safety' | 'diary' | 'materials' | 'contract'>('overview');
   const hasSafetyPlan = !!(portalData?.safetyPlan && Object.values(portalData.safetyPlan).some(v => v && v !== portalData.safetyPlan?.updatedAt));
+  const [quickMoodSaving, setQuickMoodSaving] = useState<boolean>(false);
+  const [quickMoodFeedback, setQuickMoodFeedback] = useState<string | null>(null);
   
   // Finance State
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -667,6 +672,51 @@ export default function PatientPortalDashboard() {
       unsubDiary();
     };
   }, [authenticated]);
+
+  // Upcoming session
+  const upcomingSessions = React.useMemo(() => {
+    return sessions
+      .filter(s => s.status !== 'Cancelada' && !isSessionInPast(s.date, s.time))
+      .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
+  }, [sessions]);
+  const nextSession = upcomingSessions[0] || null;
+
+  // Unpaid completed sessions
+  const unpaidCompletedSessions = React.useMemo(() => {
+    return sessions.filter(s => {
+      if (s.status === 'Cancelada') return false;
+      const isPast = isSessionInPast(s.date, s.time);
+      const isCompleted = s.status === 'Realizada' || (s.status === 'Agendada' && isPast);
+      return isCompleted && !s.paid;
+    });
+  }, [sessions]);
+
+  const totalUnpaidCompletedAmount = React.useMemo(() => {
+    return unpaidCompletedSessions.reduce((acc, s) => acc + (parseFloat(s.amount as any) || 0), 0);
+  }, [unpaidCompletedSessions]);
+
+  const handleQuickMoodCheckIn = async (moodScore: number, label: string) => {
+    if (!portalData || quickMoodSaving) return;
+    setQuickMoodSaving(true);
+    try {
+      await addDoc(collection(db, 'diary_entries'), {
+        patientId: portalData.patientId,
+        ownerId: portalData.ownerId,
+        date: new Date().toISOString().split('T')[0],
+        mood: moodScore,
+        text: `Check-in de humor do dia: ${label}`,
+        moduleType: 'general_diary',
+        createdAt: new Date().toISOString()
+      });
+      setQuickMoodFeedback(`Humor registrado: "${label}"! Seu psicólogo poderá acompanhar.`);
+      setTimeout(() => setQuickMoodFeedback(null), 4500);
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao registrar sentimento.');
+    } finally {
+      setQuickMoodSaving(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1400,8 +1450,17 @@ export default function PatientPortalDashboard() {
         {/* Navigation Tabs (Mobile-friendly Pills) */}
         <div className="flex bg-card border border-border-ui rounded-2xl p-1 gap-1 overflow-x-auto select-none">
           <button
+            onClick={() => setActiveTab('overview')}
+            className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 cursor-pointer ${
+              activeTab === 'overview' ? 'bg-[#2E3C2B] text-white shadow-md' : 'text-text-muted hover:text-text-main'
+            }`}
+          >
+            <Sparkles size={14} />
+            <span>Início</span>
+          </button>
+          <button
             onClick={() => setActiveTab('diary')}
-            className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 ${
+            className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === 'diary' ? 'bg-[#2E3C2B] text-white shadow-md' : 'text-text-muted hover:text-text-main'
             }`}
           >
@@ -1411,7 +1470,7 @@ export default function PatientPortalDashboard() {
           {hasSafetyPlan && (
             <button
               onClick={() => setActiveTab('safety')}
-              className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 ${
+              className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 cursor-pointer ${
                 activeTab === 'safety' ? 'bg-[#2E3C2B] text-white shadow-md' : 'text-text-muted hover:text-text-main'
               }`}
             >
@@ -1421,7 +1480,7 @@ export default function PatientPortalDashboard() {
           )}
           <button
             onClick={() => setActiveTab('finance')}
-            className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 ${
+            className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === 'finance' ? 'bg-[#2E3C2B] text-white shadow-md' : 'text-text-muted hover:text-text-main'
             }`}
           >
@@ -1430,7 +1489,7 @@ export default function PatientPortalDashboard() {
           </button>
           <button
             onClick={() => setActiveTab('materials')}
-            className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 ${
+            className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === 'materials' ? 'bg-[#2E3C2B] text-white shadow-md' : 'text-text-muted hover:text-text-main'
             }`}
           >
@@ -1439,7 +1498,7 @@ export default function PatientPortalDashboard() {
           </button>
           <button
             onClick={() => setActiveTab('contract')}
-            className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 ${
+            className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === 'contract' ? 'bg-[#2E3C2B] text-white shadow-md' : 'text-text-muted hover:text-text-main'
             }`}
           >
@@ -1451,6 +1510,354 @@ export default function PatientPortalDashboard() {
         {/* Tab Content Panels */}
         <div className="flex-1">
           
+          {/* OVERVIEW / INÍCIO TAB */}
+          {activeTab === 'overview' && (
+            <div className="space-y-6">
+              
+              {/* 1. Welcome Card & Mood Check-In */}
+              <div className="bg-card border border-border-ui rounded-[28px] p-5 sm:p-7 shadow-sm relative overflow-hidden flex flex-col gap-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-primary bg-primary/10 border border-primary/20 px-2.5 py-1 rounded-full">
+                      Espaço Acolhedor
+                    </span>
+                    <h2 className="text-xl sm:text-2xl font-extrabold text-text-main mt-2 tracking-tight">
+                      Olá, {portalData?.name ? portalData.name.split(' ')[0] : 'Paciente'}! 🌿
+                    </h2>
+                    <p className="text-xs sm:text-sm text-text-muted mt-1">
+                      Bem-vindo(a) ao seu espaço. Como você está se sentindo hoje?
+                    </p>
+                  </div>
+                  {psychologistProfile?.name && (
+                    <div className="self-start sm:self-auto bg-surface-muted border border-border-ui/60 rounded-2xl px-3.5 py-2 text-right">
+                      <span className="text-[9px] font-bold text-text-muted uppercase tracking-wider block">Psicólogo(a)</span>
+                      <span className="text-xs font-bold text-text-main">{psychologistProfile.name}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Interactive Mood Buttons */}
+                <div className="bg-surface-muted/60 border border-border-ui/80 rounded-2xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-text-main uppercase tracking-wider flex items-center gap-1.5">
+                      <Smile size={14} className="text-primary" />
+                      Check-in de Humor
+                    </span>
+                    <span className="text-[10px] text-text-muted">Clique para registrar</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 select-none">
+                    <button
+                      type="button"
+                      disabled={quickMoodSaving}
+                      onClick={() => handleQuickMoodCheckIn(9, 'Muito bem')}
+                      className="p-3 rounded-xl bg-card border border-border-ui hover:border-emerald-500/50 hover:bg-emerald-500/10 transition-all flex flex-col items-center gap-1 cursor-pointer group text-center"
+                    >
+                      <span className="text-2xl group-hover:scale-110 transition-transform">😄</span>
+                      <span className="text-xs font-bold text-text-main">Muito bem</span>
+                      <span className="text-[9px] text-text-muted">Em paz</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={quickMoodSaving}
+                      onClick={() => handleQuickMoodCheckIn(7, 'Bem')}
+                      className="p-3 rounded-xl bg-card border border-border-ui hover:border-teal-500/50 hover:bg-teal-500/10 transition-all flex flex-col items-center gap-1 cursor-pointer group text-center"
+                    >
+                      <span className="text-2xl group-hover:scale-110 transition-transform">🙂</span>
+                      <span className="text-xs font-bold text-text-main">Bem</span>
+                      <span className="text-[9px] text-text-muted">Estável</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={quickMoodSaving}
+                      onClick={() => handleQuickMoodCheckIn(5, 'Neutro')}
+                      className="p-3 rounded-xl bg-card border border-border-ui hover:border-amber-500/50 hover:bg-amber-500/10 transition-all flex flex-col items-center gap-1 cursor-pointer group text-center"
+                    >
+                      <span className="text-2xl group-hover:scale-110 transition-transform">😐</span>
+                      <span className="text-xs font-bold text-text-main">Neutro</span>
+                      <span className="text-[9px] text-text-muted">Dia comum</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={quickMoodSaving}
+                      onClick={() => handleQuickMoodCheckIn(3, 'Difícil')}
+                      className="p-3 rounded-xl bg-card border border-border-ui hover:border-orange-500/50 hover:bg-orange-500/10 transition-all flex flex-col items-center gap-1 cursor-pointer group text-center"
+                    >
+                      <span className="text-2xl group-hover:scale-110 transition-transform">😔</span>
+                      <span className="text-xs font-bold text-text-main">Difícil</span>
+                      <span className="text-[9px] text-text-muted">Desafiador</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={quickMoodSaving}
+                      onClick={() => handleQuickMoodCheckIn(1, 'Em crise')}
+                      className="p-3 rounded-xl bg-card border border-border-ui hover:border-rose-500/50 hover:bg-rose-500/10 transition-all flex flex-col items-center gap-1 cursor-pointer group text-center col-span-2 sm:col-span-1"
+                    >
+                      <span className="text-2xl group-hover:scale-110 transition-transform">😣</span>
+                      <span className="text-xs font-bold text-rose-500">Em crise</span>
+                      <span className="text-[9px] text-text-muted">Preciso de apoio</span>
+                    </button>
+                  </div>
+
+                  {quickMoodFeedback && (
+                    <div className="bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 rounded-xl p-2.5 text-xs font-bold flex items-center gap-2 animate-in fade-in">
+                      <CheckCircle2 size={15} className="shrink-0 text-emerald-500" />
+                      <span>{quickMoodFeedback}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 2. Destaque Financeiro: Sessões Realizadas em Aberto & PIX */}
+              {unpaidCompletedSessions.length > 0 ? (
+                <div className="bg-amber-500/10 border-2 border-amber-500/30 rounded-[24px] p-5 sm:p-6 space-y-4 shadow-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-500/20 pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-500 flex items-center justify-center font-bold">
+                        ⚠️
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-sm text-text-main">
+                          Você possui {unpaidCompletedSessions.length} {unpaidCompletedSessions.length === 1 ? 'sessão realizada aguardando acerto' : 'sessões realizadas aguardando acerto'}
+                        </h4>
+                        <p className="text-xs text-text-muted">
+                          Total pendente: <strong className="text-amber-500 text-sm">R$ {totalUnpaidCompletedAmount.toFixed(2)}</strong>
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setActiveTab('finance')}
+                      className="text-xs font-bold text-amber-500 hover:text-amber-600 underline self-start sm:self-auto cursor-pointer"
+                    >
+                      Ver detalhes das sessões →
+                    </button>
+                  </div>
+
+                  {/* Pix Box for Immediate Payment */}
+                  {psychologistProfile && (psychologistProfile.pixKey || psychologistProfile.pixType) && (
+                    <div className="bg-card border border-border-ui rounded-2xl p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted">
+                          Chave Pix do Psicólogo(a) para Pagamento
+                        </span>
+                        <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-bold uppercase">
+                          {psychologistProfile.pixType || 'Chave'}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-surface-muted border border-border-ui rounded-xl p-3">
+                        <div className="min-w-0 flex-1">
+                          <span className="text-xs font-mono select-all text-text-main font-bold block truncate">
+                            {psychologistProfile.pixKey || 'Não informada'}
+                          </span>
+                          <span className="text-[10px] text-text-muted block mt-0.5">
+                            Favorecido: {psychologistProfile.pixName || psychologistProfile.name || 'Psicólogo(a)'}
+                          </span>
+                        </div>
+                        {psychologistProfile.pixKey && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(psychologistProfile.pixKey);
+                              setCopiedPix(true);
+                              setTimeout(() => setCopiedPix(false), 2000);
+                            }}
+                            className="py-2 px-3.5 bg-primary text-white text-xs font-bold rounded-xl hover:opacity-90 transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-sm"
+                          >
+                            {copiedPix ? (
+                              <>
+                                <Check size={14} className="text-emerald-300" />
+                                <span>Chave Copiada!</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy size={14} />
+                                <span>Copiar Chave Pix</span>
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-text-muted">
+                        💡 Após efetuar o Pix, envie o comprovante diretamente pelo WhatsApp do seu psicólogo.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-2xl p-4 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-lg">✨</span>
+                    <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                      Tudo em dia! Você não possui sessões realizadas pendentes de pagamento.
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab('finance')}
+                    className="text-xs font-bold text-emerald-600 hover:underline shrink-0 cursor-pointer"
+                  >
+                    Ver Histórico
+                  </button>
+                </div>
+              )}
+
+              {/* 3. Próxima Sessão & Dashboard Mínimo */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                
+                {/* Next Appointment Card */}
+                <div className="bg-card border border-border-ui rounded-[24px] p-5 flex flex-col justify-between gap-4 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Calendar size={16} className="text-primary" />
+                      <h4 className="font-bold text-xs uppercase tracking-wider text-text-main">Próxima Sessão</h4>
+                    </div>
+                    {nextSession && (
+                      <span className="text-[10px] font-bold bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-full uppercase">
+                        {nextSession.type || 'Consulta'}
+                      </span>
+                    )}
+                  </div>
+
+                  {nextSession ? (
+                    <div className="space-y-2">
+                      <div className="text-base sm:text-lg font-bold text-text-main capitalize">
+                        {format(safeDateParse(nextSession.date), "EEEE, d 'de' MMMM", { locale: ptBR })}
+                      </div>
+                      <div className="flex items-center gap-2 text-xs font-bold text-text-muted">
+                        <Clock size={13} className="text-primary" />
+                        <span>Horário: {nextSession.time}</span>
+                      </div>
+                      <p className="text-xs text-text-muted mt-1">
+                        Psicólogo(a): <strong className="text-text-main">{psychologistProfile?.name || 'Seu psicólogo'}</strong>
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="py-4 text-center">
+                      <Calendar size={32} className="mx-auto opacity-20 mb-2 text-primary" />
+                      <p className="text-xs text-text-muted font-medium">
+                        Nenhuma sessão futura agendada no momento.
+                      </p>
+                      <p className="text-[11px] text-text-muted mt-1">
+                        Combine o próximo horário diretamente com seu terapeuta.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="pt-2 border-t border-border-ui/50 flex justify-between items-center text-xs">
+                    <span className="text-text-muted text-[11px]">Precisa remarcar?</span>
+                    {psychologistProfile?.phone && getWhatsAppLink(psychologistProfile.phone) ? (
+                      <a
+                        href={`${getWhatsAppLink(psychologistProfile.phone)}?text=${encodeURIComponent(`Olá! Gostaria de falar sobre o agendamento da minha sessão.`)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary font-bold hover:underline"
+                      >
+                        Avisar no WhatsApp →
+                      </a>
+                    ) : (
+                      <button onClick={() => setActiveTab('finance')} className="text-primary font-bold hover:underline cursor-pointer">
+                        Ver detalhes
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Meu Diário Quick Card */}
+                <div className="bg-card border border-border-ui rounded-[24px] p-5 flex flex-col justify-between gap-4 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <BookOpen size={16} className="text-primary" />
+                      <h4 className="font-bold text-xs uppercase tracking-wider text-text-main">Meu Diário Emocional</h4>
+                    </div>
+                    <span className="text-[10px] font-bold bg-surface-muted text-text-muted px-2 py-0.5 rounded-full">
+                      {diaryEntries.length} {diaryEntries.length === 1 ? 'registro' : 'registros'}
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-text-muted leading-relaxed">
+                    Escrever sobre o que você sente ajuda a organizar pensamentos e permite que seu psicólogo acompanhe suas evoluções entre as consultas.
+                  </p>
+
+                  <div className="pt-2 border-t border-border-ui/50 flex items-center justify-between">
+                    <button
+                      onClick={() => setActiveTab('diary')}
+                      className="py-2.5 px-4 bg-primary text-white font-bold text-xs rounded-xl hover:opacity-90 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm w-full justify-center"
+                    >
+                      <Plus size={14} />
+                      <span>Abrir Diário / Fazer Registro</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* 4. Quick Access Badges Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {hasSafetyPlan && (
+                  <button
+                    onClick={() => setActiveTab('safety')}
+                    className="p-3.5 rounded-2xl bg-card border border-border-ui hover:border-primary/40 hover:bg-primary/5 transition-all text-left flex flex-col justify-between gap-2 cursor-pointer shadow-xs"
+                  >
+                    <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                      <ShieldAlert size={16} />
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold text-text-main block">Plano de Segurança</span>
+                      <span className="text-[10px] text-text-muted">Estratégias de apoio</span>
+                    </div>
+                  </button>
+                )}
+
+                <button
+                  onClick={() => setActiveTab('finance')}
+                  className="p-3.5 rounded-2xl bg-card border border-border-ui hover:border-primary/40 hover:bg-primary/5 transition-all text-left flex flex-col justify-between gap-2 cursor-pointer shadow-xs"
+                >
+                  <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                    <DollarSign size={16} />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-text-main block">Financeiro</span>
+                    <span className="text-[10px] text-text-muted">Recibos & Pagamentos</span>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => setActiveTab('materials')}
+                  className="p-3.5 rounded-2xl bg-card border border-border-ui hover:border-primary/40 hover:bg-primary/5 transition-all text-left flex flex-col justify-between gap-2 cursor-pointer shadow-xs"
+                >
+                  <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                    <BookOpen size={16} />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-text-main block">Materiais de Apoio</span>
+                    <span className="text-[10px] text-text-muted">
+                      {portalData?.sharedPDFs?.length ? `${portalData.sharedPDFs.length} arquivo(s)` : 'Orientações'}
+                    </span>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => setActiveTab('contract')}
+                  className="p-3.5 rounded-2xl bg-card border border-border-ui hover:border-primary/40 hover:bg-primary/5 transition-all text-left flex flex-col justify-between gap-2 cursor-pointer shadow-xs"
+                >
+                  <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                    <FileCheck size={16} />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-text-main block">Meu Contrato</span>
+                    <span className="text-[10px] text-text-muted">
+                      {portalData?.contractSigned ? 'Assinado ✓' : 'Pendente de rubrica'}
+                    </span>
+                  </div>
+                </button>
+              </div>
+
+            </div>
+          )}
+
           {/* DIARY & CLINICAL MODULES TAB */}
           {activeTab === 'diary' && (() => {
             const activeModules = portalData?.clinicalModules || { general_diary: true };
@@ -3602,6 +4009,28 @@ export default function PatientPortalDashboard() {
                 <p className="text-xs text-text-muted mt-0.5">Acompanhe o status de pagamento das suas sessões e a emissão de recibos/notas fiscais.</p>
               </div>
 
+              {/* ALERTA DE SESSÕES EM ABERTO */}
+              {unpaidCompletedSessions.length > 0 ? (
+                <div className="bg-amber-500/10 border-2 border-amber-500/30 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl">⚠️</span>
+                    <div>
+                      <h4 className="font-bold text-sm text-text-main">
+                        Você possui {unpaidCompletedSessions.length} {unpaidCompletedSessions.length === 1 ? 'sessão realizada aguardando acerto' : 'sessões realizadas aguardando acerto'}
+                      </h4>
+                      <p className="text-xs text-text-muted mt-0.5">
+                        Valor total pendente: <strong className="text-amber-500 font-bold">R$ {totalUnpaidCompletedAmount.toFixed(2)}</strong>. Por favor, utilize a Chave Pix abaixo para realizar o pagamento e envie o comprovante.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-3.5 px-4 flex items-center gap-2.5 text-xs text-emerald-600 font-bold">
+                  <CheckCircle2 size={16} className="text-emerald-500 shrink-0" />
+                  <span>Tudo em dia! Todas as sessões realizadas estão acertadas.</span>
+                </div>
+              )}
+
               {/* PIX INFO CARD */}
               {psychologistProfile && (psychologistProfile.pixKey || psychologistProfile.pixType) && (
                 <div className="bg-card border border-border-ui rounded-[24px] p-5 space-y-4">
@@ -3866,6 +4295,86 @@ export default function PatientPortalDashboard() {
           )}
 
         </div>
+
+        {/* SUPPORT & EMERGENCY FOOTER (CVV 188 & WHATSAPP) */}
+        <section className="mt-8 pt-6 border-t border-border-ui space-y-4">
+          <div className="flex items-center gap-2 text-text-muted">
+            <Phone size={14} className="text-primary" />
+            <span className="text-[11px] font-bold uppercase tracking-wider">Canais de Apoio & Contato Rápido</span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Card CVV 24 Horas */}
+            <div className="bg-rose-500/10 border border-rose-500/25 rounded-2xl p-4 sm:p-5 flex flex-col justify-between gap-3 hover:border-rose-500/40 transition-all">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-500/20 text-rose-500 flex items-center justify-center shrink-0">
+                  <Heart size={20} className="fill-rose-500/20" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-rose-500 bg-rose-500/15 px-2 py-0.5 rounded-full">
+                      Apoio 24 Horas
+                    </span>
+                  </div>
+                  <h4 className="font-bold text-sm text-text-main mt-1">CVV - Centro de Valorização da Vida</h4>
+                  <p className="text-xs text-text-muted mt-1 leading-relaxed">
+                    Está passando por um momento difícil, crise ou pensamentos angustiantes? Ligue gratuitamente. O atendimento é voluntário, sigiloso e 24h por dia.
+                  </p>
+                </div>
+              </div>
+
+              <a
+                href="tel:188"
+                className="w-full py-2.5 px-4 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Phone size={14} />
+                <span>Ligar 188 (CVV 24h - Gratuito)</span>
+              </a>
+            </div>
+
+            {/* Card WhatsApp do Terapeuta */}
+            <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-2xl p-4 sm:p-5 flex flex-col justify-between gap-3 hover:border-emerald-500/40 transition-all">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-500 flex items-center justify-center shrink-0">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                    <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.717-1.458L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.863-9.864.001-2.63-1.023-5.101-2.883-6.962C16.59 1.878 14.12 .853 11.493.853 6.059.853 1.633 5.272 1.63 10.718c-.001 1.639.429 3.236 1.247 4.678L1.87 20.89l5.656-1.482c1.399.763 2.94 1.168 4.542 1.171z M17.07 14.543c-.275-.138-1.62-.8-1.873-.892-.253-.093-.437-.138-.62.138-.184.276-.713.892-.873 1.077-.16.184-.32.207-.595.069-.275-.138-1.163-.429-2.215-1.366-.817-.729-1.37-1.629-1.53-1.905-.16-.276-.017-.424.12-.562.124-.125.276-.322.414-.483.138-.161.184-.276.276-.46.09-.184.046-.345-.023-.483-.069-.138-.62-1.494-.85-2.046-.223-.538-.45-.465-.62-.474-.16-.008-.344-.01-.527-.01-.184 0-.483.069-.736.345-.253.276-.966.943-.966 2.3 0 1.356.988 2.666 1.126 2.85.138.184 1.944 2.969 4.71 4.16.657.283 1.17.453 1.57.58.66.21 1.26.18 1.73.11.53-.08 1.62-.66 1.85-1.3.23-.64.23-1.19.16-1.3-.07-.11-.25-.18-.53-.32z"/>
+                  </svg>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-500 bg-emerald-500/15 px-2 py-0.5 rounded-full">
+                      Contato Direto
+                    </span>
+                  </div>
+                  <h4 className="font-bold text-sm text-text-main mt-1">
+                    Fale com {psychologistProfile?.name || 'seu Psicólogo(a)'}
+                  </h4>
+                  <p className="text-xs text-text-muted mt-1 leading-relaxed">
+                    Dúvidas sobre sua consulta, avisos ou remarcações? Envie uma mensagem no WhatsApp.
+                  </p>
+                </div>
+              </div>
+
+              {psychologistProfile?.phone && getWhatsAppLink(psychologistProfile.phone) ? (
+                <a
+                  href={`${getWhatsAppLink(psychologistProfile.phone)}?text=${encodeURIComponent(`Olá! Sou ${portalData?.name || 'seu paciente'} e gostaria de falar com você.`)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                    <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.717-1.458L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.863-9.864.001-2.63-1.023-5.101-2.883-6.962C16.59 1.878 14.12 .853 11.493.853 6.059.853 1.633 5.272 1.63 10.718c-.001 1.639.429 3.236 1.247 4.678L1.87 20.89l5.656-1.482c1.399.763 2.94 1.168 4.542 1.171z M17.07 14.543c-.275-.138-1.62-.8-1.873-.892-.253-.093-.437-.138-.62.138-.184.276-.713.892-.873 1.077-.16.184-.32.207-.595.069-.275-.138-1.163-.429-2.215-1.366-.817-.729-1.37-1.629-1.53-1.905-.16-.276-.017-.424.12-.562.124-.125.276-.322.414-.483.138-.161.184-.276.276-.46.09-.184.046-.345-.023-.483-.069-.138-.62-1.494-.85-2.046-.223-.538-.45-.465-.62-.474-.16-.008-.344-.01-.527-.01-.184 0-.483.069-.736.345-.253.276-.966.943-.966 2.3 0 1.356.988 2.666 1.126 2.85.138.184 1.944 2.969 4.71 4.16.657.283 1.17.453 1.57.58.66.21 1.26.18 1.73.11.53-.08 1.62-.66 1.85-1.3.23-.64.23-1.19.16-1.3-.07-.11-.25-.18-.53-.32z"/>
+                  </svg>
+                  <span>Chamar no WhatsApp</span>
+                </a>
+              ) : (
+                <div className="w-full py-2.5 px-4 bg-surface-muted text-text-muted font-medium text-xs rounded-xl text-center">
+                  Telefone não cadastrado no perfil do profissional
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
       </main>
     </div>
   );

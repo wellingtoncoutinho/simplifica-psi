@@ -22,6 +22,7 @@ import {
   addWeeks,
   eachWeekOfInterval,
   subDays,
+  addDays,
   subWeeks
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -149,6 +150,8 @@ import {
   LayoutDashboard, 
   Users, 
   Calendar as CalendarIcon, 
+  CalendarDays,
+  Clock,
   FileText, 
   DollarSign, 
   FolderOpen, 
@@ -199,7 +202,10 @@ import {
   RefreshCw,
   ExternalLink,
   AlertTriangle,
-  Upload
+  Upload,
+  Building,
+  GraduationCap,
+  Phone
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency, getWhatsAppLink } from './lib/utils';
@@ -209,6 +215,12 @@ import PaywallScreen from './components/PaywallScreen';
 import AdminPanel from './components/AdminPanel';
 import PatientPortalDashboard from './components/PatientPortalDashboard';
 import PsychologistPatientPortalView from './components/PsychologistPatientPortalView';
+import ClinicTeamModal from './components/ClinicTeamModal';
+import ClinicDashboardView from './components/clinic/ClinicDashboardView';
+import ClinicMasterAgendaView from './components/clinic/ClinicMasterAgendaView';
+import ClinicSupervisionView from './components/clinic/ClinicSupervisionView';
+import ClinicReceptionCrmView from './components/clinic/ClinicReceptionCrmView';
+import ClinicLoginPage from './components/clinic/ClinicLoginPage';
 import { GoogleMeetExtensionModal, CHROME_EXTENSION_STORE_URL, TCLE_TEMPLATE_TEXT } from './components/GoogleMeetExtensionModal';
 const DataMigrationModal = React.lazy(() => 
   import('./components/DataMigrationModal').then(m => ({ default: m.DataMigrationModal }))
@@ -220,8 +232,21 @@ import {
   AppNotification,
   PatientPortal,
   PdfLibraryItem,
-  DiaryEntry
+  DiaryEntry,
+  Clinic,
+  ClinicMember,
+  ClinicUserRole
 } from './types';
+import { 
+  detectCurrentClinicSlug, 
+  getClinicBySlug, 
+  applyClinicTheme,
+  getSimulatedClinicMember,
+  setSimulatedClinicMember,
+  getDemoClinicSessions,
+  DEFAULT_DEMO_MEMBERS,
+  subscribeClinicMembers
+} from './lib/clinicService';
 import { auth, db, signInWithGoogle, signInWithGoogleCalendar } from './lib/firebase';
 import { 
   collection, 
@@ -502,6 +527,49 @@ export default function App() {
     }
   }, [user]);
 
+  // ==========================================
+  // ESTADOS DE MULTI-TENANT & CLÍNICA (B2B)
+  // ==========================================
+  const [currentClinic, setCurrentClinic] = useState<Clinic | null>(null);
+  const [currentClinicMember, setCurrentClinicMember] = useState<ClinicMember | null>(null);
+  const [clinicMembers, setClinicMembers] = useState<ClinicMember[]>(DEFAULT_DEMO_MEMBERS);
+  const [clinicSessions, setClinicSessions] = useState<Session[]>(() => getDemoClinicSessions());
+  const [isClinicTeamModalOpen, setIsClinicTeamModalOpen] = useState(false);
+  const [isClinicRoleSwitcherOpen, setIsClinicRoleSwitcherOpen] = useState(false);
+  const [isForceClinicLogin, setIsForceClinicLogin] = useState(false);
+
+  useEffect(() => {
+    const slug = detectCurrentClinicSlug();
+    if (slug) {
+      getClinicBySlug(slug).then((clinic) => {
+        if (clinic) {
+          setCurrentClinic(clinic);
+          applyClinicTheme(clinic.theme);
+          
+          const savedMember = getSimulatedClinicMember(clinic.id);
+          if (savedMember) {
+            setCurrentClinicMember(savedMember);
+          } else if (user?.email) {
+            const found = DEFAULT_DEMO_MEMBERS.find(m => m.email.toLowerCase() === user.email?.toLowerCase());
+            if (found) {
+              setCurrentClinicMember(found);
+            }
+          }
+        }
+      });
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (!currentClinic?.id) return;
+    const unsub = subscribeClinicMembers(currentClinic.id, (loaded) => {
+      setClinicMembers(loaded);
+    });
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [currentClinic?.id]);
+
   const [selectedPatient, setSelectedPatient] = useState<string | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -558,8 +626,10 @@ Como posso te ajudar hoje?`
   }, [profileSettings.trialStartDate]);
 
   const isTrialExpired = useMemo(() => {
+    // Se o usuário estiver no ambiente de uma clínica, não é bloqueado pelo trial solo
+    if (currentClinic) return false;
     return profileSettings.isTrial && trialRemainingDays < 0;
-  }, [profileSettings.isTrial, trialRemainingDays]);
+  }, [profileSettings.isTrial, trialRemainingDays, currentClinic]);
   const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(() => safeGetStorage('google_calendar_access_token') || null);
   const [showExtensionModal, setShowExtensionModal] = useState(false);
   const [showMigrationModal, setShowMigrationModal] = useState(false);
@@ -625,7 +695,8 @@ Como posso te ajudar hoje?`
           'acessoriavitrinni@gmail.com',
           'wellcoutinho99@gmail.com',
           'cristyanlf@gmail.com',
-          'viniciusfelix.psi@gmail.com'
+          'viniciusfelix.psi@gmail.com',
+          'simplepsi.app@gmail.com'
         ];
         const userEmail = user.email ? user.email.toLowerCase().trim() : '';
 
@@ -2453,7 +2524,64 @@ Como posso te ajudar hoje?`
     }
   };
 
+  const clinicRole = useMemo<ClinicUserRole>(() => {
+    if (!currentClinic) return 'psychologist';
+    if (currentClinicMember?.role) return currentClinicMember.role;
+    const userEmail = user?.email?.toLowerCase().trim();
+    if (userEmail && (userEmail === currentClinic.ownerEmail?.toLowerCase().trim() || userEmail === 'simplepsi.app@gmail.com')) {
+      return 'clinic_admin';
+    }
+    return 'psychologist';
+  }, [currentClinic, currentClinicMember, user]);
+
+  const isClinicAdmin = useMemo(() => {
+    return clinicRole === 'clinic_admin';
+  }, [clinicRole]);
+
   const menuItems = useMemo(() => {
+    if (currentClinic) {
+      const usedPsySeats = clinicMembers.filter(m => m.role === 'psychologist').length;
+      const totalSeats = currentClinic.maxSeats || 7;
+
+      if (clinicRole === 'clinic_admin') {
+        return [
+          { id: 'dashboard', label: 'Dashboard da Clínica', icon: LayoutDashboard },
+          { id: 'crm-recepcao', label: 'CRM & Recepção', icon: Phone },
+          { id: 'agenda', label: 'Agenda Geral (Multiprofissional)', icon: CalendarIcon },
+          { id: 'minha-equipe', label: `Minha Equipe (${usedPsySeats}/${totalSeats} Vagas)`, icon: Building },
+          { id: 'supervisao', label: 'Supervisão Clínica', icon: GraduationCap },
+          { id: 'pacientes', label: 'Pacientes da Clínica', icon: Users },
+          { id: 'financeiro', label: 'Financeiro Geral', icon: DollarSign },
+        ];
+      }
+      if (clinicRole === 'receptionist') {
+        return [
+          { id: 'crm-recepcao', label: 'CRM & Captação', icon: Phone },
+          { id: 'agenda', label: 'Agenda Geral (Recepção)', icon: CalendarIcon },
+          { id: 'pacientes', label: 'Cadastro de Pacientes', icon: Users },
+          { id: 'financeiro', label: 'Caixa & Pagamentos', icon: DollarSign },
+        ];
+      }
+      if (clinicRole === 'supervisor') {
+        return [
+          { id: 'supervisao', label: 'Painel de Supervisão', icon: GraduationCap },
+          { id: 'agenda', label: 'Agenda Geral da Clínica', icon: CalendarIcon },
+          { id: 'pacientes', label: 'Casos Clínicos', icon: FileText },
+        ];
+      }
+      // Psicólogo atendente da clínica
+      return [
+        { id: 'dashboard', label: 'Meu Dashboard', icon: LayoutDashboard },
+        { id: 'pacientes', label: 'Meus Pacientes', icon: Users },
+        { id: 'agenda', label: 'Minha Agenda', icon: CalendarIcon },
+        { id: 'agenda-clinica', label: 'Agenda Geral da Clínica', icon: Building },
+        { id: 'prontuarios', label: 'Prontuários & Anamnese', icon: FileText },
+        { id: 'financeiro', label: 'Meu Financeiro', icon: DollarSign },
+        { id: 'area-paciente', label: 'Área do Paciente', icon: UserCircle },
+        { id: 'import-transcript', label: 'Importar Transcrição', icon: FileDown },
+      ];
+    }
+
     const items = [
       { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { id: 'pacientes', label: 'Pacientes', icon: Users },
@@ -2467,7 +2595,7 @@ Como posso te ajudar hoje?`
       items.push({ id: 'admin', label: 'Painel Admin', icon: ShieldCheck });
     }
     return items;
-  }, [user]);
+  }, [user, currentClinic, clinicRole, clinicMembers]);
 
   const isPrivacyRoute = window.location.pathname.startsWith('/privacidade') || window.location.search.includes('goto=privacidade');
 
@@ -2495,7 +2623,38 @@ Como posso te ajudar hoje?`
     );
   }
 
-  if (!user) {
+  if (currentClinic && (!currentClinicMember || isForceClinicLogin)) {
+    return (
+      <ClinicLoginPage 
+        clinic={currentClinic}
+        members={clinicMembers}
+        onLoginGoogle={handleGoogleLogin}
+        onSelectSimulatedMember={(member) => {
+          setSimulatedClinicMember(currentClinic.id, member);
+          setCurrentClinicMember(member);
+          setIsForceClinicLogin(false);
+          if (member.role === 'receptionist') {
+            setActiveTab('crm-recepcao');
+          } else if (member.role === 'supervisor') {
+            setActiveTab('supervisao');
+          } else if (member.role === 'clinic_admin') {
+            setActiveTab('dashboard');
+          } else {
+            setActiveTab('dashboard');
+          }
+        }}
+        onExitClinicMode={() => {
+          window.history.pushState({}, '', '/');
+          setCurrentClinic(null);
+          setCurrentClinicMember(null);
+          setIsForceClinicLogin(false);
+          applyClinicTheme();
+        }}
+      />
+    );
+  }
+
+  if (!user && !currentClinicMember) {
     return (
       <>
         <LandingPage onLogin={handleGoogleLogin} />
@@ -2581,9 +2740,25 @@ Como posso te ajudar hoje?`
         isMobileMenuOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
       )}>
         <div className="p-6 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <img src="/apple-touch-icon.png" className="w-10 h-10 object-contain rounded-xl shadow-lg border border-white/5" alt="Logo" />
-            <h1 className="text-xl font-bold tracking-tight">Simple<span className="text-primary">Psi</span></h1>
+          <div className="flex items-center gap-3 min-w-0">
+            {currentClinic?.theme?.logoUrl ? (
+              <img src={currentClinic.theme.logoUrl} className="w-10 h-10 object-contain rounded-xl shadow-lg border border-white/5 shrink-0" alt="Logo" />
+            ) : (
+              <div 
+                className="w-10 h-10 rounded-xl shadow-lg border border-white/5 flex items-center justify-center font-bold text-white text-lg shrink-0"
+                style={{ backgroundColor: currentClinic?.theme?.primaryColor || 'var(--color-primary)' }}
+              >
+                {currentClinic ? currentClinic.name[0] : <img src="/apple-touch-icon.png" className="w-10 h-10 object-contain rounded-xl" alt="Logo" />}
+              </div>
+            )}
+            <div className="min-w-0">
+              <h1 className="text-base font-bold tracking-tight truncate">
+                {currentClinic ? currentClinic.name : <>Simple<span className="text-primary">Psi</span></>}
+              </h1>
+              {currentClinic && (
+                <p className="text-[10px] text-text-muted font-medium truncate">⚡ por SimplePsi</p>
+              )}
+            </div>
           </div>
           <button onClick={() => setIsMobileMenuOpen(false)} className="lg:hidden text-text-muted hover:text-text-main">
             <ChevronRight className="rotate-180" size={24} />
@@ -2596,6 +2771,11 @@ Como posso te ajudar hoje?`
               key={item.id}
               id={`nav-${item.id}`}
               onClick={() => {
+                if (item.id === 'minha-equipe') {
+                  setIsClinicTeamModalOpen(true);
+                  setIsMobileMenuOpen(false);
+                  return;
+                }
                 setActiveTab(item.id);
                 setSelectedPatient(null);
                 setIsMobileMenuOpen(false);
@@ -2622,7 +2802,7 @@ Como posso te ajudar hoje?`
         </nav>
 
           <div className="p-4 mt-auto border-t border-white/5 space-y-3">
-            {profileSettings.isTrial && (
+            {!currentClinic && profileSettings.isTrial && (
               <div className="bg-primary/10 border border-primary/20 rounded-xl p-3 space-y-2 text-left animate-in fade-in slide-in-from-bottom-2 duration-300">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-primary">
                   <Sparkles size={13} className="animate-pulse shrink-0 text-primary" />
@@ -2650,21 +2830,80 @@ Como posso te ajudar hoje?`
               <span>Suporte & Sugestões</span>
             </button>
 
-            <div className="flex items-center gap-3 p-2">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-accent to-primary flex items-center justify-center text-sm font-bold text-white overflow-hidden">
-                {user.photoURL ? <img src={user.photoURL} alt={user.displayName || ''} className="w-full h-full object-cover" /> : user.displayName?.charAt(0) || 'U'}
+            {currentClinic ? (
+              <div className="p-3 rounded-2xl bg-surface-muted border border-border-ui space-y-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center font-bold text-primary text-xs shrink-0">
+                    {(currentClinicMember?.name || currentClinicMember?.email || 'A')[0].toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-bold truncate text-text-main">
+                      {currentClinicMember?.name || 'Administrador(a)'}
+                    </p>
+                    <p className="text-[10px] text-text-muted truncate">
+                      {currentClinicMember?.email || currentClinic?.ownerEmail}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between pt-1 border-t border-border-ui/60 text-[10px]">
+                  <span className="font-semibold text-primary">
+                    {clinicRole === 'clinic_admin' ? '👑 Gestor/Admin' : 
+                     clinicRole === 'supervisor' ? '🎓 Supervisor' : 
+                     clinicRole === 'receptionist' ? '📋 Recepção' : '🩺 Psicólogo'}
+                  </span>
+                  <button
+                    onClick={() => setIsClinicRoleSwitcherOpen(true)}
+                    className="text-text-muted hover:text-text-main underline"
+                  >
+                    Alternar
+                  </button>
+                </div>
               </div>
-              <div className="flex-1 overflow-hidden">
-                <p className="text-sm font-medium truncate text-text-main">{user.displayName || 'Usuário'}</p>
-                <p className="text-[10px] text-text-muted truncate uppercase tracking-widest">{user.email}</p>
+            ) : (
+              <div className="flex items-center gap-3 p-2">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-accent to-primary flex items-center justify-center text-sm font-bold text-white overflow-hidden">
+                  {user?.photoURL ? <img src={user.photoURL} alt={user.displayName || ''} className="w-full h-full object-cover" /> : user?.displayName?.charAt(0) || 'U'}
+                </div>
+                <div className="flex-1 overflow-hidden">
+                  <p className="text-sm font-medium truncate text-text-main">{user?.displayName || 'Usuário'}</p>
+                  <p className="text-[10px] text-text-muted truncate uppercase tracking-widest">{user?.email}</p>
+                </div>
               </div>
-            </div>
-            <button 
-              onClick={() => auth.signOut()}
-              className="w-full flex items-center justify-center gap-2 py-2 text-[10px] font-bold text-red-500 hover:bg-red-500/10 rounded-lg transition-colors uppercase tracking-widest"
-            >
-              <LogOut size={14} /> Sair da Conta
-            </button>
+            )}
+
+            {currentClinic ? (
+              <div className="space-y-1.5">
+                <button 
+                  onClick={() => {
+                    setSimulatedClinicMember(currentClinic.id, null);
+                    setCurrentClinicMember(null);
+                    setIsForceClinicLogin(true);
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-2 text-[10px] font-bold text-primary hover:bg-primary/10 rounded-lg transition-colors uppercase tracking-widest border border-primary/20"
+                >
+                  <LogIn size={14} /> Trocar Conta / Login
+                </button>
+                <button 
+                  onClick={() => {
+                    setSimulatedClinicMember(currentClinic.id, null);
+                    setCurrentClinicMember(null);
+                    setCurrentClinic(null);
+                    applyClinicTheme();
+                    window.history.pushState({}, '', '/');
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-2 text-[10px] font-bold text-red-500 hover:bg-red-500/10 rounded-lg transition-colors uppercase tracking-widest"
+                >
+                  <LogOut size={14} /> Sair da Clínica
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={() => auth.signOut()}
+                className="w-full flex items-center justify-center gap-2 py-2 text-[10px] font-bold text-red-500 hover:bg-red-500/10 rounded-lg transition-colors uppercase tracking-widest"
+              >
+                <LogOut size={14} /> Sair da Conta
+              </button>
+            )}
           </div>
       </aside>
 
@@ -2707,6 +2946,108 @@ Como posso te ajudar hoje?`
           </div>
 
           <div className="flex items-center gap-3 lg:gap-6">
+            {/* Seletor Rápido de Cargo / Simulação no Localhost */}
+            {currentClinic && (
+              <div className="relative">
+                <button
+                  onClick={() => setIsClinicRoleSwitcherOpen(prev => !prev)}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-primary/10 border border-primary/20 text-text-main text-xs font-bold hover:bg-primary/20 transition-all shadow-sm"
+                  title="Alternar Perfil da Equipe / Modo Teste"
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="truncate max-w-[130px] sm:max-w-xs">
+                    {currentClinicMember?.name || (isClinicAdmin ? 'Gestor(a) / Admin' : 'Psicólogo(a)')}
+                  </span>
+                  <ChevronDown size={14} className="text-primary shrink-0" />
+                </button>
+
+                {/* Dropdown de Simulação */}
+                <AnimatePresence>
+                  {isClinicRoleSwitcherOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                      className="absolute right-0 mt-2 w-72 bg-card border border-border-ui rounded-2xl shadow-2xl p-2 z-50 text-xs space-y-1 text-text-main"
+                    >
+                      <div className="p-2 border-b border-border-ui/60 mb-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted block">
+                          Simular Cargo da Equipe
+                        </span>
+                        <span className="text-xs font-bold text-primary">{currentClinic.name}</span>
+                      </div>
+
+                      {DEFAULT_DEMO_MEMBERS.map((m) => {
+                        const isSelected = currentClinicMember?.email === m.email;
+                        const roleNames = {
+                          clinic_admin: '👑 Gestor(a) / Admin',
+                          psychologist: '🩺 Psicólogo(a)',
+                          supervisor: '🎓 Supervisor(a)',
+                          receptionist: '📋 Recepção / Secretária'
+                        };
+
+                        return (
+                          <button
+                            key={m.email}
+                            onClick={() => {
+                              setSimulatedClinicMember(currentClinic.id, m);
+                              setCurrentClinicMember(m);
+                              setIsClinicRoleSwitcherOpen(false);
+                            }}
+                            className={`w-full p-2 rounded-xl text-left flex items-center justify-between transition-all ${
+                              isSelected ? 'bg-primary/15 font-bold text-primary' : 'hover:bg-surface-muted text-text-muted hover:text-text-main'
+                            }`}
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-semibold">{m.name}</p>
+                              <span className="text-[10px] opacity-75">{roleNames[m.role]}</span>
+                            </div>
+                            {isSelected && <Check size={14} className="text-primary shrink-0" />}
+                          </button>
+                        );
+                      })}
+
+                      <div className="pt-1 border-t border-border-ui/60 mt-1">
+                        <button
+                          onClick={() => {
+                            setIsClinicRoleSwitcherOpen(false);
+                            setSimulatedClinicMember(currentClinic.id, null);
+                            setCurrentClinicMember(null);
+                            setIsForceClinicLogin(true);
+                          }}
+                          className="w-full p-2 text-left text-[11px] font-semibold text-text-muted hover:text-primary hover:bg-surface-muted rounded-xl"
+                        >
+                          🔐 Tela de Login da Clínica
+                        </button>
+                        <button
+                          onClick={() => {
+                            setIsClinicRoleSwitcherOpen(false);
+                            window.history.pushState({}, '', '/');
+                            setCurrentClinic(null);
+                            setCurrentClinicMember(null);
+                            applyClinicTheme();
+                          }}
+                          className="w-full p-2 text-left text-[11px] font-semibold text-red-400 hover:bg-red-500/10 rounded-xl"
+                        >
+                          🚪 Sair do Modo Clínica
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
+
+            {currentClinic && isClinicAdmin && (
+              <button 
+                onClick={() => setIsClinicTeamModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary/10 border border-primary/20 text-primary text-xs font-bold hover:bg-primary/20 transition-all shadow-sm"
+              >
+                <Building size={14} />
+                <span className="hidden sm:inline">Minha Equipe ({currentClinic.maxSeats || 7} Vagas)</span>
+              </button>
+            )}
+
             <button 
               id="profile-settings-button"
               onClick={() => setIsSettingsOpen(true)}
@@ -2727,7 +3068,42 @@ Como posso te ajudar hoje?`
         {/* Content Area */}
         <div className="p-4 lg:p-8 max-w-7xl mx-auto">
           <AnimatePresence mode="wait">
-            {activeTab === 'dashboard' && (
+            {((activeTab === 'crm-recepcao') || (activeTab === 'dashboard' && currentClinic && clinicRole === 'receptionist')) && currentClinic && (
+              <ClinicReceptionCrmView 
+                key="clinic-crm-view"
+                clinic={currentClinic}
+                currentMember={currentClinicMember}
+                members={clinicMembers}
+              />
+            )}
+
+            {activeTab === 'dashboard' && currentClinic && clinicRole === 'clinic_admin' && (
+              <ClinicDashboardView 
+                key="clinic-dashboard"
+                clinic={currentClinic}
+                currentMember={currentClinicMember}
+                members={clinicMembers}
+                sessions={clinicSessions}
+                patients={patients}
+                onOpenTeamModal={() => setIsClinicTeamModalOpen(true)}
+                onGoToMasterAgenda={() => setActiveTab('agenda')}
+                onOpenNewSessionModal={() => setActiveTab('agenda')}
+                onSelectPatient={(id) => { setSelectedPatient(id); setActiveTab('pacientes'); }}
+              />
+            )}
+
+            {activeTab === 'dashboard' && currentClinic && clinicRole === 'supervisor' && (
+              <ClinicSupervisionView 
+                key="clinic-supervision-dash"
+                clinic={currentClinic}
+                currentMember={currentClinicMember}
+                members={clinicMembers}
+                patients={patients}
+                sessions={clinicSessions}
+              />
+            )}
+
+            {activeTab === 'dashboard' && (!currentClinic || (clinicRole !== 'clinic_admin' && clinicRole !== 'supervisor')) && (
               <DashboardView 
                 key="dashboard" 
                 user={user}
@@ -2757,6 +3133,18 @@ Como posso te ajudar hoje?`
                 onOpenMigrationModal={() => setShowMigrationModal(true)}
               />
             )}
+
+            {(activeTab === 'supervisao') && currentClinic && (
+              <ClinicSupervisionView 
+                key="clinic-supervision-tab"
+                clinic={currentClinic}
+                currentMember={currentClinicMember}
+                members={clinicMembers}
+                patients={patients}
+                sessions={clinicSessions}
+              />
+            )}
+
             {activeTab === 'pacientes' && !selectedPatient && (
               <PatientsListView 
                 key="patients-list" 
@@ -2828,7 +3216,29 @@ Como posso te ajudar hoje?`
                 onDeleteSession={handleDeleteSession}
               />
             )}
-            {activeTab === 'agenda' && (
+
+            {/* Agenda Geral da Clínica vs Agenda Pessoal */}
+            {(activeTab === 'agenda-clinica' || (activeTab === 'agenda' && currentClinic && (clinicRole === 'clinic_admin' || clinicRole === 'receptionist' || clinicRole === 'supervisor'))) && currentClinic && (
+              <ClinicMasterAgendaView 
+                key="clinic-master-agenda"
+                clinic={currentClinic}
+                members={clinicMembers}
+                sessions={clinicSessions}
+                patients={patients}
+                onAddSession={(newSession) => {
+                  setClinicSessions(prev => [newSession as Session, ...prev]);
+                }}
+                onUpdateSession={(updated) => {
+                  setClinicSessions(prev => prev.map(s => s.id === updated.id ? updated : s));
+                }}
+                onDeleteSession={(sId) => {
+                  setClinicSessions(prev => prev.filter(s => s.id !== sId));
+                }}
+                currentMember={currentClinicMember}
+              />
+            )}
+
+            {activeTab === 'agenda' && (!currentClinic || (clinicRole !== 'clinic_admin' && clinicRole !== 'receptionist' && clinicRole !== 'supervisor')) && (
               <CalendarView 
                 key="calendar" 
                 sessions={sessions} 
@@ -3043,6 +3453,20 @@ Como posso te ajudar hoje?`
             safeSetStorage("simplepsi_meet_extension_consent", "true");
           }}
         />
+
+        {/* Modal de Gestão da Equipe da Clínica (B2B) */}
+        {currentClinic && (
+          <ClinicTeamModal
+            isOpen={isClinicTeamModalOpen}
+            onClose={() => setIsClinicTeamModalOpen(false)}
+            clinic={currentClinic}
+            onUpdateClinic={(updated) => {
+              setCurrentClinic(updated);
+              applyClinicTheme(updated.theme);
+            }}
+            currentUserEmail={user?.email || ''}
+          />
+        )}
 
         {/* Modal de Migração de Dados (Apenas para Contas de Teste Autorizadas) */}
         {isMigrationAllowed && showMigrationModal && (
@@ -10088,9 +10512,16 @@ function CalendarView({
   onConnectGoogleCalendar?: () => void
 }) {
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [viewMode, setViewMode] = useState<'day' | 'week' | 'month'>('day');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingSession, setEditingSession] = useState<any>(null);
   const [selectedMobileDay, setSelectedMobileDay] = useState<Date | null>(null);
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
 
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(monthStart);
@@ -10101,6 +10532,19 @@ function CalendarView({
     start: startDate,
     end: endDate
   });
+
+  const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
+  const weekEnd = endOfWeek(currentDate, { weekStartsOn: 1 });
+  const weekDays = eachDayOfInterval({
+    start: weekStart,
+    end: weekEnd
+  });
+
+  const DAY_HOURS = [
+    '07:00', '08:00', '09:00', '10:00', '11:00', '12:00',
+    '13:00', '14:00', '15:00', '16:00', '17:00', '18:00',
+    '19:00', '20:00', '21:00', '22:00'
+  ];
 
   const getDaySessions = (day: Date) => {
     const dayName = format(day, 'eeee', { locale: ptBR });
@@ -10208,21 +10652,49 @@ function CalendarView({
     return baseCount + count;
   };
 
-  const nextMonth = () => setCurrentDate(addMonths(currentDate, 1));
-  const prevMonth = () => setCurrentDate(subMonths(currentDate, 1));
+  const handlePrev = () => {
+    if (viewMode === 'day') setCurrentDate(prev => subDays(prev, 1));
+    else if (viewMode === 'week') setCurrentDate(prev => subWeeks(prev, 1));
+    else setCurrentDate(prev => subMonths(prev, 1));
+  };
+
+  const handleNext = () => {
+    if (viewMode === 'day') setCurrentDate(prev => addDays(prev, 1));
+    else if (viewMode === 'week') setCurrentDate(prev => addWeeks(prev, 1));
+    else setCurrentDate(prev => addMonths(prev, 1));
+  };
+
+  const handleToday = () => {
+    setCurrentDate(new Date());
+  };
 
   const WEEKDAYS_SHORT = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+  // Current day sessions summary
+  const currentDaySessions = useMemo(() => {
+    return getDaySessions(currentDate);
+  }, [currentDate, sessions, patients]);
+
+  const currentDayTotalRevenue = useMemo(() => {
+    return currentDaySessions.reduce((acc, s) => {
+      if (s.status === 'Cancelada') return acc;
+      return acc + (parseFloat(s.amount) || parseFloat(s.sessionValue) || 0);
+    }, 0);
+  }, [currentDaySessions]);
 
   return (
     <motion.div 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="space-y-8"
+      className="space-y-6"
     >
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
+      {/* Top Header & Toolbar */}
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
         <div>
           <div className="flex flex-wrap items-center gap-3">
-            <h2 className="text-3xl font-bold tracking-tight text-text-main">Agenda Mensal</h2>
+            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-text-main">
+              {viewMode === 'day' ? 'Agenda do Dia' : viewMode === 'week' ? 'Agenda da Semana' : 'Agenda Mensal'}
+            </h2>
             {isGoogleCalendarEnabled && googleAccessToken ? (
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="flex items-center gap-1.5 px-3 py-1 bg-green-500/10 text-green-400 border border-green-500/20 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm select-none">
@@ -10253,225 +10725,607 @@ function CalendarView({
               </button>
             )}
           </div>
-          <p className="text-text-muted mt-2">Visão completa do seu consultório e recorrências.</p>
-        </div>
-        
-        <div className="flex items-center gap-4 bg-card/50 backdrop-blur-md p-2 rounded-2xl border border-white/5 shadow-xl">
-          <button 
-            onClick={prevMonth}
-            className="p-2 rounded-xl hover:bg-white/5 transition-all text-text-muted hover:text-primary"
-          >
-            <ChevronLeft size={20} />
-          </button>
-          <div className="px-4 text-center min-w-[150px]">
-            <p className="text-xs font-bold text-primary uppercase tracking-widest leading-none mb-1">
-              {format(currentDate, 'yyyy')}
-            </p>
-            <h3 className="text-lg font-bold text-text-main capitalize leading-none">
-              {format(currentDate, 'MMMM', { locale: ptBR })}
-            </h3>
-          </div>
-          <button 
-            onClick={nextMonth}
-            className="p-2 rounded-xl hover:bg-white/5 transition-all text-text-muted hover:text-primary"
-          >
-            <ChevronRight size={20} />
-          </button>
+          <p className="text-text-muted mt-1 text-xs sm:text-sm">
+            {viewMode === 'day' 
+              ? 'Visualização horária detalhada estilo Google Agenda.' 
+              : viewMode === 'week' 
+                ? 'Planejamento semanal completo com todas as sessões e recorrências.'
+                : 'Visão panorâmica do seu consultório e recorrências.'}
+          </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          {lastAction && (
-             <button 
-               onClick={onUndo}
-               className="bg-orange-500/10 text-orange-500 border border-orange-500/20 px-6 py-3 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-orange-500 hover:text-white transition-all font-mono whitespace-nowrap"
-             >
-               <ChevronLeft className="rotate-180" size={16} />
-               Desfazer Alteração
-             </button>
-          )}
-          <button 
-            onClick={() => {
-              setEditingSession(null);
-              setIsModalOpen(true);
-            }}
-            className="bg-primary text-white px-6 py-3 rounded-2xl font-bold flex items-center justify-center gap-2 hover:opacity-90 shadow-lg shadow-primary/20 transition-all font-mono whitespace-nowrap"
-          >
-            <Plus size={20} />
-            Novo Agendamento
-          </button>
+        {/* Controls: Mode Switcher, Date Navigation, New Appointment */}
+        <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto justify-between xl:justify-end">
+          
+          {/* View Mode Switcher */}
+          <div className="bg-card/70 backdrop-blur-md p-1 rounded-2xl border border-white/10 flex items-center gap-1 shadow-sm">
+            <button
+              onClick={() => setViewMode('day')}
+              className={cn(
+                "px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer",
+                viewMode === 'day'
+                  ? "bg-primary text-white shadow-md"
+                  : "text-text-muted hover:text-text-main"
+              )}
+              title="Visão diária vertical estilo Google Agenda"
+            >
+              <Clock size={14} />
+              <span>Dia</span>
+            </button>
+            <button
+              onClick={() => setViewMode('week')}
+              className={cn(
+                "px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer",
+                viewMode === 'week'
+                  ? "bg-primary text-white shadow-md"
+                  : "text-text-muted hover:text-text-main"
+              )}
+              title="Visão de 7 colunas da semana"
+            >
+              <CalendarDays size={14} />
+              <span>Semana</span>
+            </button>
+            <button
+              onClick={() => setViewMode('month')}
+              className={cn(
+                "px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer",
+                viewMode === 'month'
+                  ? "bg-primary text-white shadow-md"
+                  : "text-text-muted hover:text-text-main"
+              )}
+              title="Visão mensal completa"
+            >
+              <CalendarIcon size={14} />
+              <span>Mês</span>
+            </button>
+          </div>
+
+          {/* Date Navigator */}
+          <div className="flex items-center gap-2 bg-card/60 backdrop-blur-md p-1.5 rounded-2xl border border-white/10 shadow-sm">
+            <button 
+              onClick={handlePrev}
+              className="p-1.5 rounded-xl hover:bg-white/10 transition-all text-text-muted hover:text-primary cursor-pointer"
+              title="Anterior"
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <button
+              onClick={handleToday}
+              className="px-2.5 py-1 text-[11px] font-bold text-text-main hover:text-primary bg-white/5 hover:bg-white/10 rounded-lg transition-all cursor-pointer"
+            >
+              Hoje
+            </button>
+            <div className="px-2 text-center min-w-[130px] sm:min-w-[160px]">
+              <p className="text-[10px] font-bold text-primary uppercase tracking-widest leading-none mb-0.5">
+                {viewMode === 'day' 
+                  ? format(currentDate, 'yyyy') 
+                  : viewMode === 'week' 
+                    ? `${format(weekStart, 'dd/MM')} a ${format(weekEnd, 'dd/MM/yyyy')}`
+                    : format(currentDate, 'yyyy')}
+              </p>
+              <h3 className="text-xs sm:text-sm font-bold text-text-main capitalize truncate leading-tight">
+                {viewMode === 'day'
+                  ? format(currentDate, "EEEE, d 'de' MMM", { locale: ptBR })
+                  : viewMode === 'week'
+                    ? `Semana ${format(weekStart, 'w')}`
+                    : format(currentDate, 'MMMM', { locale: ptBR })}
+              </h3>
+            </div>
+            <button 
+              onClick={handleNext}
+              className="p-1.5 rounded-xl hover:bg-white/10 transition-all text-text-muted hover:text-primary cursor-pointer"
+              title="Próximo"
+            >
+              <ChevronRight size={18} />
+            </button>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex items-center gap-2">
+            {lastAction && onUndo && (
+               <button 
+                 onClick={onUndo}
+                 className="bg-orange-500/10 text-orange-500 border border-orange-500/20 px-4 py-2 rounded-2xl font-bold flex items-center justify-center gap-1.5 hover:bg-orange-500 hover:text-white transition-all text-xs cursor-pointer"
+               >
+                 <ChevronLeft className="rotate-180" size={14} />
+                 <span>Desfazer</span>
+               </button>
+            )}
+            <button 
+              onClick={() => {
+                setEditingSession({
+                  date: format(currentDate, 'yyyy-MM-dd')
+                });
+                setIsModalOpen(true);
+              }}
+              className="bg-primary text-white px-4 sm:px-5 py-2 rounded-2xl font-bold flex items-center justify-center gap-1.5 hover:opacity-90 shadow-lg shadow-primary/20 transition-all text-xs sm:text-sm whitespace-nowrap cursor-pointer"
+            >
+              <Plus size={18} />
+              <span>Novo Agendamento</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      <section className="glass-card rounded-[32px] overflow-hidden border border-white/5 shadow-2xl">
-        {/* Calendar Header */}
-        <div className="grid grid-cols-7 border-b border-white/5 bg-white/5">
-          {WEEKDAYS_SHORT.map(day => (
-            <div key={day} className="py-4 text-center text-[10px] font-bold text-text-muted uppercase tracking-widest border-r last:border-r-0 border-white/5">
-              {day}
+      {/* 1. AGENDA DO DIA (GOOGLE CALENDAR STYLE) */}
+      {viewMode === 'day' && (
+        <div className="space-y-4">
+          {/* Day Summary Header Bar */}
+          <div className="bg-card/70 border border-border-ui rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                "w-12 h-12 rounded-2xl flex flex-col items-center justify-center font-bold shrink-0 border",
+                isToday(currentDate) 
+                  ? "bg-primary text-white border-primary shadow-md shadow-primary/30" 
+                  : "bg-surface-muted text-text-main border-border-ui"
+              )}>
+                <span className="text-[10px] uppercase font-bold tracking-wider leading-none">
+                  {format(currentDate, 'EEE', { locale: ptBR })}
+                </span>
+                <span className="text-lg font-extrabold leading-none mt-0.5">
+                  {format(currentDate, 'd')}
+                </span>
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-text-main capitalize">
+                  {format(currentDate, "EEEE, d 'de' MMMM 'de' yyyy", { locale: ptBR })}
+                </h3>
+                <p className="text-xs text-text-muted mt-0.5">
+                  {isToday(currentDate) ? 'Hoje • ' : ''}
+                  {currentDaySessions.length === 0 
+                    ? 'Nenhum atendimento agendado para este dia.' 
+                    : `${currentDaySessions.length} ${currentDaySessions.length === 1 ? 'consulta agendada' : 'consultas agendadas'}`}
+                </p>
+              </div>
             </div>
-          ))}
-        </div>
 
-        {/* Calendar Grid */}
-        <div className="grid grid-cols-7 auto-rows-[minmax(120px,auto)]">
-          {calendarDays.map((day, idx) => {
-            const sessions = getDaySessions(day);
-            const isCurrentMonth = isSameMonth(day, monthStart);
-            const isTodayDay = isToday(day);
-            const dateStr = format(day, 'yyyy-MM-dd');
-
-            return (
-              <div 
-                key={day.toString()} 
-                onClick={() => setSelectedMobileDay(day)}
-                className={cn(
-                  "p-2 border-r border-b border-white/5 relative group transition-colors cursor-pointer md:cursor-default",
-                  !isCurrentMonth && "bg-white/[0.02] opacity-30",
-                  idx % 7 === 6 && "border-r-0",
-                  isTodayDay && "bg-primary/5",
-                  "min-h-[80px] md:min-h-0"
-                )}
+            <div className="flex items-center gap-3 self-end sm:self-center">
+              <div className="text-right">
+                <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider block">Previsão do Dia</span>
+                <span className="text-sm font-bold text-emerald-500">
+                  R$ {currentDayTotalRevenue.toFixed(2)}
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  setEditingSession({ date: format(currentDate, 'yyyy-MM-dd') });
+                  setIsModalOpen(true);
+                }}
+                className="py-2 px-3 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
               >
-                <div className="flex justify-between items-center mb-2 px-1">
-                  <span className={cn(
-                    "text-xs font-bold flex items-center justify-center w-6 h-6 rounded-lg",
-                    isTodayDay ? "bg-primary text-white" : "text-text-muted"
-                  )}>
-                    {format(day, 'd')}
-                  </span>
-                  {sessions.length > 0 && (
-                    <span className="text-[8px] font-bold text-text-muted uppercase tracking-tighter opacity-50 hidden md:inline">
-                      {sessions.length} {sessions.length === 1 ? 'Sessão' : 'Sessões'}
-                    </span>
-                  )}
-                </div>
+                <Plus size={14} />
+                <span>Adicionar</span>
+              </button>
+            </div>
+          </div>
 
-                <div className="space-y-1 overflow-y-auto max-h-[100px] custom-scrollbar pr-1 hidden md:block">
-                  {sessions.map(session => (
+          {/* Vertical Hourly Timeline */}
+          <div className="glass-card rounded-[28px] overflow-hidden border border-white/5 shadow-2xl relative">
+            <div className="relative divide-y divide-white/5">
+              {/* Real-time Current Time Line (Google Calendar Red Line) */}
+              {isToday(currentDate) && (() => {
+                const h = now.getHours();
+                const m = now.getMinutes();
+                if (h >= 7 && h <= 22) {
+                  const minsFrom7 = (h - 7) * 60 + m;
+                  const totalGridMins = 16 * 60; // 07:00 to 23:00 (16 hrs)
+                  const topPct = (minsFrom7 / totalGridMins) * 100;
+                  return (
                     <div 
-                      key={session.id}
-                      className={cn(
-                        "p-1.5 rounded-lg border text-[9px] font-bold leading-tight relative group/session cursor-pointer transition-all hover:scale-[1.02]",
-                        session.status === 'Cancelada' 
-                          ? "bg-red-500/10 border-red-500/20 text-red-400 opacity-60 line-through" 
-                          : session.isTriage 
-                            ? "bg-orange-500/10 border-orange-500/20 text-orange-400" 
-                            : "bg-primary/10 border-primary/20 text-primary"
-                      )}
+                      className="absolute left-0 right-0 z-30 pointer-events-none flex items-center"
+                      style={{ top: `${topPct}%` }}
                     >
-                      <div className="flex justify-between items-start gap-1">
-                        <div className="flex items-center gap-1 min-w-0 flex-1">
-                          <span className="truncate uppercase tracking-tight">{session.patientName || 'Paciente'}</span>
-                          {session.patientPhone && getWhatsAppLink(session.patientPhone) && (
-                            <a 
-                              href={getWhatsAppLink(session.patientPhone)!} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="text-green-500 hover:text-green-400 p-0.5 transition-colors flex items-center justify-center rounded hover:bg-green-500/10 cursor-pointer shrink-0"
-                              title="Conversar no WhatsApp"
+                      <div className="w-3 h-3 rounded-full bg-rose-500 shadow-md shadow-rose-500/50 -ml-1.5 ring-4 ring-rose-500/20 animate-pulse" />
+                      <div className="h-[2px] bg-rose-500 flex-1 shadow-[0_0_8px_rgba(244,63,94,0.6)]" />
+                      <span className="bg-rose-500 text-white font-bold text-[10px] px-2 py-0.5 rounded-full mr-2 shadow font-mono">
+                        {format(now, 'HH:mm')}
+                      </span>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
+              {DAY_HOURS.map((hour) => {
+                const hourPrefix = hour.slice(0, 2);
+                const hourNum = parseInt(hourPrefix, 10);
+                const slotSessions = currentDaySessions.filter(s => {
+                  if (!s.time) return false;
+                  const sH = parseInt(s.time.split(':')[0], 10);
+                  return sH === hourNum;
+                });
+
+                return (
+                  <div 
+                    key={hour}
+                    className="flex min-h-[96px] relative group hover:bg-white/[0.015] transition-colors"
+                  >
+                    {/* Hour Column */}
+                    <div className="w-16 sm:w-20 p-3 border-r border-white/5 text-right shrink-0 select-none flex flex-col justify-between">
+                      <span className="text-xs font-bold text-text-muted font-mono block -mt-1 group-hover:text-primary transition-colors">
+                        {hour}
+                      </span>
+                      <span className="text-[9px] text-text-muted/40 font-mono">
+                        :30
+                      </span>
+                    </div>
+
+                    {/* Hour Content Slot */}
+                    <div className="flex-1 p-2 flex flex-col justify-center relative">
+                      {/* Subtle 30-minute guide line */}
+                      <div className="absolute left-0 right-0 top-1/2 border-t border-dashed border-white/[0.04] pointer-events-none" />
+
+                      {slotSessions.length === 0 ? (
+                        <div className="h-full flex items-center">
+                          <button
+                            onClick={() => {
+                              setEditingSession({
+                                date: format(currentDate, 'yyyy-MM-dd'),
+                                time: hour
+                              });
+                              setIsModalOpen(true);
+                            }}
+                            className="opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-semibold text-primary/80 hover:text-primary flex items-center gap-1.5 py-1 px-3 rounded-xl hover:bg-primary/10 cursor-pointer"
+                          >
+                            <Plus size={14} />
+                            <span>Agendar às {hour}</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 w-full z-10">
+                          {slotSessions.map((session) => (
+                            <div
+                              key={session.id}
+                              className={cn(
+                                "p-3 rounded-2xl border text-xs relative transition-all shadow-sm flex flex-col justify-between gap-2.5",
+                                session.status === 'Cancelada'
+                                  ? "bg-red-500/10 border-red-500/20 text-red-300 opacity-60 line-through"
+                                  : session.isTriage
+                                    ? "bg-orange-500/10 border-orange-500/30 text-text-main"
+                                    : session.status === 'Realizada'
+                                      ? "bg-emerald-500/10 border-emerald-500/30 text-text-main"
+                                      : "bg-primary/10 border-primary/30 text-text-main"
+                              )}
                             >
-                              <svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor">
-                                <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.717-1.458L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.863-9.864.001-2.63-1.023-5.101-2.883-6.962C16.59 1.878 14.12 .853 11.493.853 6.059.853 1.633 5.272 1.63 10.718c-.001 1.639.429 3.236 1.247 4.678L1.87 20.89l5.656-1.482c1.399.763 2.94 1.168 4.542 1.171z M17.07 14.543c-.275-.138-1.62-.8-1.873-.892-.253-.093-.437-.138-.62.138-.184.276-.713.892-.873 1.077-.16.184-.32.207-.595.069-.275-.138-1.163-.429-2.215-1.366-.817-.729-1.37-1.629-1.53-1.905-.16-.276-.017-.424.12-.562.124-.125.276-.322.414-.483.138-.161.184-.276.276-.46.09-.184.046-.345-.023-.483-.069-.138-.62-1.494-.85-2.046-.223-.538-.45-.465-.62-.474-.16-.008-.344-.01-.527-.01-.184 0-.483.069-.736.345-.253.276-.966.943-.966 2.3 0 1.356.988 2.666 1.126 2.85.138.184 1.944 2.969 4.71 4.16.657.283 1.17.453 1.57.58.66.21 1.26.18 1.73.11.53-.08 1.62-.66 1.85-1.3.23-.64.23-1.19.16-1.3-.07-.11-.25-.18-.53-.32z"/>
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold font-mono bg-black/25 text-text-main">
+                                      {session.time}
+                                    </span>
+                                    <span className={cn(
+                                      "px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider",
+                                      session.status === 'Realizada' ? "bg-emerald-500/20 text-emerald-400" :
+                                      session.status === 'Cancelada' ? "bg-red-500/20 text-red-400" :
+                                      session.isTriage ? "bg-orange-500/20 text-orange-400" :
+                                      "bg-primary/20 text-primary"
+                                    )}>
+                                      {session.status === 'Cancelada' ? 'Cancelada' : session.isTriage ? 'Triagem' : session.type || 'Sessão'}
+                                    </span>
+                                    {session.sessionNumber && (
+                                      <span className="text-[9px] text-text-muted font-bold">
+                                        #{session.sessionNumber}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <h4 className="font-bold text-sm text-text-main truncate uppercase tracking-tight">
+                                    {session.patientName || 'Paciente'}
+                                  </h4>
+                                </div>
+
+                                {session.patientPhone && getWhatsAppLink(session.patientPhone) && (
+                                  <a
+                                    href={getWhatsAppLink(session.patientPhone)!}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="p-1.5 rounded-xl bg-green-500/15 text-green-400 hover:bg-green-500 hover:text-white transition-all shrink-0 cursor-pointer"
+                                    title="Conversar no WhatsApp"
+                                  >
+                                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                                      <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.717-1.458L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.863-9.864.001-2.63-1.023-5.101-2.883-6.962C16.59 1.878 14.12 .853 11.493.853 6.059.853 1.633 5.272 1.63 10.718c-.001 1.639.429 3.236 1.247 4.678L1.87 20.89l5.656-1.482c1.399.763 2.94 1.168 4.542 1.171z M17.07 14.543c-.275-.138-1.62-.8-1.873-.892-.253-.093-.437-.138-.62.138-.184.276-.713.892-.873 1.077-.16.184-.32.207-.595.069-.275-.138-1.163-.429-2.215-1.366-.817-.729-1.37-1.629-1.53-1.905-.16-.276-.017-.424.12-.562.124-.125.276-.322.414-.483.138-.161.184-.276.276-.46.09-.184.046-.345-.023-.483-.069-.138-.62-1.494-.85-2.046-.223-.538-.45-.465-.62-.474-.16-.008-.344-.01-.527-.01-.184 0-.483.069-.736.345-.253.276-.966.943-.966 2.3 0 1.356.988 2.666 1.126 2.85.138.184 1.944 2.969 4.71 4.16.657.283 1.17.453 1.57.58.66.21 1.26.18 1.73.11.53-.08 1.62-.66 1.85-1.3.23-.64.23-1.19.16-1.3-.07-.11-.25-.18-.53-.32z"/>
+                                    </svg>
+                                  </a>
+                                )}
+                              </div>
+
+                              {/* Action buttons */}
+                              <div className="flex items-center gap-1.5 pt-2 border-t border-white/5">
+                                {session.isTriage && session.status !== 'Cancelada' && (
+                                  <button
+                                    onClick={() => onTriageToPatient(session.patientName, session.dayName, session.time, session.id)}
+                                    className="px-2 py-1 rounded-lg bg-primary/20 text-primary hover:bg-primary hover:text-white text-[10px] font-bold uppercase transition-all cursor-pointer"
+                                  >
+                                    Efetivar
+                                  </button>
+                                )}
+                                {session.status !== 'Cancelada' && (
+                                  <>
+                                    <button
+                                      onClick={() => {
+                                        setEditingSession({
+                                          ...session,
+                                          date: format(currentDate, 'yyyy-MM-dd'),
+                                          originalDate: format(currentDate, 'yyyy-MM-dd'),
+                                          originalTime: session.time
+                                        });
+                                        setIsModalOpen(true);
+                                      }}
+                                      className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white/80 text-[10px] font-bold uppercase transition-all cursor-pointer"
+                                    >
+                                      Editar
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        if (confirm('Deseja cancelar este atendimento?')) {
+                                          onAddSession({
+                                            id: session.id,
+                                            patientId: session.patientId || '',
+                                            triageName: session.triageName || session.patientName || '',
+                                            date: format(currentDate, 'yyyy-MM-dd'),
+                                            originalDate: format(currentDate, 'yyyy-MM-dd'),
+                                            time: session.time,
+                                            originalTime: session.time,
+                                            status: 'Cancelada',
+                                            isTriage: session.isTriage,
+                                            type: session.type
+                                          });
+                                        }
+                                      }}
+                                      className="px-2 py-1 rounded-lg bg-red-500/10 hover:bg-red-500 hover:text-white text-red-400 text-[10px] font-bold uppercase transition-all cursor-pointer"
+                                    >
+                                      Cancelar
+                                    </button>
+                                  </>
+                                )}
+                                {!session.id?.toString().startsWith('virtual-') && (
+                                  <button
+                                    onClick={() => {
+                                      if (confirm('Deseja excluir permanentemente este registro da agenda?')) {
+                                        onDeleteSession(session.id);
+                                      }
+                                    }}
+                                    className="p-1 rounded-lg bg-red-500/10 hover:bg-red-500 hover:text-white text-red-400 transition-all ml-auto cursor-pointer"
+                                    title="Excluir Registro"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. AGENDA DA SEMANA (7 COLUNAS DE DIAS) */}
+      {viewMode === 'week' && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
+            {weekDays.map((day) => {
+              const daySess = getDaySessions(day);
+              const isTodayDay = isToday(day);
+              const dateStr = format(day, 'yyyy-MM-dd');
+
+              return (
+                <div
+                  key={day.toString()}
+                  className={cn(
+                    "glass-card rounded-2xl border flex flex-col justify-between transition-all overflow-hidden",
+                    isTodayDay ? "border-primary/50 shadow-lg shadow-primary/10 bg-primary/[0.03]" : "border-white/5 bg-card/40"
+                  )}
+                >
+                  {/* Day Column Header */}
+                  <div 
+                    onClick={() => {
+                      setCurrentDate(day);
+                      setViewMode('day');
+                    }}
+                    className={cn(
+                      "p-3 border-b border-white/5 cursor-pointer hover:bg-white/5 transition-colors flex items-center justify-between",
+                      isTodayDay && "bg-primary/10"
+                    )}
+                    title="Clique para ver a agenda detalhada deste dia"
+                  >
+                    <div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted block">
+                        {format(day, 'EEEE', { locale: ptBR })}
+                      </span>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className={cn(
+                          "text-sm font-extrabold flex items-center justify-center w-6 h-6 rounded-lg",
+                          isTodayDay ? "bg-primary text-white" : "text-text-main"
+                        )}>
+                          {format(day, 'd')}
+                        </span>
+                        {isTodayDay && (
+                          <span className="text-[9px] bg-primary/20 text-primary font-bold px-1.5 py-0.2 rounded-full uppercase">
+                            Hoje
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold text-text-muted bg-white/5 px-2 py-1 rounded-lg">
+                      {daySess.length}
+                    </span>
+                  </div>
+
+                  {/* Sessions List */}
+                  <div className="p-2 space-y-2 flex-1 min-h-[160px] max-h-[450px] overflow-y-auto custom-scrollbar">
+                    {daySess.length === 0 ? (
+                      <div className="h-full flex items-center justify-center py-8 text-center text-[11px] text-text-muted/60">
+                        Livre
+                      </div>
+                    ) : (
+                      daySess.map((session) => (
+                        <div
+                          key={session.id}
+                          className={cn(
+                            "p-2 rounded-xl border text-[10px] font-semibold flex flex-col gap-1 transition-all",
+                            session.status === 'Cancelada'
+                              ? "bg-red-500/10 border-red-500/20 text-red-400 opacity-60 line-through"
+                              : session.isTriage
+                                ? "bg-orange-500/10 border-orange-500/20 text-orange-300"
+                                : session.status === 'Realizada'
+                                  ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300"
+                                  : "bg-primary/10 border-primary/20 text-text-main"
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="font-mono font-bold text-primary">{session.time}</span>
+                            <span className="text-[8px] uppercase tracking-wider font-bold opacity-75 truncate">
+                              {session.status === 'Cancelada' ? 'Cancelada' : session.type}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="font-bold truncate text-text-main uppercase">
+                              {session.patientName || 'Paciente'}
+                            </span>
+                            {session.patientPhone && getWhatsAppLink(session.patientPhone) && (
+                              <a
+                                href={getWhatsAppLink(session.patientPhone)!}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-green-500 hover:text-green-400 p-0.5 rounded transition-colors shrink-0"
+                                title="WhatsApp"
+                              >
+                                <svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor">
+                                  <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.717-1.458L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.863-9.864.001-2.63-1.023-5.101-2.883-6.962C16.59 1.878 14.12 .853 11.493.853 6.059.853 1.633 5.272 1.63 10.718c-.001 1.639.429 3.236 1.247 4.678L1.87 20.89l5.656-1.482c1.399.763 2.94 1.168 4.542 1.171z M17.07 14.543c-.275-.138-1.62-.8-1.873-.892-.253-.093-.437-.138-.62.138-.184.276-.713.892-.873 1.077-.16.184-.32.207-.595.069-.275-.138-1.163-.429-2.215-1.366-.817-.729-1.37-1.629-1.53-1.905-.16-.276-.017-.424.12-.562.124-.125.276-.322.414-.483.138-.161.184-.276.276-.46.09-.184.046-.345-.023-.483-.069-.138-.62-1.494-.85-2.046-.223-.538-.45-.465-.62-.474-.16-.008-.344-.01-.527-.01-.184 0-.483.069-.736.345-.253.276-.966.943-.966 2.3 0 1.356.988 2.666 1.126 2.85.138.184 1.944 2.969 4.71 4.16.657.283 1.17.453 1.57.58.66.21 1.26.18 1.73.11.53-.08 1.62-.66 1.85-1.3.23-.64.23-1.19.16-1.3-.07-.11-.25-.18-.53-.32z"/>
                               </svg>
                             </a>
                           )}
                         </div>
-                        <span className="shrink-0 opacity-70">{session.time}</span>
                       </div>
-
-                      {/* Expanded info on hover */}
-                      <div className="hidden group-hover/session:block mt-1 pt-1 border-t border-white/5 animate-in fade-in slide-in-from-top-1 duration-200">
-                        <div className="flex justify-between items-center text-[7px] text-white/60 uppercase tracking-widest font-bold mb-1.5">
-                          <span>{session.status === 'Cancelada' ? 'Cancelada' : session.type}</span>
-                        </div>
-                        
-                        <div className="flex gap-1">
-                          {session.isTriage && session.status !== 'Cancelada' && (
-                            <button 
-                              onClick={(e) => { e.stopPropagation(); onTriageToPatient(session.patientName, session.dayName, session.time, session.id); }}
-                              className="flex-[2] bg-primary/20 text-primary py-1 rounded-md text-[7px] font-bold hover:bg-primary hover:text-white transition-all border border-primary/20 uppercase"
-                            >Efetivar</button>
-                          )}
-                          
-                          {session.status !== 'Cancelada' && (
-                            <>
-                              <button 
-                                onClick={(e) => { 
-                                  e.stopPropagation(); 
-                                  setEditingSession({
-                                    ...session,
-                                    date: dateStr,
-                                    originalDate: dateStr,
-                                    originalTime: session.time
-                                  });
-                                  setIsModalOpen(true);
-                                }}
-                                className="flex-1 bg-white/10 text-white/70 py-1 rounded-md text-[7px] font-bold hover:bg-white/20 transition-all border border-white/5 uppercase"
-                              >Editar</button>
-                              <button 
-                                onClick={(e) => { 
-                                  e.stopPropagation(); 
-                                  if (confirm('Deseja cancelar este atendimento?')) {
-                                    onAddSession({
-                                      id: session.id,
-                                      patientId: session.patientId || '',
-                                      triageName: session.triageName || session.patientName || '',
-                                      date: dateStr,
-                                      originalDate: dateStr,
-                                      time: session.time,
-                                      originalTime: session.time,
-                                      status: 'Cancelada',
-                                      isTriage: session.isTriage,
-                                      type: session.type
-                                    });
-                                  }
-                                }}
-                                className="flex-1 bg-red-500/10 text-red-400 py-1 rounded-md text-[7px] font-bold hover:bg-red-500 hover:text-white transition-all border border-red-500/20 uppercase"
-                              >Cancelar</button>
-                            </>
-                          )}
-                          
-                          {/* Botão de exclusão definitiva para sessões gravadas (mesmo canceladas) */}
-                          {!session.id?.toString().startsWith('virtual-') && (
-                             <button 
-                              onClick={(e) => { 
-                                e.stopPropagation(); 
-                                if (confirm('Deseja excluir permanentemente este registro da agenda?')) {
-                                  onDeleteSession(session.id);
-                                }
-                              }}
-                              className="p-1 bg-red-500/10 text-red-400 rounded-md hover:bg-red-500 hover:text-white transition-all border border-red-500/20"
-                              title="Excluir Registro"
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {/* Mobile indicators (dots/bars) */}
-                <div className="md:hidden flex flex-col gap-1 mt-1">
-                  {sessions.slice(0, 3).map(session => (
-                    <div 
-                      key={`mob-${session.id}`} 
-                      className={cn(
-                        "h-1.5 w-full rounded-full",
-                        session.status === 'Cancelada' ? "bg-red-500/50" : session.isTriage ? "bg-orange-500" : "bg-primary"
-                      )} 
-                    />
-                  ))}
-                  {sessions.length > 3 && (
-                    <div className="text-[8px] text-center text-text-muted font-bold">+{sessions.length - 3}</div>
+                    ))
                   )}
+                </div>
+
+                {/* Add appointment on day button */}
+                <div className="p-2 border-t border-white/5 bg-white/[0.02]">
+                  <button
+                    onClick={() => {
+                      setEditingSession({ date: dateStr });
+                      setIsModalOpen(true);
+                    }}
+                    className="w-full py-1.5 text-[10px] font-bold text-text-muted hover:text-primary rounded-lg hover:bg-primary/10 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <Plus size={12} />
+                    <span>Agendar</span>
+                  </button>
                 </div>
               </div>
             );
           })}
         </div>
-      </section>
+      </div>
+      )}
+
+      {/* 3. AGENDA DO MÊS (GRADE COMPLETA) */}
+      {viewMode === 'month' && (
+        <section className="glass-card rounded-[32px] overflow-hidden border border-white/5 shadow-2xl">
+          {/* Calendar Header */}
+          <div className="grid grid-cols-7 border-b border-white/5 bg-white/5">
+            {WEEKDAYS_SHORT.map(day => (
+              <div key={day} className="py-4 text-center text-[10px] font-bold text-text-muted uppercase tracking-widest border-r last:border-r-0 border-white/5">
+                {day}
+              </div>
+            ))}
+          </div>
+
+          {/* Calendar Grid */}
+          <div className="grid grid-cols-7 auto-rows-[minmax(120px,auto)]">
+            {calendarDays.map((day, idx) => {
+              const daySess = getDaySessions(day);
+              const isCurrentMonth = isSameMonth(day, monthStart);
+              const isTodayDay = isToday(day);
+              const dateStr = format(day, 'yyyy-MM-dd');
+
+              return (
+                <div 
+                  key={day.toString()} 
+                  onClick={() => {
+                    setCurrentDate(day);
+                    if (window.innerWidth < 768) {
+                      setSelectedMobileDay(day);
+                    } else {
+                      setViewMode('day');
+                    }
+                  }}
+                  className={cn(
+                    "p-2 border-r border-b border-white/5 relative group transition-colors cursor-pointer",
+                    !isCurrentMonth && "bg-white/[0.02] opacity-30",
+                    idx % 7 === 6 && "border-r-0",
+                    isTodayDay && "bg-primary/5",
+                    "min-h-[80px] md:min-h-[120px]"
+                  )}
+                  title="Clique para abrir a agenda deste dia"
+                >
+                  <div className="flex justify-between items-center mb-2 px-1">
+                    <span className={cn(
+                      "text-xs font-bold flex items-center justify-center w-6 h-6 rounded-lg",
+                      isTodayDay ? "bg-primary text-white" : "text-text-muted"
+                    )}>
+                      {format(day, 'd')}
+                    </span>
+                    {daySess.length > 0 && (
+                      <span className="text-[8px] font-bold text-text-muted uppercase tracking-tighter opacity-70 hidden md:inline">
+                        {daySess.length} {daySess.length === 1 ? 'Sessão' : 'Sessões'}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="space-y-1 overflow-y-auto max-h-[100px] custom-scrollbar pr-1 hidden md:block">
+                    {daySess.map(session => (
+                      <div 
+                        key={session.id}
+                        className={cn(
+                          "p-1.5 rounded-lg border text-[9px] font-bold leading-tight relative group/session cursor-pointer transition-all hover:scale-[1.02]",
+                          session.status === 'Cancelada' 
+                            ? "bg-red-500/10 border-red-500/20 text-red-400 opacity-60 line-through" 
+                            : session.isTriage 
+                              ? "bg-orange-500/10 border-orange-500/20 text-orange-400" 
+                              : "bg-primary/10 border-primary/20 text-primary"
+                        )}
+                      >
+                        <div className="flex justify-between items-start gap-1">
+                          <div className="flex items-center gap-1 min-w-0 flex-1">
+                            <span className="truncate uppercase tracking-tight">{session.patientName || 'Paciente'}</span>
+                          </div>
+                          <span className="shrink-0 opacity-70 font-mono">{session.time}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Mobile indicators (dots/bars) */}
+                  <div className="md:hidden flex flex-col gap-1 mt-1">
+                    {daySess.slice(0, 3).map(session => (
+                      <div 
+                        key={`mob-${session.id}`} 
+                        className={cn(
+                          "h-1.5 w-full rounded-full",
+                          session.status === 'Cancelada' ? "bg-red-500/50" : session.isTriage ? "bg-orange-500" : "bg-primary"
+                        )} 
+                      />
+                    ))}
+                    {daySess.length > 3 && (
+                      <div className="text-[8px] text-center text-text-muted font-bold">+{daySess.length - 3}</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* Mobile Day Details Modal */}
       <AnimatePresence>
