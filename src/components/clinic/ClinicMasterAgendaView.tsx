@@ -57,6 +57,7 @@ export default function ClinicMasterAgendaView({
   const [formData, setFormData] = useState({
     patientName: '',
     psychologistEmail: '',
+    date: format(selectedDate, 'yyyy-MM-dd'),
     time: '09:00',
     duration: '50min',
     room: clinic.settings?.rooms?.[0] || 'Sala 01 - Presencial',
@@ -90,17 +91,56 @@ export default function ClinicMasterAgendaView({
     '18:00', '19:00', '20:00'
   ];
 
-  // Filtra as sessões do dia selecionado
+  // Filtra as sessões do dia selecionado (incluindo sessões registradas e sessões recorrentes de pacientes)
   const filteredSessions = useMemo(() => {
-    return sessions.filter(s => {
-      const matchDate = s.date === dateStr;
+    const dayName = format(selectedDate, 'eeee', { locale: ptBR });
+    const capitalizedDayName = dayName.charAt(0).toUpperCase() + dayName.slice(1);
+
+    const allSessions: Session[] = [];
+
+    // 1. Sessões registradas
+    const recordedSessions = sessions.filter(s => s.date === dateStr);
+    recordedSessions.forEach(s => allSessions.push(s));
+
+    // 2. Sessões recorrentes dos pacientes vinculados à clínica ou psicólogos da clínica
+    patients.forEach(p => {
+      if (p.status === 'Inativo') return;
+      if (p.sessionDay === capitalizedDayName && p.sessionTime && p.sessionDay !== '' && p.sessionDay !== 'Nenhum') {
+        const hasRecorded = recordedSessions.some(s => s.patientId === p.id);
+        if (hasRecorded) return;
+
+        const assignedPsy = psychologists.find(
+          psy => psy.email === p.psychologistId || psy.id === p.psychologistId || psy.name === p.psychologistName
+        );
+
+        allSessions.push({
+          id: `virtual-${p.id}-${dateStr}`,
+          clinicId: clinic.id,
+          patientId: p.id,
+          patientName: p.name,
+          psychologistId: p.psychologistId || assignedPsy?.email || '',
+          psychologistName: p.psychologistName || assignedPsy?.name || 'Psicólogo(a)',
+          date: dateStr,
+          time: p.sessionTime,
+          duration: '50min',
+          room: p.modality === 'Online' ? (activeRooms[2] || 'Sala 03 - Atendimento Online') : (activeRooms[0] || 'Sala 01 - Presencial'),
+          type: (p.modality === 'Online' ? 'Online' : 'Presencial') as 'Presencial' | 'Online',
+          status: 'Agendada',
+          amount: p.amount || 180,
+          paid: false,
+          notes: 'Sessão Recorrente do Paciente'
+        });
+      }
+    });
+
+    return allSessions.filter(s => {
       const matchRoom = selectedRoomFilter === 'all' || s.room === selectedRoomFilter;
       const matchPsy = selectedPsychologistFilter === 'all' || 
         s.psychologistId === selectedPsychologistFilter || 
         s.psychologistName === selectedPsychologistFilter;
-      return matchDate && matchRoom && matchPsy;
+      return matchRoom && matchPsy;
     });
-  }, [sessions, dateStr, selectedRoomFilter, selectedPsychologistFilter]);
+  }, [sessions, patients, dateStr, selectedDate, selectedRoomFilter, selectedPsychologistFilter, psychologists, clinic.id, activeRooms]);
 
   // Lista de psicólogos a exibir nas colunas
   const displayedPsychologists = useMemo(() => {
@@ -138,10 +178,10 @@ export default function ClinicMasterAgendaView({
     if (currentMember?.role === 'psychologist' && currentMember.email) {
       targetPsyEmail = currentMember.email;
     }
-    const psy = psychologists.find(p => p.email === targetPsyEmail || p.id === targetPsyEmail);
     setFormData({
       patientName: '',
       psychologistEmail: targetPsyEmail,
+      date: dateStr,
       time: time,
       duration: '50min',
       room: activeRooms[0] || 'Sala 01 - Presencial',
@@ -162,15 +202,16 @@ export default function ClinicMasterAgendaView({
     }
 
     const psy = psychologists.find(p => p.email === formData.psychologistEmail || p.id === formData.psychologistEmail);
+    const matchedPatient = patients.find(p => p.name.toLowerCase() === formData.patientName.trim().toLowerCase());
 
     const newSession: Partial<Session> = {
       id: `session_${Date.now()}`,
       clinicId: clinic.id,
-      patientId: `pat_${Date.now()}`,
-      patientName: formData.patientName.trim(),
+      patientId: matchedPatient ? matchedPatient.id : `pat_${Date.now()}`,
+      patientName: matchedPatient ? matchedPatient.name : formData.patientName.trim(),
       psychologistId: formData.psychologistEmail,
       psychologistName: psy?.name || formData.psychologistEmail,
-      date: dateStr,
+      date: formData.date || dateStr,
       time: formData.time,
       duration: formData.duration,
       room: formData.room,
@@ -277,6 +318,7 @@ export default function ClinicMasterAgendaView({
               setFormData({
                 patientName: '',
                 psychologistEmail: psychologists[0]?.email || '',
+                date: dateStr,
                 time: '09:00',
                 duration: '50min',
                 room: activeRooms[0] || 'Sala 01 - Presencial',
@@ -543,7 +585,7 @@ export default function ClinicMasterAgendaView({
                   </div>
                   <div>
                     <h3 className="font-bold text-base">Novo Agendamento na Clínica</h3>
-                    <p className="text-xs text-text-muted">{formattedDateTitle}</p>
+                    <p className="text-xs text-text-muted">Marque a consulta para qualquer data e psicólogo</p>
                   </div>
                 </div>
                 <button
@@ -560,11 +602,55 @@ export default function ClinicMasterAgendaView({
                   <input
                     type="text"
                     required
-                    placeholder="Ex: Ana Clara Silva"
+                    list="clinic-patients-list"
+                    placeholder="Selecione um paciente cadastrado ou digite o nome"
                     value={formData.patientName}
-                    onChange={(e) => setFormData({ ...formData, patientName: e.target.value })}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const matched = patients.find(p => p.name.toLowerCase() === val.toLowerCase());
+                      if (matched) {
+                        setFormData({
+                          ...formData,
+                          patientName: val,
+                          amount: matched.amount || formData.amount,
+                          psychologistEmail: matched.psychologistId || formData.psychologistEmail
+                        });
+                      } else {
+                        setFormData({ ...formData, patientName: val });
+                      }
+                    }}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-surface-muted border border-border-ui focus:border-primary text-sm focus:outline-none"
                   />
+                  <datalist id="clinic-patients-list">
+                    {patients.map(p => (
+                      <option key={p.id} value={p.name}>{p.name} {p.psychologistName ? `(${p.psychologistName})` : ''}</option>
+                    ))}
+                  </datalist>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-text-muted font-medium mb-1">Data da Consulta *</label>
+                    <input
+                      type="date"
+                      required
+                      value={formData.date}
+                      onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-surface-muted border border-border-ui focus:border-primary text-sm focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-text-muted font-medium mb-1">Horário *</label>
+                    <select
+                      value={formData.time}
+                      onChange={(e) => setFormData({ ...formData, time: e.target.value })}
+                      className="w-full px-3 py-2.5 rounded-xl bg-surface-muted border border-border-ui focus:border-primary text-sm focus:outline-none"
+                    >
+                      {timeSlots.map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
@@ -596,20 +682,7 @@ export default function ClinicMasterAgendaView({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-text-muted font-medium mb-1">Horário</label>
-                    <select
-                      value={formData.time}
-                      onChange={(e) => setFormData({ ...formData, time: e.target.value })}
-                      className="w-full px-3 py-2.5 rounded-xl bg-surface-muted border border-border-ui focus:border-primary text-sm focus:outline-none"
-                    >
-                      {timeSlots.map((t) => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
-                    </select>
-                  </div>
-
+                <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-text-muted font-medium mb-1">Modalidade</label>
                     <select

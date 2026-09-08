@@ -18,6 +18,7 @@ import {
   ClinicSettings, 
   ClinicUserRole,
   Session,
+  SupervisionCase,
   SupervisionFeedback,
   ClinicCrmLead,
   ClinicCrmStage
@@ -592,8 +593,125 @@ export async function removeClinicMember(clinicId: string, email: string): Promi
 }
 
 // ==========================================
-// SUPERVISÃO CLÍNICA - ARQUIVAMENTO / CONCLUSÃO
+// SUPERVISÃO CLÍNICA - ARQUIVAMENTO / CONCLUSÃO / CASOS
 // ==========================================
+
+export const DEFAULT_DEMO_SUPERVISION_CASES: SupervisionCase[] = [
+  {
+    id: 'case_1',
+    clinicId: 'reinventar',
+    patientId: 'pat_ana_clara',
+    patientName: 'Ana Clara Albuquerque',
+    psychologistId: 'paula.psi@reinventar.com',
+    psychologistName: 'Dra. Paula Silva',
+    psychologistEmail: 'paula.psi@reinventar.com',
+    sessionNumber: 6,
+    sessionDate: '2026-09-04',
+    approach: 'Terapia Cognitivo-Comportamental (TCC)',
+    complaint: 'Ansiedade Generalizada e pensamentos intrusivos de desvalia profissional.',
+    evolutionNote: 'Paciente relatou redução nas crises de ansiedade após aplicação da técnica de desfusão e identificação de distorção de catastrofização.',
+    psychologistDoubts: 'Gostaria de avaliar se avançamos para o treino de habilidades assertivas ou aprofundamos a flexibilização da crença nuclear de desvalia.',
+    needsReview: true,
+    createdAt: '2026-09-04T16:00:00.000Z'
+  },
+  {
+    id: 'case_2',
+    clinicId: 'reinventar',
+    patientId: 'pat_lucas_fernandes',
+    patientName: 'Lucas Fernandes Costa',
+    psychologistId: 'paula.psi@reinventar.com',
+    psychologistName: 'Dra. Paula Silva',
+    psychologistEmail: 'paula.psi@reinventar.com',
+    sessionNumber: 3,
+    sessionDate: '2026-09-03',
+    approach: 'TCC / Dessensibilização Sistemática',
+    complaint: 'Sintomas de pânico e esquiva agorafóbica em transportes públicos.',
+    evolutionNote: 'Hierarquia de exposição ao vivo construída com sucesso. Paciente conseguiu realizar trajeto de 2 estações de metrô acompanhado.',
+    psychologistDoubts: 'Estratégias para manejo caso ocorra hiperventilação durante a próxima etapa de exposição sozinho.',
+    needsReview: false,
+    createdAt: '2026-09-03T15:30:00.000Z'
+  },
+  {
+    id: 'case_3',
+    clinicId: 'reinventar',
+    patientId: 'pat_mariana_lima',
+    patientName: 'Mariana Lima Rocha',
+    psychologistId: 'ricardo.psi@reinventar.com',
+    psychologistName: 'Dr. Ricardo Mendes',
+    psychologistEmail: 'ricardo.psi@reinventar.com',
+    sessionNumber: 8,
+    sessionDate: '2026-09-02',
+    approach: 'Psicanálise / Escuta Analítica',
+    complaint: 'Demanda de autoconhecimento e dificuldades de individuação familiar.',
+    evolutionNote: 'Trabalho focado na dinâmica de transferência e identificação de mecanismos de defesa de racionalização.',
+    psychologistDoubts: 'Manejo de resistência e acting-out percebidos nas últimas semanas.',
+    needsReview: true,
+    createdAt: '2026-09-02T11:00:00.000Z'
+  }
+];
+
+export function getClinicSupervisionCases(clinicId: string): SupervisionCase[] {
+  if (typeof window === 'undefined') return DEFAULT_DEMO_SUPERVISION_CASES;
+  try {
+    const stored = localStorage.getItem(`simplepsi_supervision_cases_${clinicId}`);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {}
+  saveClinicSupervisionCases(clinicId, DEFAULT_DEMO_SUPERVISION_CASES);
+  return DEFAULT_DEMO_SUPERVISION_CASES;
+}
+
+export function saveClinicSupervisionCases(clinicId: string, cases: SupervisionCase[]): void {
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(`simplepsi_supervision_cases_${clinicId}`, JSON.stringify(cases));
+    } catch (e) {}
+  }
+}
+
+export function saveClinicSupervisionCase(clinicId: string, caseData: SupervisionCase): SupervisionCase[] {
+  const current = getClinicSupervisionCases(clinicId);
+  const exists = current.some(c => c.id === caseData.id);
+  const updated = exists
+    ? current.map(c => c.id === caseData.id ? { ...c, ...caseData, updatedAt: new Date().toISOString() } : c)
+    : [caseData, ...current];
+
+  saveClinicSupervisionCases(clinicId, updated);
+  return updated;
+}
+
+export function deleteClinicSupervisionCase(clinicId: string, caseId: string): SupervisionCase[] {
+  const current = getClinicSupervisionCases(clinicId);
+  const updated = current.filter(c => c.id !== caseId);
+  saveClinicSupervisionCases(clinicId, updated);
+  return updated;
+}
+
+export function updateSupervisionFeedback(
+  clinicId: string, 
+  caseId: string, 
+  feedback: string, 
+  recommendations?: string
+): SupervisionCase[] {
+  const current = getClinicSupervisionCases(clinicId);
+  const updated = current.map(c => {
+    if (c.id === caseId) {
+      return {
+        ...c,
+        feedback,
+        recommendations,
+        reviewedAt: new Date().toISOString(),
+        needsReview: false,
+        updatedAt: new Date().toISOString()
+      };
+    }
+    return c;
+  });
+  saveClinicSupervisionCases(clinicId, updated);
+  return updated;
+}
 
 export function getDiscussedSupervisionCases(clinicId: string): string[] {
   if (typeof window === 'undefined') return [];

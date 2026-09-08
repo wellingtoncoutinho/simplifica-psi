@@ -24,7 +24,8 @@ import {
   DoorOpen,
   Send,
   X,
-  Edit3
+  Edit3,
+  UserCheck
 } from 'lucide-react';
 import { Clinic, ClinicMember, ClinicCrmLead, ClinicCrmStage } from '../../types';
 import { 
@@ -38,6 +39,7 @@ interface ClinicReceptionCrmViewProps {
   clinic: Clinic;
   currentMember: ClinicMember | null;
   members: ClinicMember[];
+  onPromoteLeadToPatient?: (lead: ClinicCrmLead, targetPsychologistEmail: string, sessionDate?: string, sessionTime?: string) => Promise<void> | void;
 }
 
 interface StageColumnConfig {
@@ -117,7 +119,8 @@ const STAGES: StageColumnConfig[] = [
 export default function ClinicReceptionCrmView({
   clinic,
   currentMember,
-  members
+  members,
+  onPromoteLeadToPatient
 }: ClinicReceptionCrmViewProps) {
   const [leads, setLeads] = useState<ClinicCrmLead[]>(() => getClinicCrmLeads(clinic.id));
   const [searchQuery, setSearchQuery] = useState('');
@@ -127,6 +130,15 @@ export default function ClinicReceptionCrmView({
   // Modal Novo / Editar Lead
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<ClinicCrmLead | null>(null);
+
+  // Modal de Efetivar Paciente
+  const [isPromoteModalOpen, setIsPromoteModalOpen] = useState(false);
+  const [promoteLead, setPromoteLead] = useState<ClinicCrmLead | null>(null);
+  const [promotePsychologistEmail, setPromotePsychologistEmail] = useState('');
+  const [promoteDate, setPromoteDate] = useState('');
+  const [promoteTime, setPromoteTime] = useState('14:00');
+  const [isPromoting, setIsPromoting] = useState(false);
+  const [promoteSuccessToast, setPromoteSuccessToast] = useState<string | null>(null);
 
   // Campos do formulário
   const [formName, setFormName] = useState('');
@@ -232,6 +244,40 @@ export default function ClinicReceptionCrmView({
     setFormReceiptNumber(lead.receiptNumber || '');
     setFormNotes(lead.notes || '');
     setIsModalOpen(true);
+  };
+
+  const handleOpenPromoteModal = (lead: ClinicCrmLead) => {
+    setPromoteLead(lead);
+    setPromotePsychologistEmail(lead.assignedPsychologistId || psychologists[0]?.email || '');
+    setPromoteDate(lead.scheduledDate || new Date().toISOString().split('T')[0]);
+    setPromoteTime(lead.scheduledTime || '14:00');
+    setIsPromoteModalOpen(true);
+  };
+
+  const handleConfirmPromote = async () => {
+    if (!promoteLead) return;
+    setIsPromoting(true);
+    try {
+      if (onPromoteLeadToPatient) {
+        await onPromoteLeadToPatient(promoteLead, promotePsychologistEmail, promoteDate, promoteTime);
+      }
+      const assignedDoc = psychologists.find(p => p.email === promotePsychologistEmail);
+      const updated = updateClinicCrmLeadStage(clinic.id, promoteLead.id, 'completed', {
+        isConverted: true,
+        assignedPsychologistId: promotePsychologistEmail,
+        assignedPsychologistName: assignedDoc?.name || promotePsychologistEmail,
+        scheduledDate: promoteDate,
+        scheduledTime: promoteTime
+      });
+      setLeads(updated);
+      setIsPromoteModalOpen(false);
+      setPromoteSuccessToast(`Paciente "${promoteLead.name}" efetivado com sucesso!`);
+      setTimeout(() => setPromoteSuccessToast(null), 4000);
+    } catch (err: any) {
+      alert("Erro ao efetivar paciente: " + (err.message || String(err)));
+    } finally {
+      setIsPromoting(false);
+    }
   };
 
   const handleSaveLead = (e: React.FormEvent) => {
@@ -606,6 +652,21 @@ export default function ClinicReceptionCrmView({
                             </span>
                           </div>
 
+                          {/* Botão Efetivar Paciente */}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPromoteModal(lead)}
+                            className={`w-full py-1.5 px-2 rounded-xl text-[10px] font-bold flex items-center justify-center gap-1.5 transition-all ${
+                              lead.isConverted 
+                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                                : 'bg-primary/10 text-primary hover:bg-primary hover:text-white border border-primary/20 shadow-sm'
+                            }`}
+                            title="Efetivar paciente e direcionar ao psicólogo"
+                          >
+                            <UserCheck className="w-3.5 h-3.5" />
+                            <span>{lead.isConverted ? '✓ Paciente Efetivado' : 'Efetivar Paciente'}</span>
+                          </button>
+
                           {/* Botões de Avançar e Voltar Etapa */}
                           <div className="flex items-center justify-between pt-1 text-[11px]">
                             <button
@@ -711,6 +772,19 @@ export default function ClinicReceptionCrmView({
 
                       <td className="p-3.5 text-right">
                         <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPromoteModal(lead)}
+                            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 border transition-all ${
+                              lead.isConverted 
+                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
+                                : 'bg-primary/10 text-primary hover:bg-primary hover:text-white border-primary/20'
+                            }`}
+                            title="Efetivar paciente e direcionar ao psicólogo"
+                          >
+                            <UserCheck className="w-3.5 h-3.5" />
+                            <span>{lead.isConverted ? 'Efetivado' : 'Efetivar'}</span>
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleOpenEditModal(lead)}
@@ -931,24 +1005,184 @@ export default function ClinicReceptionCrmView({
                   />
                 </div>
 
-                <div className="flex justify-end gap-2 pt-3 border-t border-border-ui">
-                  <button
-                    type="button"
-                    onClick={() => setIsModalOpen(false)}
-                    className="px-4 py-2 rounded-xl bg-surface-muted hover:bg-card border border-border-ui text-xs font-semibold text-text-muted hover:text-text-main"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-6 py-2 rounded-xl bg-primary text-text-main font-bold text-xs hover:opacity-90 transition-all shadow-md shadow-primary/20"
-                  >
-                    Salvar no CRM
-                  </button>
+                <div className="flex items-center justify-between gap-2 pt-3 border-t border-border-ui">
+                  <div>
+                    {editingLead && !editingLead.isConverted && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsModalOpen(false);
+                          handleOpenPromoteModal(editingLead);
+                        }}
+                        className="px-4 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500 hover:text-white text-emerald-400 border border-emerald-500/20 text-xs font-bold flex items-center gap-1.5 transition-all"
+                      >
+                        <UserCheck className="w-3.5 h-3.5" />
+                        <span>Efetivar Paciente</span>
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsModalOpen(false)}
+                      className="px-4 py-2 rounded-xl bg-surface-muted hover:bg-card border border-border-ui text-xs font-semibold text-text-muted hover:text-text-main"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-6 py-2 rounded-xl bg-primary text-text-main font-bold text-xs hover:opacity-90 transition-all shadow-md shadow-primary/20"
+                    >
+                      Salvar no CRM
+                    </button>
+                  </div>
                 </div>
               </form>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal de Efetivar Paciente e Direcionar ao Psicólogo */}
+      <AnimatePresence>
+        {isPromoteModalOpen && promoteLead && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="w-full max-w-lg bg-card border border-border-ui rounded-[28px] shadow-2xl p-6 space-y-5 text-text-main"
+            >
+              <div className="flex items-center justify-between pb-3 border-b border-border-ui">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold">
+                    <UserCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-base">Efetivar Paciente na Clínica</h3>
+                    <p className="text-xs text-text-muted">Cadastro automático no consultório & agenda</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsPromoteModalOpen(false)}
+                  className="p-1.5 rounded-xl text-text-muted hover:text-text-main hover:bg-surface-muted"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Informações do Lead */}
+              <div className="p-4 rounded-2xl bg-surface-muted border border-border-ui space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-text-muted">Paciente:</span>
+                  <span className="font-bold text-text-main text-sm uppercase">{promoteLead.name}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-text-muted">Contato WhatsApp:</span>
+                  <span className="font-medium text-text-main">{promoteLead.phone}</span>
+                </div>
+                {promoteLead.email && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-text-muted">E-mail:</span>
+                    <span className="font-medium text-text-main">{promoteLead.email}</span>
+                  </div>
+                )}
+                {promoteLead.complaint && (
+                  <div className="pt-1 border-t border-border-ui/50">
+                    <span className="text-text-muted block mb-0.5">Queixa / Motivo da Procura:</span>
+                    <span className="font-medium text-text-main italic">{promoteLead.complaint}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Formulário de Direcionamento */}
+              <div className="space-y-4 text-xs">
+                <div>
+                  <label className="block font-semibold text-text-muted mb-1">Psicólogo(a) Responsável na Clínica *</label>
+                  <select
+                    value={promotePsychologistEmail}
+                    onChange={(e) => setPromotePsychologistEmail(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-surface-muted border border-border-ui text-xs font-semibold focus:outline-none focus:border-primary text-text-main"
+                  >
+                    {psychologists.map((p) => (
+                      <option key={p.id} value={p.email}>
+                        {p.name || p.email} {p.crp ? `(CRP: ${p.crp})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-semibold text-text-muted mb-1">Data da 1ª Consulta</label>
+                    <input
+                      type="date"
+                      value={promoteDate}
+                      onChange={(e) => setPromoteDate(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-surface-muted border border-border-ui text-xs focus:outline-none focus:border-primary text-text-main"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-text-muted mb-1">Horário</label>
+                    <input
+                      type="time"
+                      value={promoteTime}
+                      onChange={(e) => setPromoteTime(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-surface-muted border border-border-ui text-xs focus:outline-none focus:border-primary text-text-main"
+                    />
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-start gap-2.5">
+                  <Check className="w-4 h-4 shrink-0 mt-0.5" />
+                  <p className="leading-relaxed">
+                    Ao confirmar, a ficha oficial do paciente será criada na clínica, os dados de contato e queixa serão preservados na Anamnese, e a 1ª sessão entrará na agenda do terapeuta e da recepção automaticamente.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-border-ui">
+                <button
+                  type="button"
+                  disabled={isPromoting}
+                  onClick={() => setIsPromoteModalOpen(false)}
+                  className="px-4 py-2.5 rounded-xl bg-surface-muted hover:bg-card border border-border-ui text-xs font-semibold text-text-muted hover:text-text-main"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={isPromoting || !promotePsychologistEmail}
+                  onClick={handleConfirmPromote}
+                  className="px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs shadow-md shadow-emerald-500/20 flex items-center gap-2 transition-all disabled:opacity-50"
+                >
+                  {isPromoting ? (
+                    <span>Efetivando...</span>
+                  ) : (
+                    <>
+                      <UserCheck className="w-4 h-4" />
+                      <span>Confirmar Efetivação</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Toast de Confirmação */}
+      <AnimatePresence>
+        {promoteSuccessToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-6 right-6 z-50 px-5 py-3.5 rounded-2xl bg-emerald-500 text-white font-bold text-xs shadow-2xl flex items-center gap-2.5 border border-emerald-400"
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            <span>{promoteSuccessToast}</span>
+          </motion.div>
         )}
       </AnimatePresence>
 

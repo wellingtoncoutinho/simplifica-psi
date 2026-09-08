@@ -350,6 +350,15 @@ export interface ClinicTheme {
   accentColor?: string;
 }
 
+export interface ClinicAiSettings {
+  enabled?: boolean; // Habilitar IA globalmente para psicólogos afiliados
+  allowTranscription?: boolean; // Transcrição de áudio e reuniões (Google Meet)
+  allowConceptualization?: boolean; // Conceitualização Cognitiva (TCC) e Formulações por Abordagem
+  allowTreatmentPlan?: boolean; // Planejamento do Plano de Tratamento e Próxima Sessão
+  allowEvolutionAssistant?: boolean; // Assistente de Escrita de Evoluções e Smart Notes
+  allowCfpDocuments?: boolean; // Emissão de Laudos e Prontuários CFP com IA
+}
+
 export interface ClinicSettings {
   allowPsychologistManageAgenda?: boolean;
   allowPsychologistSetPrice?: boolean;
@@ -357,6 +366,7 @@ export interface ClinicSettings {
   defaultSessionDuration?: number; // minutos
   rooms?: string[]; // Lista de salas disponíveis (ex: ["Sala 1 - Principal", "Sala 2 - Infantil"])
   defaultCommissionRate?: number; // Porcentagem padrão de repasse ao psicólogo (ex: 60%)
+  aiSettings?: ClinicAiSettings;
 }
 
 export interface ClinicMember {
@@ -385,6 +395,30 @@ export interface Clinic {
   address?: string;
   theme?: ClinicTheme;
   settings?: ClinicSettings;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface SupervisionCase {
+  id: string;
+  clinicId: string;
+  patientId: string;
+  patientName: string;
+  psychologistId: string;
+  psychologistName: string;
+  psychologistEmail?: string;
+  supervisorId?: string;
+  supervisorName?: string;
+  sessionNumber?: number;
+  sessionDate?: string;
+  evolutionNote: string; // Conteúdo selecionado/editado pelo psicólogo para a supervisão
+  psychologistDoubts?: string; // Dúvidas ou impasses trazidos para discussão
+  approach?: string;
+  complaint?: string;
+  needsReview?: boolean;
+  feedback?: string;
+  recommendations?: string;
+  reviewedAt?: string;
   createdAt: string;
   updatedAt?: string;
 }
@@ -431,6 +465,8 @@ export interface ClinicCrmLead {
   receiptIssued?: boolean;
   receiptNumber?: string;
   notes?: string;
+  isConverted?: boolean;
+  convertedPatientId?: string;
   createdAt: string;
   updatedAt: string;
 }

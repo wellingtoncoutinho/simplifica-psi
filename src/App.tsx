@@ -206,7 +206,11 @@ import {
   Building,
   GraduationCap,
   Phone,
-  Lock
+  Lock,
+  UserCheck,
+  Eye,
+  EyeOff,
+  Camera
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency, getWhatsAppLink } from './lib/utils';
@@ -237,7 +241,9 @@ import {
   DiaryEntry,
   Clinic,
   ClinicMember,
-  ClinicUserRole
+  ClinicUserRole,
+  ClinicCrmLead,
+  SupervisionCase
 } from './types';
 import { 
   detectCurrentClinicSlug, 
@@ -251,7 +257,8 @@ import {
   addOrUpdateClinicSession,
   deleteClinicSession,
   DEFAULT_DEMO_MEMBERS,
-  subscribeClinicMembers
+  subscribeClinicMembers,
+  saveClinicSupervisionCase
 } from './lib/clinicService';
 import { auth, db, signInWithGoogle, signInWithGoogleCalendar } from './lib/firebase';
 import { 
@@ -520,6 +527,16 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [isPrivacyMode, setIsPrivacyMode] = useState<boolean>(() => {
+    return localStorage.getItem('simplepsi_privacy_mode') === 'true';
+  });
+  const togglePrivacyMode = () => {
+    setIsPrivacyMode(prev => {
+      const next = !prev;
+      localStorage.setItem('simplepsi_privacy_mode', String(next));
+      return next;
+    });
+  };
 
   // Listen for the special /import-transcript route
   useEffect(() => {
@@ -1372,6 +1389,146 @@ Como posso te ajudar hoje?`
     } catch (err: any) {
       alert("Erro ao salvar paciente: " + (err.message || String(err)));
       handleFirestoreError(err, OperationType.CREATE, 'patients');
+    }
+  };
+
+  const handlePromoteLeadToPatient = async (
+    lead: ClinicCrmLead,
+    targetPsychologistEmail: string,
+    sessionDate?: string,
+    sessionTime?: string
+  ) => {
+    if (!user) return;
+    try {
+      const assignedPsy = clinicMembers.find(m => m.email === targetPsychologistEmail || m.id === targetPsychologistEmail) || currentClinicMember;
+
+      let sessionDayName = '';
+      if (sessionDate) {
+        try {
+          const parsed = new Date(sessionDate + 'T12:00:00');
+          const dName = format(parsed, 'eeee', { locale: ptBR });
+          sessionDayName = dName.charAt(0).toUpperCase() + dName.slice(1);
+        } catch (e) {}
+      }
+
+      const patientData: any = {
+        name: lead.name.toUpperCase(),
+        email: lead.email || '',
+        phone: lead.phone,
+        gender: '',
+        birthDate: '',
+        document: '',
+        cpf: '',
+        occupation: '',
+        profession: '',
+        address: '',
+        medication: '',
+        emergencyContact: '',
+        sessionDay: sessionDayName,
+        sessionTime: sessionTime || lead.scheduledTime || '14:00',
+        sessions: 0,
+        status: 'Ativo',
+        lastSession: sessionDayName ? `Toda ${sessionDayName}` : 'Sem sessões',
+        photo: '',
+        amount: lead.amount || 180,
+        recurrence: 'Semanal',
+        recurrenceStart: sessionDate || lead.scheduledDate || new Date().toISOString().split('T')[0],
+        modality: lead.sessionRoom?.includes('Online') ? 'Online' : 'Presencial',
+        meetingLink: '',
+        ownerId: user.uid,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        clinicalData: {
+          anamnese: { 
+            queixa: lead.complaint || '', 
+            historico: lead.notes ? `Anotações da Recepção / CRM: ${lead.notes}` : '', 
+            exame: '' 
+          },
+          evoluções: [],
+          smartNotes: { padroes: '', progresso: '', sugestao: '', topicos: [] }
+        }
+      };
+
+      if (currentClinic) {
+        patientData.clinicId = currentClinic.id;
+        patientData.psychologistId = targetPsychologistEmail || currentClinicMember?.email || '';
+        patientData.psychologistName = assignedPsy?.name || targetPsychologistEmail || '';
+      }
+
+      const patientRef = await addDoc(collection(db, 'patients'), patientData);
+      const newPatientId = patientRef.id;
+
+      // Cria espelho no patient_portal
+      await setDoc(doc(db, 'patient_portal', newPatientId), {
+        patientId: newPatientId,
+        ownerId: user.uid,
+        cpf: '',
+        patientUid: null,
+        tutorialCompleted: false,
+        name: lead.name.toUpperCase(),
+        phone: lead.phone || '',
+        email: lead.email || '',
+        birthDate: '',
+        gender: '',
+        profession: '',
+        address: '',
+        emergencyName: '',
+        emergencyRelation: '',
+        emergencyPhone: '',
+        sharedPDFs: [],
+        updatedAt: new Date().toISOString()
+      });
+
+      // Se houver data agendada, cria a 1ª sessão
+      const targetDate = sessionDate || lead.scheduledDate;
+      const targetTime = sessionTime || lead.scheduledTime || '14:00';
+      if (targetDate) {
+        const sessionData: any = {
+          patientId: newPatientId,
+          isTriage: false,
+          triageName: '',
+          date: targetDate,
+          time: targetTime,
+          duration: '50min',
+          type: lead.sessionRoom?.includes('Online') ? 'Online' : 'Presencial',
+          status: 'Agendada',
+          amount: lead.amount || 180,
+          cost: 0,
+          paid: lead.paymentStatus === 'paid',
+          nfIssued: lead.receiptIssued || false,
+          ownerId: user.uid,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+
+        const sessRef = await addDoc(collection(db, 'sessions'), sessionData);
+
+        if (currentClinic) {
+          const clinicSess: Session = {
+            id: sessRef.id,
+            clinicId: currentClinic.id,
+            patientId: newPatientId,
+            patientName: lead.name.toUpperCase(),
+            psychologistId: targetPsychologistEmail || currentClinicMember?.email || '',
+            psychologistName: assignedPsy?.name || targetPsychologistEmail || 'Psicólogo(a)',
+            date: targetDate,
+            time: targetTime,
+            duration: '50min',
+            type: (lead.sessionRoom?.includes('Online') ? 'Online' : 'Presencial') as 'Presencial' | 'Online',
+            room: lead.sessionRoom || currentClinic.settings?.rooms?.[0] || 'Sala 01 - Presencial',
+            status: 'Agendada',
+            amount: lead.amount || 180,
+            paid: lead.paymentStatus === 'paid',
+            notes: lead.notes || ''
+          };
+          const updatedClinicSessions = addOrUpdateClinicSession(currentClinic.id, clinicSess);
+          setClinicSessions(updatedClinicSessions);
+        }
+      }
+    } catch (err: any) {
+      console.error('Erro ao efetivar lead em paciente:', err);
+      alert('Erro ao efetivar paciente: ' + (err.message || String(err)));
+      throw err;
     }
   };
 
@@ -3130,6 +3287,30 @@ Como posso te ajudar hoje?`
               </button>
             )}
 
+            {/* Botão Modo Privacidade / Foto (Instagram) */}
+            <button
+              onClick={togglePrivacyMode}
+              className={cn(
+                "p-2 rounded-xl transition-all shadow-sm flex items-center gap-1.5 cursor-pointer relative",
+                isPrivacyMode 
+                  ? "bg-purple-600 text-white shadow-purple-500/25 ring-2 ring-purple-500/40" 
+                  : "bg-surface-muted text-text-muted hover:text-text-main hover:opacity-80"
+              )}
+              title={isPrivacyMode ? "Desativar Modo Foto / Privacidade" : "Ativar Modo Foto / Insta (Ocultar dados confidenciais)"}
+            >
+              {isPrivacyMode ? (
+                <>
+                  <EyeOff size={18} className="lg:w-5 lg:h-5 text-white" />
+                  <span className="text-[11px] font-bold hidden md:inline px-1">Modo Foto</span>
+                </>
+              ) : (
+                <>
+                  <Camera size={18} className="lg:w-5 lg:h-5" />
+                  <span className="text-[11px] font-medium hidden lg:inline">Modo Foto</span>
+                </>
+              )}
+            </button>
+
             <button 
               id="profile-settings-button"
               onClick={() => setIsSettingsOpen(true)}
@@ -3156,17 +3337,19 @@ Como posso te ajudar hoje?`
                 clinic={currentClinic}
                 currentMember={currentClinicMember}
                 members={clinicMembers}
+                onPromoteLeadToPatient={handlePromoteLeadToPatient}
               />
             )}
 
             {activeTab === 'dashboard' && currentClinic && clinicRole === 'clinic_admin' && (
               <ClinicDashboardView 
-                key="clinic-dashboard"
+                key="clinic-dashboard" 
                 clinic={currentClinic}
                 currentMember={currentClinicMember}
                 members={clinicMembers}
                 sessions={clinicSessions}
                 patients={patients}
+                isPrivacyMode={isPrivacyMode}
                 onOpenTeamModal={() => setIsClinicTeamModalOpen(true)}
                 onGoToMasterAgenda={() => setActiveTab('agenda')}
                 onOpenNewSessionModal={() => setActiveTab('agenda')}
@@ -3194,6 +3377,8 @@ Como posso te ajudar hoje?`
                 sessions={sessions} 
                 transactions={transactions} 
                 diaryEntries={diaryEntries}
+                isPrivacyMode={isPrivacyMode}
+                onTogglePrivacyMode={togglePrivacyMode}
                 onPatientSelect={(id) => { setSelectedPatient(id); setActiveTab('pacientes'); }} 
                 onGoToAgenda={() => setActiveTab('agenda')}
                 onGoToFinanceiro={() => setActiveTab('financeiro')}
@@ -3262,6 +3447,8 @@ Como posso te ajudar hoje?`
                 onOpenExtensionModal={() => setShowExtensionModal(true)}
                 clinicRole={clinicRole}
                 currentClinic={currentClinic}
+                currentClinicMember={currentClinicMember}
+                clinicMembers={clinicMembers}
               />
             )}
             
@@ -3291,6 +3478,8 @@ Como posso te ajudar hoje?`
                 onOpenExtensionModal={() => setShowExtensionModal(true)}
                 clinicRole={clinicRole}
                 currentClinic={currentClinic}
+                currentClinicMember={currentClinicMember}
+                clinicMembers={clinicMembers}
               />
             )}
 
@@ -3364,6 +3553,7 @@ Como posso te ajudar hoje?`
                   setTriageInitialSessionId(sessionId || '');
                   setIsAddingPatient(true);
                 }}
+                isScheduleAutonomyDisabled={Boolean(currentClinic && clinicRole === 'psychologist' && currentClinic.settings?.allowPsychologistManageAgenda === false)}
               />
             )}
             
@@ -3373,6 +3563,7 @@ Como posso te ajudar hoje?`
                 patients={patients}
                 clinicalApproach={profileSettings.clinicalApproach || 'tcc'}
                 onOpenExtensionModal={() => setShowExtensionModal(true)}
+                isTranscriptionDisabled={Boolean(currentClinic && clinicRole === 'psychologist' && (currentClinic.settings?.aiSettings?.enabled === false || currentClinic.settings?.aiSettings?.allowTranscription === false))}
                 onSaveSession={async (patientId, date, time, duration, amount, type, note) => {
                   try {
                     const p = patients.find(pat => pat.id === patientId);
@@ -3771,7 +3962,9 @@ function DashboardView({
   isExtensionBannerDismissed = false,
   onDismissExtensionBanner,
   isMigrationAllowed = false,
-  onOpenMigrationModal
+  onOpenMigrationModal,
+  isPrivacyMode = false,
+  onTogglePrivacyMode
 }: { 
   user: User | null,
   onPatientSelect: (id: string) => void, 
@@ -3790,7 +3983,9 @@ function DashboardView({
   isExtensionBannerDismissed?: boolean,
   onDismissExtensionBanner?: () => void,
   isMigrationAllowed?: boolean,
-  onOpenMigrationModal?: () => void
+  onOpenMigrationModal?: () => void,
+  isPrivacyMode?: boolean,
+  onTogglePrivacyMode?: () => void
 }) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -4102,6 +4297,37 @@ function DashboardView({
         <p className="text-[10px] text-text-muted mt-1 uppercase tracking-wider">Última atualização: {new Date().toLocaleTimeString()}</p>
       </div>
 
+      {/* Banner de Modo Foto & Privacidade Ativo */}
+      {isPrivacyMode && (
+        <motion.div 
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-purple-600/10 border border-purple-500/25 rounded-2xl p-4 flex items-center justify-between gap-4 text-purple-300 shadow-sm"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center shrink-0 border border-purple-500/30">
+              <Camera size={20} />
+            </div>
+            <div>
+              <p className="text-xs sm:text-sm font-bold text-white flex items-center gap-2">
+                Modo Foto & Privacidade Ativo 📸
+              </p>
+              <p className="text-[11px] text-purple-200/80 mt-0.5">
+                Nomes de pacientes, valores financeiros e dados confidenciais estão ocultos para você postar fotos com segurança.
+              </p>
+            </div>
+          </div>
+          {onTogglePrivacyMode && (
+            <button
+              onClick={onTogglePrivacyMode}
+              className="px-3 py-1.5 bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500/40 text-white rounded-xl text-xs font-semibold transition-all shrink-0 cursor-pointer"
+            >
+              Desativar
+            </button>
+          )}
+        </motion.div>
+      )}
+
       {/* Banner da Extensão do Google Meet */}
       {!hasAcceptedExtensionTerms ? (
         !isExtensionBannerDismissed && (
@@ -4217,7 +4443,7 @@ function DashboardView({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard onClick={onGoToAgenda} title="Sessões Hoje" value={sessionsTodayCount.toString()} subtext="Agendadas para hoje" icon={CalendarIcon} color="text-purple-400" />
         <StatCard onClick={onGoToPacientes} title="Pacientes Ativos" value={patients.filter(p => p.status !== 'Inativo').length.toString()} subtext="Gestão total" icon={Users} color="text-blue-400" />
-        <StatCard onClick={onGoToFinanceiro} title="Receita Mensal Prevista" value={formatCurrency(monthlyPredictedIncome)} subtext="Previsão baseada em sessões" icon={DollarSign} color="text-pink-400" />
+        <StatCard onClick={onGoToFinanceiro} title="Receita Mensal Prevista" value={formatCurrency(monthlyPredictedIncome)} subtext="Previsão baseada em sessões" icon={DollarSign} color="text-pink-400" isBlurred={isPrivacyMode} />
         <StatCard onClick={onGoToAgenda} title="Agendamentos da Semana" value={weeklySessionsCount.toString()} subtext="Sessões nesta semana" icon={BarChart3} color="text-orange-400" />
       </div>
 
@@ -4249,8 +4475,8 @@ function DashboardView({
                     </div>
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
-                        <p className="font-medium text-text-main uppercase">{p?.name || session.triageName || 'PACIENTE'}</p>
-                        {p?.phone && getWhatsAppLink(p.phone) && (
+                        <p className={cn("font-medium text-text-main uppercase transition-all", isPrivacyMode && "privacy-blur")}>{p?.name || session.triageName || 'PACIENTE'}</p>
+                        {!isPrivacyMode && p?.phone && getWhatsAppLink(p.phone) && (
                           <a 
                             href={getWhatsAppLink(p.phone)!} 
                             target="_blank" 
@@ -4322,8 +4548,8 @@ function DashboardView({
                      <FileText size={20} />}
                   </div>
                   <div className="flex-1">
-                    <p className="text-sm font-bold text-text-main uppercase tracking-tight">{alert.title}</p>
-                    <p className="text-xs text-text-muted">{alert.text}</p>
+                    <p className={cn("text-sm font-bold text-text-main uppercase tracking-tight transition-all", isPrivacyMode && "privacy-blur")}>{alert.title}</p>
+                    <p className={cn("text-xs text-text-muted transition-all", isPrivacyMode && "privacy-blur")}>{alert.text}</p>
                   </div>
                   <ChevronRight size={18} className="text-text-muted group-hover:text-primary transition-colors" />
                </div>
@@ -4373,7 +4599,7 @@ function DashboardView({
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-xs font-bold text-text-main uppercase group-hover:text-primary transition-colors">
+                      <p className={cn("text-xs font-bold text-text-main uppercase group-hover:text-primary transition-all", isPrivacyMode && "privacy-blur")}>
                         {p?.name || 'Paciente'}
                       </p>
                       <p className="text-[10px] text-text-muted mt-0.5">
@@ -4387,7 +4613,7 @@ function DashboardView({
                       Humor: {entry.mood}/10
                     </span>
                   </div>
-                  <p className="text-xs text-text-muted leading-relaxed italic border-l-2 border-primary/20 pl-2 line-clamp-2">
+                  <p className={cn("text-xs text-text-muted leading-relaxed italic border-l-2 border-primary/20 pl-2 line-clamp-2 transition-all", isPrivacyMode && "privacy-blur-strong")}>
                     "{entry.text || 'Sem anotações escritas.'}"
                   </p>
                   <div className="flex items-center justify-end text-[10px] font-bold uppercase tracking-wider text-primary opacity-0 group-hover:opacity-100 transition-opacity gap-1 mt-1">
@@ -4482,7 +4708,7 @@ function DashboardView({
             <p className="text-sm text-text-muted">Projeção calculada com base na frequência e valores combinados.</p>
           </div>
           <div className="text-left sm:text-right">
-            <span className="text-xl font-bold text-green-400">{formatCurrency(totalForecast)}</span>
+            <span className={cn("text-xl font-bold text-green-400 transition-all", isPrivacyMode && "privacy-blur-strong")}>{formatCurrency(totalForecast)}</span>
             <p className="text-[9px] text-text-muted uppercase tracking-wider mt-0.5">{monthPayments.length} vencimentos previstos</p>
           </div>
         </div>
@@ -4539,7 +4765,7 @@ function DashboardView({
                           {dayPayments.slice(0, 2).map((p, pIdx) => (
                             <span 
                               key={pIdx}
-                              className="text-[7.5px] font-medium leading-tight bg-green-500/10 text-green-400 border border-green-500/10 px-1 rounded truncate w-full"
+                              className={cn("text-[7.5px] font-medium leading-tight bg-green-500/10 text-green-400 border border-green-500/10 px-1 rounded truncate w-full transition-all", isPrivacyMode && "privacy-blur")}
                             >
                               {p.patient.name.split(' ')[0]}
                             </span>
@@ -4592,11 +4818,11 @@ function DashboardView({
                         className="p-3 bg-surface-muted hover:bg-white/5 border border-border-ui rounded-xl flex items-center justify-between cursor-pointer group transition-all"
                       >
                         <div className="overflow-hidden">
-                          <p className="text-xs font-bold text-text-main group-hover:text-primary transition-colors truncate">{p.patient.name}</p>
+                          <p className={cn("text-xs font-bold text-text-main group-hover:text-primary transition-all truncate", isPrivacyMode && "privacy-blur")}>{p.patient.name}</p>
                           <p className="text-[9px] text-text-muted uppercase tracking-wider mt-0.5">{p.periodicity}</p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0 ml-2">
-                          {p.patient.phone && getWhatsAppLink(p.patient.phone) && (
+                          {!isPrivacyMode && p.patient.phone && getWhatsAppLink(p.patient.phone) && (
                             <a 
                               href={getWhatsAppLink(p.patient.phone)!} 
                               target="_blank" 
@@ -4610,7 +4836,7 @@ function DashboardView({
                               </svg>
                             </a>
                           )}
-                          <span className="text-xs font-bold text-green-400 shrink-0">{formatCurrency(p.amount)}</span>
+                          <span className={cn("text-xs font-bold text-green-400 shrink-0 transition-all", isPrivacyMode && "privacy-blur-strong")}>{formatCurrency(p.amount)}</span>
                         </div>
                       </div>
                     ))}
@@ -4633,14 +4859,14 @@ function DashboardView({
                     {p.date.getDate()}
                   </div>
                   <div>
-                    <p className="text-xs font-bold text-text-main group-hover:text-primary transition-colors">{p.patient.name}</p>
+                    <p className={cn("text-xs font-bold text-text-main group-hover:text-primary transition-all", isPrivacyMode && "privacy-blur")}>{p.patient.name}</p>
                     <p className="text-[9px] text-text-muted uppercase tracking-widest mt-0.5">
                       {p.periodicity} • {format(p.date, 'eeee', { locale: ptBR })}
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
-                  {p.patient.phone && getWhatsAppLink(p.patient.phone) && (
+                  {!isPrivacyMode && p.patient.phone && getWhatsAppLink(p.patient.phone) && (
                     <a 
                       href={getWhatsAppLink(p.patient.phone)!} 
                       target="_blank" 
@@ -4654,7 +4880,7 @@ function DashboardView({
                       </svg>
                     </a>
                   )}
-                  <p className="text-xs font-bold text-green-400 font-mono">{formatCurrency(p.amount)}</p>
+                  <p className={cn("text-xs font-bold text-green-400 font-mono transition-all", isPrivacyMode && "privacy-blur-strong")}>{formatCurrency(p.amount)}</p>
                 </div>
               </div>
             ))}
@@ -5020,7 +5246,7 @@ function ProntuariosListView({ patients, onSelect }: { patients: any[], onSelect
   );
 }
 
-function StatCard({ title, value, subtext, icon: Icon, color, onClick }: any) {
+function StatCard({ title, value, subtext, icon: Icon, color, onClick, isBlurred }: any) {
   return (
     <div 
       onClick={onClick}
@@ -5036,7 +5262,7 @@ function StatCard({ title, value, subtext, icon: Icon, color, onClick }: any) {
         <MoreVertical size={16} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
       </div>
       <h4 className="text-sm text-text-muted">{title}</h4>
-      <p className="text-2xl font-bold mt-1 tracking-tight">{value}</p>
+      <p className={cn("text-2xl font-bold mt-1 tracking-tight transition-all", isBlurred && "privacy-blur-strong")}>{value}</p>
       <p className="text-[10px] text-text-muted mt-2">{subtext}</p>
       <div className={cn("absolute -bottom-4 -right-4 w-16 h-16 blur-3xl opacity-20", color.replace('text', 'bg'))} />
     </div>
@@ -5076,6 +5302,10 @@ function PatientsListView({
   const [isSortDropdownOpen, setIsSortDropdownOpen] = useState(false);
   const [selectedPsyFilter, setSelectedPsyFilter] = useState<string>(
     clinicRole === 'psychologist' && currentClinicMember?.email ? currentClinicMember.email : 'all'
+  );
+
+  const isScheduleAutonomyDisabled = Boolean(
+    currentClinic && clinicRole === 'psychologist' && currentClinic.settings?.allowPsychologistManageAgenda === false
   );
 
   // Close menus when clicking outside
@@ -5242,13 +5472,23 @@ function PatientsListView({
               Migrar de Outro Sistema
             </button>
           )}
-          <button 
-            onClick={onAddClick}
-            className="w-full sm:w-auto bg-primary hover:bg-primary-dark text-white px-6 py-2.5 rounded-xl font-medium flex items-center justify-center gap-2 transition-all shadow-lg shadow-primary/20"
-          >
-            <Plus size={20} />
-            Novo Paciente
-          </button>
+          {isScheduleAutonomyDisabled ? (
+            <div 
+              className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-surface-muted text-text-muted border border-border-ui text-xs font-semibold flex items-center justify-center gap-2 select-none"
+              title="A clínica definiu que o cadastro e agendamento de pacientes é gerenciado pela recepção"
+            >
+              <Lock size={14} className="text-amber-500" />
+              <span>Cadastros via Recepção</span>
+            </div>
+          ) : (
+            <button 
+              onClick={onAddClick}
+              className="w-full sm:w-auto bg-primary hover:bg-primary-dark text-white px-6 py-2.5 rounded-xl font-medium flex items-center justify-center gap-2 transition-all shadow-lg shadow-primary/20 cursor-pointer"
+            >
+              <Plus size={20} />
+              Novo Paciente
+            </button>
+          )}
         </div>
       </div>
 
@@ -5542,7 +5782,9 @@ function PatientDetailsView({
   hasAcceptedExtensionTerms = false,
   onOpenExtensionModal,
   clinicRole,
-  currentClinic
+  currentClinic,
+  currentClinicMember,
+  clinicMembers = []
 }: { 
   patientId: string, 
   onBack: () => void, 
@@ -5559,7 +5801,9 @@ function PatientDetailsView({
   hasAcceptedExtensionTerms?: boolean,
   onOpenExtensionModal?: () => void,
   clinicRole?: ClinicUserRole | null,
-  currentClinic?: Clinic | null
+  currentClinic?: Clinic | null,
+  currentClinicMember?: ClinicMember | null,
+  clinicMembers?: ClinicMember[]
 }) {
   const patient = patients.find(p => p.id === patientId);
   const user = auth.currentUser;
@@ -5567,6 +5811,22 @@ function PatientDetailsView({
   // Regra de Sigilo Ético (CFP / LGPD):
   // Recepcionista, Gestor/Admin e Supervisor não têm acesso aos prontuários clínicos privados, apenas perfil e reembolso.
   const isRestrictedRole = Boolean(currentClinic && clinicRole && clinicRole !== 'psychologist');
+
+  // Permissões de IA configuradas pela Clínica
+  const isAiGloballyDisabled = Boolean(currentClinic && clinicRole === 'psychologist' && currentClinic.settings?.aiSettings?.enabled === false);
+  const isTranscriptionDisabled = isAiGloballyDisabled || Boolean(currentClinic && clinicRole === 'psychologist' && currentClinic.settings?.aiSettings?.allowTranscription === false);
+  const isConceptualizationDisabled = isAiGloballyDisabled || Boolean(currentClinic && clinicRole === 'psychologist' && currentClinic.settings?.aiSettings?.allowConceptualization === false);
+  const isTreatmentPlanDisabled = isAiGloballyDisabled || Boolean(currentClinic && clinicRole === 'psychologist' && currentClinic.settings?.aiSettings?.allowTreatmentPlan === false);
+  const isEvolutionDisabled = isAiGloballyDisabled || Boolean(currentClinic && clinicRole === 'psychologist' && currentClinic.settings?.aiSettings?.allowEvolutionAssistant === false);
+  const isCfpDisabled = isAiGloballyDisabled || Boolean(currentClinic && clinicRole === 'psychologist' && currentClinic.settings?.aiSettings?.allowCfpDocuments === false);
+
+  // Estados para Envio de Sessão para Supervisão Clínica
+  const [isSupervisionModalOpen, setIsSupervisionModalOpen] = useState(false);
+  const [supervisionEvo, setSupervisionEvo] = useState<any>(null);
+  const [supervisionNote, setSupervisionNote] = useState('');
+  const [supervisionDoubts, setSupervisionDoubts] = useState('');
+  const [supervisionSupervisorEmail, setSupervisionSupervisorEmail] = useState('');
+  const [isSendingSupervision, setIsSendingSupervision] = useState(false);
 
   const [activeSubTab, setActiveSubTab] = useState<'perfil' | 'prontuario' | 'anamnese' | 'smartnotes' | 'biblioteca' | 'tratamento' | 'reembolso'>(() => {
     if (isRestrictedRole) {
@@ -5581,6 +5841,36 @@ function PatientDetailsView({
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+
+  const handleConfirmSupervision = async () => {
+    if (!currentClinic || !supervisionEvo) return;
+    setIsSendingSupervision(true);
+    try {
+      const newCase: SupervisionCase = {
+        id: `sup-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        clinicId: currentClinic.id,
+        psychologistId: user?.email || '',
+        psychologistName: currentClinicMember?.name || profileSettings?.name || user?.displayName || user?.email || 'Psicólogo',
+        psychologistEmail: user?.email || '',
+        patientId: patient?.id || '',
+        patientName: patient?.name || 'Paciente',
+        sessionDate: supervisionEvo.date || new Date().toISOString().split('T')[0],
+        clinicalNotes: supervisionNote,
+        doubts: supervisionDoubts,
+        supervisorEmail: supervisionSupervisorEmail || undefined,
+        status: 'pending',
+        createdAt: new Date().toISOString()
+      };
+      saveClinicSupervisionCase(currentClinic.id, newCase);
+      setIsSupervisionModalOpen(false);
+      alert('Sessão enviada com sucesso para a supervisão clínica!');
+    } catch (err) {
+      console.error('Erro ao enviar para supervisão:', err);
+      alert('Erro ao enviar para supervisão.');
+    } finally {
+      setIsSendingSupervision(false);
+    }
+  };
 
   // States for Reimbursement tab
   const [patientSessions, setPatientSessions] = useState<any[]>([]);
@@ -6004,6 +6294,10 @@ function PatientDetailsView({
   };
 
   const handleGenerateTccWithAi = async () => {
+    if (isConceptualizationDisabled) {
+      alert("O uso de Inteligência Artificial para Conceitualização foi desativado pela clínica.");
+      return;
+    }
     if (!localTccData) return;
 
     if (!confirm("Deseja usar a IA para gerar a conceitualização cognitiva?")) {
@@ -6144,6 +6438,10 @@ function PatientDetailsView({
   };
 
   const handleGenerateApproachWithAi = async (approachKey: string) => {
+    if (isConceptualizationDisabled) {
+      alert("O uso de Inteligência Artificial para Conceitualização foi desativado pela clínica.");
+      return;
+    }
     if (!patient) return;
     const user = auth.currentUser;
     const isMaster = user?.email?.toLowerCase() === 'wellcoutinho99@gmail.com';
@@ -6304,6 +6602,10 @@ function PatientDetailsView({
   };
 
   const handleGenerateTreatmentPlanWithAi = async () => {
+    if (isTreatmentPlanDisabled) {
+      alert("O uso de Inteligência Artificial para Planejamento de Tratamento foi desativado pela clínica.");
+      return;
+    }
     if (!patient) return;
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
@@ -6480,6 +6782,10 @@ function PatientDetailsView({
   };
 
   const handleGenerateNextSessionPlanWithAi = async () => {
+    if (isTreatmentPlanDisabled) {
+      alert("O uso de Inteligência Artificial para Planejamento de Sessões foi desativado pela clínica.");
+      return;
+    }
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
       alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
@@ -6814,6 +7120,10 @@ function PatientDetailsView({
   };
 
   const handleGenerateEvolution = async () => {
+    if (isEvolutionDisabled) {
+      alert("O uso de Inteligência Artificial para Relato de Evolução foi desativado pela clínica.");
+      return;
+    }
     if (!transcriptionText.trim()) return;
     
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
@@ -6906,6 +7216,10 @@ function PatientDetailsView({
   };
 
   const handleGeneratePDFRecord = async (evo: any) => {
+    if (isCfpDisabled) {
+      alert("A geração de Prontuários CFP com IA foi desativada pela clínica.");
+      return;
+    }
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
       alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
@@ -7059,6 +7373,10 @@ Relato:
   };
 
   const handleGenerateAllIndividualPDFs = async () => {
+    if (isCfpDisabled) {
+      alert("A geração de Prontuários CFP com IA foi desativada pela clínica.");
+      return;
+    }
     if (!clinicalData.evoluções || clinicalData.evoluções.length === 0) {
       alert("Não há relatos salvos para gerar prontuários.");
       return;
@@ -7343,6 +7661,10 @@ Relato:
   };
 
   const handleGenerateAI = async () => {
+    if (isEvolutionDisabled) {
+      alert("O uso de Inteligência Artificial para Resumo de Sessões foi desativado pela clínica.");
+      return;
+    }
     if (!clinicalData.anamnese.mainComplaint && clinicalData.evoluções.length === 0) {
       alert("Por favor, preencha a anamnese ou adicione evoluções para gerar a análise.");
       return;
@@ -8509,8 +8831,25 @@ Relato:
                                   <div className="relative">
                                     <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpenDropdownId(openDropdownId === evo.id ? null : evo.id); }} className="text-text-muted hover:text-text-main p-1"><MoreVertical size={14} /></button>
                                     {openDropdownId === evo.id && (
-                                      <div className="absolute right-0 mt-2 w-32 glass-card rounded-xl border border-border-ui shadow-xl overflow-hidden z-20">
+                                      <div className="absolute right-0 mt-2 w-48 glass-card rounded-xl border border-border-ui shadow-xl overflow-hidden z-20">
                                         <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingEvolutionId(evo.id); setEditingEvolutionNote(evo.note); setOpenDropdownId(null); }} className="w-full text-left px-4 py-3 text-xs font-bold text-text-main hover:bg-surface-muted transition-colors flex items-center gap-2"><PenTool size={12}/> Editar</button>
+                                        {currentClinic && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              e.stopPropagation();
+                                              setSupervisionEvo(evo);
+                                              setSupervisionNote(evo.note);
+                                              setSupervisionDoubts('');
+                                              setIsSupervisionModalOpen(true);
+                                              setOpenDropdownId(null);
+                                            }}
+                                            className="w-full text-left px-4 py-3 text-xs font-bold text-amber-500 hover:bg-amber-500/10 transition-colors flex items-center gap-2 border-t border-border-ui"
+                                          >
+                                            <UserCheck size={12} /> Enviar para Supervisão
+                                          </button>
+                                        )}
                                         <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteEvolution(evo.id); }} className="w-full text-left px-4 py-3 text-xs font-bold text-red-500 hover:bg-red-500/10 transition-colors flex items-center gap-2 border-t border-border-ui"><Trash2 size={12}/> Excluir</button>
                                       </div>
                                     )}
@@ -8537,7 +8876,7 @@ Relato:
                                    </button>
                                  )}
                                </div>
-                               <div className="mt-4 pt-4 border-t border-border-ui/50">
+                               <div className="mt-4 pt-4 border-t border-border-ui/50 flex flex-wrap items-center justify-between gap-3">
                                  <button
                                    onClick={() => handleGeneratePDFRecord(evo)}
                                    disabled={generatingPdfId === evo.id}
@@ -8555,6 +8894,23 @@ Relato:
                                      </>
                                    )}
                                  </button>
+                                 
+                                 {currentClinic && (
+                                   <button
+                                     type="button"
+                                     onClick={() => {
+                                       setSupervisionEvo(evo);
+                                       setSupervisionNote(evo.note);
+                                       setSupervisionDoubts('');
+                                       setIsSupervisionModalOpen(true);
+                                     }}
+                                     className="flex items-center gap-1.5 text-xs font-bold text-amber-500 hover:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1.5 rounded-xl border border-amber-500/20 transition-all cursor-pointer"
+                                     title="Enviar sessão para discussão em supervisão clínica"
+                                   >
+                                     <UserCheck size={14} />
+                                     <span>Enviar para Supervisão</span>
+                                   </button>
+                                 )}
                                </div>
                             </div>
                           )}
@@ -9934,6 +10290,142 @@ Relato:
            </section>
         </div>
       </div>
+
+      {/* Modal: Enviar Sessão para Supervisão Clínica */}
+      <AnimatePresence>
+        {isSupervisionModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="glass-card w-full max-w-2xl rounded-[32px] overflow-hidden shadow-2xl border border-white/10 flex flex-col max-h-[90vh]"
+            >
+              <div className="p-6 border-b border-border-ui flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center">
+                    <UserCheck size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-text-main">
+                      Enviar Sessão para Supervisão Clínica
+                    </h3>
+                    <p className="text-xs text-text-muted">
+                      Revise ou edite as informações clínicas da sessão antes de compartilhar com o supervisor.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSupervisionModalOpen(false)}
+                  className="p-2 rounded-xl hover:bg-surface-muted text-text-muted hover:text-text-main transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-5 overflow-y-auto flex-1">
+                {/* Paciente e Sessão info */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 bg-surface-muted rounded-2xl border border-border-ui text-xs">
+                  <div>
+                    <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider block">Paciente</span>
+                    <span className="font-bold text-text-main uppercase">{patient?.name}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider block">Data da Sessão</span>
+                    <span className="font-bold text-text-main">{supervisionEvo?.date} {supervisionEvo?.time && `às ${supervisionEvo?.time}`}</span>
+                  </div>
+                </div>
+
+                {/* Seletor de Supervisor (caso haja supervisores na equipe) */}
+                {clinicMembers.some(m => m.role === 'supervisor' || m.role === 'clinic_admin') && (
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                      Direcionar para um Supervisor Específico (Opcional)
+                    </label>
+                    <select
+                      value={supervisionSupervisorEmail}
+                      onChange={(e) => setSupervisionSupervisorEmail(e.target.value)}
+                      className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary cursor-pointer"
+                    >
+                      <option value="">Todos os Supervisores da Clínica</option>
+                      {clinicMembers.filter(m => m.role === 'supervisor' || m.role === 'clinic_admin').map(s => (
+                        <option key={s.id} value={s.email}>
+                          {s.name} ({s.role === 'supervisor' ? 'Supervisor(a)' : 'Coordenação'})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Relato Clínico Editável */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                      Relato / Anotação da Sessão para o Supervisor
+                    </label>
+                    <span className="text-[10px] text-text-muted">Você pode anonimizar ou resumir trechos confidenciais</span>
+                  </div>
+                  <textarea
+                    value={supervisionNote}
+                    onChange={(e) => setSupervisionNote(e.target.value)}
+                    rows={6}
+                    placeholder="Conteúdo da sessão que será compartilhado na supervisão..."
+                    className="w-full bg-surface-muted border border-border-ui rounded-xl p-4 text-sm text-text-main outline-none focus:border-primary resize-none leading-relaxed"
+                  />
+                </div>
+
+                {/* Dúvidas ou Pontos para Discutir */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                    Pontos & Dúvidas a Serem Discutidos na Supervisão
+                  </label>
+                  <textarea
+                    value={supervisionDoubts}
+                    onChange={(e) => setSupervisionDoubts(e.target.value)}
+                    rows={3}
+                    placeholder="Ex: Dificuldade no manejo de resistência ao tema familiar; dúvidas sobre qual técnica aplicar; etc."
+                    className="w-full bg-surface-muted border border-border-ui rounded-xl p-4 text-sm text-text-main outline-none focus:border-primary resize-none leading-relaxed"
+                  />
+                </div>
+              </div>
+
+              <div className="p-6 border-t border-border-ui flex items-center justify-end gap-3 bg-surface-muted/50">
+                <button
+                  type="button"
+                  onClick={() => setIsSupervisionModalOpen(false)}
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold text-text-muted hover:text-text-main transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmSupervision}
+                  disabled={isSendingSupervision || !supervisionNote.trim()}
+                  className="bg-amber-500 hover:bg-amber-600 text-white px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  {isSendingSupervision ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>Enviando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send size={14} />
+                      <span>Confirmar e Enviar para Supervisão</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
@@ -10764,7 +11256,8 @@ function CalendarView({
   googleAccessToken,
   onOpenSettings,
   onSyncGoogleCalendar,
-  onConnectGoogleCalendar
+  onConnectGoogleCalendar,
+  isScheduleAutonomyDisabled = false
 }: { 
   sessions: any[], 
   patients: any[], 
@@ -10777,7 +11270,8 @@ function CalendarView({
   googleAccessToken?: string | null,
   onOpenSettings?: () => void,
   onSyncGoogleCalendar?: () => void,
-  onConnectGoogleCalendar?: () => void
+  onConnectGoogleCalendar?: () => void,
+  isScheduleAutonomyDisabled?: boolean
 }) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<'day' | 'week' | 'month'>('day');
@@ -11099,21 +11593,38 @@ function CalendarView({
                  <span>Desfazer</span>
                </button>
             )}
-            <button 
-              onClick={() => {
-                setEditingSession({
-                  date: format(currentDate, 'yyyy-MM-dd')
-                });
-                setIsModalOpen(true);
-              }}
-              className="bg-primary text-white px-4 sm:px-5 py-2 rounded-2xl font-bold flex items-center justify-center gap-1.5 hover:opacity-90 shadow-lg shadow-primary/20 transition-all text-xs sm:text-sm whitespace-nowrap cursor-pointer"
-            >
-              <Plus size={18} />
-              <span>Novo Agendamento</span>
-            </button>
+            {isScheduleAutonomyDisabled ? (
+              <div 
+                className="px-3.5 py-2 rounded-2xl bg-surface-muted border border-border-ui text-text-muted text-xs font-semibold flex items-center gap-1.5 select-none"
+                title="A agenda é controlada centralmente pela recepção"
+              >
+                <Lock size={14} className="text-amber-500" />
+                <span>Agenda via Recepção</span>
+              </div>
+            ) : (
+              <button 
+                onClick={() => {
+                  setEditingSession({
+                    date: format(currentDate, 'yyyy-MM-dd')
+                  });
+                  setIsModalOpen(true);
+                }}
+                className="bg-primary text-white px-4 sm:px-5 py-2 rounded-2xl font-bold flex items-center justify-center gap-1.5 hover:opacity-90 shadow-lg shadow-primary/20 transition-all text-xs sm:text-sm whitespace-nowrap cursor-pointer"
+              >
+                <Plus size={18} />
+                <span>Novo Agendamento</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      {isScheduleAutonomyDisabled && (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center gap-3 text-amber-600 dark:text-amber-400 text-xs font-semibold">
+          <Lock size={18} className="shrink-0 text-amber-500" />
+          <span>A sua clínica configurou o controle centralizado da agenda. Novos agendamentos, edições e cancelamentos são gerenciados diretamente pela recepção.</span>
+        </div>
+      )}
 
       {/* 1. AGENDA DO DIA (GOOGLE CALENDAR STYLE) */}
       {viewMode === 'day' && (
@@ -11154,16 +11665,18 @@ function CalendarView({
                   R$ {currentDayTotalRevenue.toFixed(2)}
                 </span>
               </div>
-              <button
-                onClick={() => {
-                  setEditingSession({ date: format(currentDate, 'yyyy-MM-dd') });
-                  setIsModalOpen(true);
-                }}
-                className="py-2 px-3 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
-              >
-                <Plus size={14} />
-                <span>Adicionar</span>
-              </button>
+              {!isScheduleAutonomyDisabled && (
+                <button
+                  onClick={() => {
+                    setEditingSession({ date: format(currentDate, 'yyyy-MM-dd') });
+                    setIsModalOpen(true);
+                  }}
+                  className="py-2 px-3 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Plus size={14} />
+                  <span>Adicionar</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -11225,19 +11738,21 @@ function CalendarView({
 
                       {slotSessions.length === 0 ? (
                         <div className="h-full flex items-center">
-                          <button
-                            onClick={() => {
-                              setEditingSession({
-                                date: format(currentDate, 'yyyy-MM-dd'),
-                                time: hour
-                              });
-                              setIsModalOpen(true);
-                            }}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-semibold text-primary/80 hover:text-primary flex items-center gap-1.5 py-1 px-3 rounded-xl hover:bg-primary/10 cursor-pointer"
-                          >
-                            <Plus size={14} />
-                            <span>Agendar às {hour}</span>
-                          </button>
+                          {!isScheduleAutonomyDisabled && (
+                            <button
+                              onClick={() => {
+                                setEditingSession({
+                                  date: format(currentDate, 'yyyy-MM-dd'),
+                                  time: hour
+                                });
+                                setIsModalOpen(true);
+                              }}
+                              className="opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-semibold text-primary/80 hover:text-primary flex items-center gap-1.5 py-1 px-3 rounded-xl hover:bg-primary/10 cursor-pointer"
+                            >
+                              <Plus size={14} />
+                              <span>Agendar às {hour}</span>
+                            </button>
+                          )}
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 w-full z-10">
@@ -11298,68 +11813,70 @@ function CalendarView({
                               </div>
 
                               {/* Action buttons */}
-                              <div className="flex items-center gap-1.5 pt-2 border-t border-white/5">
-                                {session.isTriage && session.status !== 'Cancelada' && (
-                                  <button
-                                    onClick={() => onTriageToPatient(session.patientName, session.dayName, session.time, session.id)}
-                                    className="px-2 py-1 rounded-lg bg-primary/20 text-primary hover:bg-primary hover:text-white text-[10px] font-bold uppercase transition-all cursor-pointer"
-                                  >
-                                    Efetivar
-                                  </button>
-                                )}
-                                {session.status !== 'Cancelada' && (
-                                  <>
+                              {!isScheduleAutonomyDisabled && (
+                                <div className="flex items-center gap-1.5 pt-2 border-t border-white/5">
+                                  {session.isTriage && session.status !== 'Cancelada' && (
                                     <button
-                                      onClick={() => {
-                                        setEditingSession({
-                                          ...session,
-                                          date: format(currentDate, 'yyyy-MM-dd'),
-                                          originalDate: format(currentDate, 'yyyy-MM-dd'),
-                                          originalTime: session.time
-                                        });
-                                        setIsModalOpen(true);
-                                      }}
-                                      className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white/80 text-[10px] font-bold uppercase transition-all cursor-pointer"
+                                      onClick={() => onTriageToPatient(session.patientName, session.dayName, session.time, session.id)}
+                                      className="px-2 py-1 rounded-lg bg-primary/20 text-primary hover:bg-primary hover:text-white text-[10px] font-bold uppercase transition-all cursor-pointer"
                                     >
-                                      Editar
+                                      Efetivar
                                     </button>
-                                    <button
-                                      onClick={() => {
-                                        if (confirm('Deseja cancelar este atendimento?')) {
-                                          onAddSession({
-                                            id: session.id,
-                                            patientId: session.patientId || '',
-                                            triageName: session.triageName || session.patientName || '',
+                                  )}
+                                  {session.status !== 'Cancelada' && (
+                                    <>
+                                      <button
+                                        onClick={() => {
+                                          setEditingSession({
+                                            ...session,
                                             date: format(currentDate, 'yyyy-MM-dd'),
                                             originalDate: format(currentDate, 'yyyy-MM-dd'),
-                                            time: session.time,
-                                            originalTime: session.time,
-                                            status: 'Cancelada',
-                                            isTriage: session.isTriage,
-                                            type: session.type
+                                            originalTime: session.time
                                           });
+                                          setIsModalOpen(true);
+                                        }}
+                                        className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white/80 text-[10px] font-bold uppercase transition-all cursor-pointer"
+                                      >
+                                        Editar
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          if (confirm('Deseja cancelar este atendimento?')) {
+                                            onAddSession({
+                                              id: session.id,
+                                              patientId: session.patientId || '',
+                                              triageName: session.triageName || session.patientName || '',
+                                              date: format(currentDate, 'yyyy-MM-dd'),
+                                              originalDate: format(currentDate, 'yyyy-MM-dd'),
+                                              time: session.time,
+                                              originalTime: session.time,
+                                              status: 'Cancelada',
+                                              isTriage: session.isTriage,
+                                              type: session.type
+                                            });
+                                          }
+                                        }}
+                                        className="px-2 py-1 rounded-lg bg-red-500/10 hover:bg-red-500 hover:text-white text-red-400 text-[10px] font-bold uppercase transition-all cursor-pointer"
+                                      >
+                                        Cancelar
+                                      </button>
+                                    </>
+                                  )}
+                                  {!session.id?.toString().startsWith('virtual-') && (
+                                    <button
+                                      onClick={() => {
+                                        if (confirm('Deseja excluir permanentemente este registro da agenda?')) {
+                                          onDeleteSession(session.id);
                                         }
                                       }}
-                                      className="px-2 py-1 rounded-lg bg-red-500/10 hover:bg-red-500 hover:text-white text-red-400 text-[10px] font-bold uppercase transition-all cursor-pointer"
+                                      className="p-1 rounded-lg bg-red-500/10 hover:bg-red-500 hover:text-white text-red-400 transition-all ml-auto cursor-pointer"
+                                      title="Excluir Registro"
                                     >
-                                      Cancelar
+                                      <Trash2 size={12} />
                                     </button>
-                                  </>
-                                )}
-                                {!session.id?.toString().startsWith('virtual-') && (
-                                  <button
-                                    onClick={() => {
-                                      if (confirm('Deseja excluir permanentemente este registro da agenda?')) {
-                                        onDeleteSession(session.id);
-                                      }
-                                    }}
-                                    className="p-1 rounded-lg bg-red-500/10 hover:bg-red-500 hover:text-white text-red-400 transition-all ml-auto cursor-pointer"
-                                    title="Excluir Registro"
-                                  >
-                                    <Trash2 size={12} />
-                                  </button>
-                                )}
-                              </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -11477,18 +11994,20 @@ function CalendarView({
                 </div>
 
                 {/* Add appointment on day button */}
-                <div className="p-2 border-t border-white/5 bg-white/[0.02]">
-                  <button
-                    onClick={() => {
-                      setEditingSession({ date: dateStr });
-                      setIsModalOpen(true);
-                    }}
-                    className="w-full py-1.5 text-[10px] font-bold text-text-muted hover:text-primary rounded-lg hover:bg-primary/10 transition-all flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <Plus size={12} />
-                    <span>Agendar</span>
-                  </button>
-                </div>
+                {!isScheduleAutonomyDisabled && (
+                  <div className="p-2 border-t border-white/5 bg-white/[0.02]">
+                    <button
+                      onClick={() => {
+                        setEditingSession({ date: dateStr });
+                        setIsModalOpen(true);
+                      }}
+                      className="w-full py-1.5 text-[10px] font-bold text-text-muted hover:text-primary rounded-lg hover:bg-primary/10 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Plus size={12} />
+                      <span>Agendar</span>
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -11665,65 +12184,67 @@ function CalendarView({
                         
                       </div>
 
-                      <div className="flex flex-wrap gap-2">
-                        {session.isTriage && session.status !== 'Cancelada' && (
-                          <button 
-                            onClick={() => { setSelectedMobileDay(null); onTriageToPatient(session.patientName, session.dayName, session.time, session.id); }}
-                            className="flex-1 bg-primary/20 text-primary py-2 rounded-xl text-xs font-bold hover:bg-primary hover:text-white transition-all border border-primary/20 uppercase"
-                          >Efetivar</button>
-                        )}
-                        
-                        {session.status !== 'Cancelada' && (
-                          <>
+                      {!isScheduleAutonomyDisabled && (
+                        <div className="flex flex-wrap gap-2">
+                          {session.isTriage && session.status !== 'Cancelada' && (
                             <button 
-                              onClick={() => { 
-                                setSelectedMobileDay(null);
-                                setEditingSession({
-                                  ...session,
-                                  date: format(selectedMobileDay, 'yyyy-MM-dd'),
-                                  originalDate: format(selectedMobileDay, 'yyyy-MM-dd'),
-                                  originalTime: session.time
-                                });
-                                setIsModalOpen(true);
-                              }}
-                              className="flex-1 bg-white/10 text-white py-2 rounded-xl text-xs font-bold hover:bg-white/20 transition-all border border-white/5 uppercase"
-                            >Editar</button>
-                            <button 
-                              onClick={() => { 
-                                if (confirm('Deseja cancelar este atendimento?')) {
-                                  onAddSession({
-                                    id: session.id,
-                                    patientId: session.patientId || '',
-                                    triageName: session.triageName || session.patientName || '',
+                              onClick={() => { setSelectedMobileDay(null); onTriageToPatient(session.patientName, session.dayName, session.time, session.id); }}
+                              className="flex-1 bg-primary/20 text-primary py-2 rounded-xl text-xs font-bold hover:bg-primary hover:text-white transition-all border border-primary/20 uppercase"
+                            >Efetivar</button>
+                          )}
+                          
+                          {session.status !== 'Cancelada' && (
+                            <>
+                              <button 
+                                onClick={() => { 
+                                  setSelectedMobileDay(null);
+                                  setEditingSession({
+                                    ...session,
                                     date: format(selectedMobileDay, 'yyyy-MM-dd'),
                                     originalDate: format(selectedMobileDay, 'yyyy-MM-dd'),
-                                    time: session.time,
-                                    originalTime: session.time,
-                                    status: 'Cancelada',
-                                    isTriage: session.isTriage,
-                                    type: session.type
+                                    originalTime: session.time
                                   });
+                                  setIsModalOpen(true);
+                                }}
+                                className="flex-1 bg-white/10 text-white py-2 rounded-xl text-xs font-bold hover:bg-white/20 transition-all border border-white/5 uppercase"
+                              >Editar</button>
+                              <button 
+                                onClick={() => { 
+                                  if (confirm('Deseja cancelar este atendimento?')) {
+                                    onAddSession({
+                                      id: session.id,
+                                      patientId: session.patientId || '',
+                                      triageName: session.triageName || session.patientName || '',
+                                      date: format(selectedMobileDay, 'yyyy-MM-dd'),
+                                      originalDate: format(selectedMobileDay, 'yyyy-MM-dd'),
+                                      time: session.time,
+                                      originalTime: session.time,
+                                      status: 'Cancelada',
+                                      isTriage: session.isTriage,
+                                      type: session.type
+                                    });
+                                  }
+                                }}
+                                className="flex-1 bg-red-500/10 text-red-400 py-2 rounded-xl text-xs font-bold hover:bg-red-500 hover:text-white transition-all border border-red-500/20 uppercase"
+                              >Cancelar</button>
+                            </>
+                          )}
+                          
+                          {!session.id?.toString().startsWith('virtual-') && (
+                             <button 
+                              onClick={() => { 
+                                if (confirm('Deseja excluir permanentemente este registro da agenda?')) {
+                                  onDeleteSession(session.id);
                                 }
                               }}
-                              className="flex-1 bg-red-500/10 text-red-400 py-2 rounded-xl text-xs font-bold hover:bg-red-500 hover:text-white transition-all border border-red-500/20 uppercase"
-                            >Cancelar</button>
-                          </>
-                        )}
-                        
-                        {!session.id?.toString().startsWith('virtual-') && (
-                           <button 
-                            onClick={() => { 
-                              if (confirm('Deseja excluir permanentemente este registro da agenda?')) {
-                                onDeleteSession(session.id);
-                              }
-                            }}
-                            className="p-2 bg-red-500/10 text-red-400 rounded-xl hover:bg-red-500 hover:text-white transition-all border border-red-500/20"
-                            title="Excluir Registro"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        )}
-                      </div>
+                              className="p-2 bg-red-500/10 text-red-400 rounded-xl hover:bg-red-500 hover:text-white transition-all border border-red-500/20"
+                              title="Excluir Registro"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))
                 )}
@@ -11803,7 +12324,7 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
         <div className="p-8">
           <div className="flex items-center justify-between mb-8">
             <h3 className="text-xl font-bold text-text-main">
-              {initialData?.status === 'Recorrente' ? 'Ajustar Horário' : 'Agendar Sessão'}
+              {initialData?.status === 'Recorrente' ? 'Ajustar Horário' : (initialData?.id ? 'Editar Sessão' : 'Agendar Sessão')}
             </h3>
             <button onClick={onClose} className="p-2 rounded-xl hover:bg-surface-muted transition-colors">
                <Plus className="rotate-45" size={20} />
@@ -11811,7 +12332,7 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
           </div>
 
           <div className="space-y-6">
-            {!initialData ? (
+            {!initialData?.id ? (
               <div className="space-y-2">
                 <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Paciente ou Nome (Triagem)</label>
                 <input 
@@ -12577,13 +13098,15 @@ function ImportTranscriptView({
   clinicalApproach,
   onSaveSession, 
   onCancel,
-  onOpenExtensionModal
+  onOpenExtensionModal,
+  isTranscriptionDisabled = false
 }: { 
   patients: any[], 
   clinicalApproach: string,
   onSaveSession: (patientId: string, date: string, time: string, duration: string, amount: string, type: 'Presencial' | 'Online', note: string) => void,
   onCancel: () => void,
-  onOpenExtensionModal?: () => void
+  onOpenExtensionModal?: () => void,
+  isTranscriptionDisabled?: boolean
 }) {
   const [transcriptText, setTranscriptText] = useState('');
   const [selectedPatientId, setSelectedPatientId] = useState('');
@@ -12697,6 +13220,10 @@ function ImportTranscriptView({
   }
 
   const handleAiAction = async (actionType: string) => {
+    if (isTranscriptionDisabled) {
+      alert("O uso de inteligência artificial para transcrição de sessões foi desativado pela clínica.");
+      return;
+    }
     if (!transcriptText.trim()) {
       alert("A transcrição está vazia. Capture ou digite algo primeiro!");
       return;
@@ -12808,6 +13335,10 @@ function ImportTranscriptView({
   };
 
   const handleSendCustomMessage = async () => {
+    if (isTranscriptionDisabled) {
+      alert("O uso de inteligência artificial para transcrição de sessões foi desativado pela clínica.");
+      return;
+    }
     if (!aiInput.trim()) return;
     if (!transcriptText.trim()) {
       alert("A transcrição está vazia. Capture ou digite algo primeiro!");
@@ -12911,6 +13442,13 @@ function ImportTranscriptView({
           <p className="text-xs text-text-muted mt-0.5">Vincule a chamada capturada ao prontuário de um paciente</p>
         </div>
       </div>
+
+      {isTranscriptionDisabled && (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center gap-3 text-amber-600 dark:text-amber-400 text-xs font-semibold">
+          <Lock size={18} className="shrink-0 text-amber-500" />
+          <span>O recurso de inteligência artificial para transcrição de sessões foi desativado pela clínica nas configurações administrativas.</span>
+        </div>
+      )}
 
       {/* Banner Extensão Oficial do Google Meet */}
       <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-left">

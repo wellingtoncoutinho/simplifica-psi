@@ -18,7 +18,7 @@ import {
   UserPlus
 } from 'lucide-react';
 import { Clinic, ClinicMember, Session, Patient } from '../../types';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, cn } from '../../lib/utils';
 
 interface ClinicDashboardViewProps {
   clinic: Clinic;
@@ -26,6 +26,7 @@ interface ClinicDashboardViewProps {
   members: ClinicMember[];
   sessions: Session[];
   patients: Patient[];
+  isPrivacyMode?: boolean;
   onOpenTeamModal: () => void;
   onGoToMasterAgenda: () => void;
   onOpenNewSessionModal: () => void;
@@ -38,6 +39,7 @@ export default function ClinicDashboardView({
   members,
   sessions,
   patients,
+  isPrivacyMode = false,
   onOpenTeamModal,
   onGoToMasterAgenda,
   onOpenNewSessionModal,
@@ -203,7 +205,7 @@ export default function ClinicDashboardView({
           </div>
           <div>
             <div className="flex items-baseline gap-2">
-              <span className="text-2xl font-black text-emerald-400">{formatCurrency(estimatedRevenueMonth)}</span>
+              <span className={cn("text-2xl font-black text-emerald-400 transition-all", isPrivacyMode && "privacy-blur-strong")}>{formatCurrency(estimatedRevenueMonth)}</span>
             </div>
             <p className="text-[11px] text-text-muted mt-1">
               Total previsto de atendimentos no mês
@@ -270,7 +272,7 @@ export default function ClinicDashboardView({
 
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
-                          <span className="font-bold text-sm text-text-main">
+                          <span className={cn("font-bold text-sm text-text-main transition-all", isPrivacyMode && "privacy-blur")}>
                             {session.patientName || 'Paciente'}
                           </span>
                           <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${badgeStyle}`}>
@@ -295,7 +297,7 @@ export default function ClinicDashboardView({
                     </div>
 
                     <div className="flex items-center gap-3 self-end sm:self-center">
-                      <span className="text-xs font-bold font-mono text-emerald-400">
+                      <span className={cn("text-xs font-bold font-mono text-emerald-400 transition-all", isPrivacyMode && "privacy-blur-strong")}>
                         {formatCurrency(session.amount || 0)}
                       </span>
                       {session.paid ? (

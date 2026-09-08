@@ -19,10 +19,12 @@ import {
   Check,
   Calendar
 } from 'lucide-react';
-import { Clinic, ClinicMember, Patient, Session } from '../../types';
+import { Clinic, ClinicMember, Patient, Session, SupervisionCase } from '../../types';
 import { 
   getDiscussedSupervisionCases, 
-  toggleDiscussedSupervisionCase 
+  toggleDiscussedSupervisionCase,
+  getClinicSupervisionCases,
+  updateSupervisionFeedback
 } from '../../lib/clinicService';
 
 interface ClinicSupervisionViewProps {
@@ -44,6 +46,7 @@ export default function ClinicSupervisionView({
   const [selectedCase, setSelectedCase] = useState<any | null>(null);
   const [activeTab, setActiveTab] = useState<'pending' | 'discussed' | 'all'>('pending');
   const [discussedCaseIds, setDiscussedCaseIds] = useState<string[]>(() => getDiscussedSupervisionCases(clinic.id));
+  const [casesList, setCasesList] = useState<SupervisionCase[]>(() => getClinicSupervisionCases(clinic.id));
   const [archiveOnFeedback, setArchiveOnFeedback] = useState(true);
   const [feedbackSuccessNotice, setFeedbackSuccessNotice] = useState<string | null>(null);
   const [feedbackText, setFeedbackText] = useState('');
@@ -59,6 +62,7 @@ export default function ClinicSupervisionView({
 
   useEffect(() => {
     setDiscussedCaseIds(getDiscussedSupervisionCases(clinic.id));
+    setCasesList(getClinicSupervisionCases(clinic.id));
   }, [clinic.id]);
 
   // Lista de psicólogos supervisionados
@@ -66,47 +70,7 @@ export default function ClinicSupervisionView({
     return members.filter(m => m.role === 'psychologist');
   }, [members]);
 
-  // Casos clínicos de exemplo para demonstração de supervisão
-  const supervisionCases = useMemo(() => {
-    return [
-      {
-        id: 'case_1',
-        patientName: 'Ana Clara Albuquerque',
-        age: 28,
-        complaint: 'Ansiedade Generalizada e pensamentos intrusivos de desvalia profissional.',
-        approach: 'Terapia Cognitivo-Comportamental (TCC)',
-        psychologistName: 'Dra. Paula Silva',
-        psychologistEmail: 'paula.psi@reinventar.com',
-        sessionsCount: 6,
-        lastEvolutionSummary: 'Paciente relatou redução nas crises de ansiedade após aplicação da técnica de desfusão e identificação de distorção de catastrofização.',
-        needsReview: true
-      },
-      {
-        id: 'case_2',
-        patientName: 'Lucas Fernandes Costa',
-        age: 34,
-        complaint: 'Sintomas de pânico e esquiva agorafóbica em transportes públicos.',
-        approach: 'TCC / Dessensibilização Sistemática',
-        psychologistName: 'Dra. Paula Silva',
-        psychologistEmail: 'paula.psi@reinventar.com',
-        sessionsCount: 3,
-        lastEvolutionSummary: 'Hierarquia de exposição ao vivo construída com sucesso. Paciente conseguiu realizar trajeto de 2 estações de metrô acompanhado.',
-        needsReview: false
-      },
-      {
-        id: 'case_3',
-        patientName: 'Mariana Lima Rocha',
-        age: 22,
-        complaint: 'Demanda de autoconhecimento e dificuldades de individuação familiar.',
-        approach: 'Psicanálise / Escuta Analítica',
-        psychologistName: 'Dr. Ricardo Mendes',
-        psychologistEmail: 'ricardo.psi@reinventar.com',
-        sessionsCount: 8,
-        lastEvolutionSummary: 'Trabalho focado na dinâmica de transferência e identificação de mecanismos de defesa de racionalização.',
-        needsReview: true
-      }
-    ];
-  }, []);
+  const supervisionCases = casesList;
 
   const handleToggleCaseStatus = (caseId: string, markAsDiscussed: boolean) => {
     const updated = toggleDiscussedSupervisionCase(clinic.id, caseId, markAsDiscussed);
@@ -161,6 +125,9 @@ export default function ClinicSupervisionView({
     };
 
     setFeedbacks([newFb, ...feedbacks]);
+
+    const updated = updateSupervisionFeedback(clinic.id, selectedCase.id, feedbackText.trim());
+    setCasesList(updated);
 
     if (archiveOnFeedback) {
       handleToggleCaseStatus(selectedCase.id, true);
@@ -349,14 +316,37 @@ export default function ClinicSupervisionView({
                       </div>
                     </div>
 
-                    <p className="text-xs text-text-muted leading-relaxed">
-                      <strong className="text-text-main">Queixa Principal:</strong> {c.complaint}
-                    </p>
+                    {c.complaint && (
+                      <p className="text-xs text-text-muted leading-relaxed">
+                        <strong className="text-text-main">Queixa Principal:</strong> {c.complaint}
+                      </p>
+                    )}
+
+                    {/* Dúvidas trazidas pelo psicólogo */}
+                    {c.psychologistDoubts && (
+                      <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-300">
+                        <span className="font-bold block text-[10px] uppercase tracking-wider text-purple-400">
+                          Dúvidas / Foco trazido pelo terapeuta:
+                        </span>
+                        <p className="mt-1 whitespace-pre-wrap leading-relaxed">{c.psychologistDoubts}</p>
+                      </div>
+                    )}
 
                     <div className="p-3 rounded-xl bg-surface-muted text-xs text-text-muted leading-relaxed">
-                      <strong className="text-text-main block mb-1">Última Evolução Compartilhada ({c.sessionsCount}ª sessão):</strong>
-                      "{c.lastEvolutionSummary}"
+                      <strong className="text-text-main block mb-1">
+                        Relato Clínico da Sessão {c.sessionNumber ? `(#${c.sessionNumber})` : (c.sessionsCount ? `(${c.sessionsCount}ª sessão)` : '')}:
+                      </strong>
+                      <p className="whitespace-pre-wrap leading-relaxed">{c.evolutionNote || c.lastEvolutionSummary}</p>
                     </div>
+
+                    {c.feedback && (
+                      <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300">
+                        <span className="font-bold block text-[10px] uppercase tracking-wider text-emerald-400">
+                          Parecer do Supervisor ({c.reviewedAt ? new Date(c.reviewedAt).toLocaleDateString() : 'Registrado'}):
+                        </span>
+                        <p className="mt-1 whitespace-pre-wrap leading-relaxed">{c.feedback}</p>
+                      </div>
+                    )}
 
                     {/* Barra de Ações Rápidas do Caso */}
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border-ui/60 text-xs">

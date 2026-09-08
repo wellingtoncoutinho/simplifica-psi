@@ -70,6 +70,14 @@ export default function ClinicTeamModal({
   const [rooms, setRooms] = useState<string[]>(clinic.settings?.rooms || ['Sala 01 - Presencial', 'Sala 02 - Terapia Infantil', 'Sala 03 - Atendimento Online']);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
 
+  // Configurações de IA da Clínica
+  const [aiEnabled, setAiEnabled] = useState(clinic.settings?.aiSettings?.enabled ?? true);
+  const [aiAllowTranscription, setAiAllowTranscription] = useState(clinic.settings?.aiSettings?.allowTranscription ?? true);
+  const [aiAllowConceptualization, setAiAllowConceptualization] = useState(clinic.settings?.aiSettings?.allowConceptualization ?? true);
+  const [aiAllowTreatmentPlan, setAiAllowTreatmentPlan] = useState(clinic.settings?.aiSettings?.allowTreatmentPlan ?? true);
+  const [aiAllowEvolutionAssistant, setAiAllowEvolutionAssistant] = useState(clinic.settings?.aiSettings?.allowEvolutionAssistant ?? true);
+  const [aiAllowCfpDocuments, setAiAllowCfpDocuments] = useState(clinic.settings?.aiSettings?.allowCfpDocuments ?? true);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -83,6 +91,13 @@ export default function ClinicTeamModal({
     setAllowSetPrice(clinic.settings?.allowPsychologistSetPrice ?? true);
     setAllowSupervision(clinic.settings?.allowSupervision ?? true);
     setRooms(clinic.settings?.rooms || ['Sala 01 - Presencial', 'Sala 02 - Terapia Infantil', 'Sala 03 - Atendimento Online']);
+
+    setAiEnabled(clinic.settings?.aiSettings?.enabled ?? true);
+    setAiAllowTranscription(clinic.settings?.aiSettings?.allowTranscription ?? true);
+    setAiAllowConceptualization(clinic.settings?.aiSettings?.allowConceptualization ?? true);
+    setAiAllowTreatmentPlan(clinic.settings?.aiSettings?.allowTreatmentPlan ?? true);
+    setAiAllowEvolutionAssistant(clinic.settings?.aiSettings?.allowEvolutionAssistant ?? true);
+    setAiAllowCfpDocuments(clinic.settings?.aiSettings?.allowCfpDocuments ?? true);
 
     const unsubscribe = subscribeClinicMembers(clinic.id, (loadedMembers) => {
       setMembers(loadedMembers);
@@ -202,7 +217,15 @@ export default function ClinicTeamModal({
           allowPsychologistManageAgenda: allowManageAgenda,
           allowPsychologistSetPrice: allowSetPrice,
           allowSupervision: allowSupervision,
-          rooms
+          rooms,
+          aiSettings: {
+            enabled: aiEnabled,
+            allowTranscription: aiAllowTranscription,
+            allowConceptualization: aiAllowConceptualization,
+            allowTreatmentPlan: aiAllowTreatmentPlan,
+            allowEvolutionAssistant: aiAllowEvolutionAssistant,
+            allowCfpDocuments: aiAllowCfpDocuments
+          }
         }
       };
 
@@ -739,6 +762,118 @@ export default function ClinicTeamModal({
                     </span>
                   ))}
                 </div>
+              </div>
+
+              {/* Controle e Permissões de Inteligência Artificial */}
+              <div className="p-5 rounded-2xl bg-card border border-border-ui space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-border-ui">
+                  <div className="flex items-center gap-2 font-semibold text-base">
+                    <Sparkles className="w-5 h-5 text-primary" />
+                    <span>Permissões de Inteligência Artificial (IA)</span>
+                  </div>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-primary/10 text-primary border border-primary/20">
+                    Controle da Clínica
+                  </span>
+                </div>
+
+                <p className="text-xs text-text-muted">
+                  Defina se a sua equipe de psicólogos pode utilizar Inteligência Artificial e escolha exatamente quais módulos de IA estão liberados para uso.
+                </p>
+
+                {/* Chave Mestra */}
+                <label className="p-3.5 rounded-xl bg-surface-muted/70 border border-border-ui flex items-center justify-between cursor-pointer gap-4">
+                  <div>
+                    <div className="font-bold text-sm text-text-main flex items-center gap-2">
+                      <span>Habilitar IA para Psicólogos da Equipe</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold ${aiEnabled ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                        {aiEnabled ? 'Ativada' : 'Desativada'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-text-muted mt-0.5">
+                      Chave geral. Se desmarcada, todas as funções de IA serão bloqueadas para psicólogos afiliados.
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={aiEnabled}
+                    onChange={(e) => setAiEnabled(e.target.checked)}
+                    className="w-5 h-5 accent-primary rounded cursor-pointer shrink-0"
+                  />
+                </label>
+
+                {/* Switches Granulares (quando aiEnabled = true) */}
+                {aiEnabled && (
+                  <div className="pt-2 pl-2 space-y-3 border-l-2 border-primary/20 ml-2">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted block">
+                      Recursos Específicos de IA Permitidos:
+                    </span>
+
+                    <label className="flex items-center justify-between cursor-pointer gap-3 text-xs">
+                      <div>
+                        <span className="font-semibold text-text-main block">1. Transcrição de Áudio & Google Meet</span>
+                        <span className="text-[11px] text-text-muted">Permite gravação/transcrição de consultas e importação da extensão do Meet.</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={aiAllowTranscription}
+                        onChange={(e) => setAiAllowTranscription(e.target.checked)}
+                        className="w-4 h-4 accent-primary rounded cursor-pointer shrink-0"
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-between cursor-pointer gap-3 text-xs">
+                      <div>
+                        <span className="font-semibold text-text-main block">2. Conceitualização Cognitiva & Abordagens Teóricas</span>
+                        <span className="text-[11px] text-text-muted">Permite formular hipóteses em TCC, Psicanálise, Gestalt, ACT e Humanista com IA.</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={aiAllowConceptualization}
+                        onChange={(e) => setAiAllowConceptualization(e.target.checked)}
+                        className="w-4 h-4 accent-primary rounded cursor-pointer shrink-0"
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-between cursor-pointer gap-3 text-xs">
+                      <div>
+                        <span className="font-semibold text-text-main block">3. Planejamento do Plano de Tratamento & Próxima Sessão</span>
+                        <span className="text-[11px] text-text-muted">Permite que a IA proponha metas em fases terapêuticas e roteiros de consulta.</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={aiAllowTreatmentPlan}
+                        onChange={(e) => setAiAllowTreatmentPlan(e.target.checked)}
+                        className="w-4 h-4 accent-primary rounded cursor-pointer shrink-0"
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-between cursor-pointer gap-3 text-xs">
+                      <div>
+                        <span className="font-semibold text-text-main block">4. Assistente de Evoluções Clínicas & Smart Notes</span>
+                        <span className="text-[11px] text-text-muted">Permite gerar rascunhos de evolução clínica e identificar padrões terapêuticos.</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={aiAllowEvolutionAssistant}
+                        onChange={(e) => setAiAllowEvolutionAssistant(e.target.checked)}
+                        className="w-4 h-4 accent-primary rounded cursor-pointer shrink-0"
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-between cursor-pointer gap-3 text-xs">
+                      <div>
+                        <span className="font-semibold text-text-main block">5. Emissão de Documentos & Laudos CFP com IA</span>
+                        <span className="text-[11px] text-text-muted">Permite redigir prontuários formais e registros documentais segundo o CFP.</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={aiAllowCfpDocuments}
+                        onChange={(e) => setAiAllowCfpDocuments(e.target.checked)}
+                        className="w-4 h-4 accent-primary rounded cursor-pointer shrink-0"
+                      />
+                    </label>
+                  </div>
+                )}
               </div>
 
               {/* Botão Salvar Configurações */}
