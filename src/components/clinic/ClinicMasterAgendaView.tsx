@@ -113,15 +113,35 @@ export default function ClinicMasterAgendaView({
     return psychologists.filter(p => p.id === selectedPsychologistFilter || p.email === selectedPsychologistFilter);
   }, [psychologists, selectedPsychologistFilter, clinic.id]);
 
+  const canManageSession = (session: Session | null): boolean => {
+    if (!session || !currentMember) return false;
+    if (currentMember.role === 'clinic_admin' || currentMember.role === 'receptionist') return true;
+    if (currentMember.role === 'psychologist') {
+      const psyEmail = (currentMember.email || '').toLowerCase().trim();
+      const psyId = (currentMember.id || '').toLowerCase().trim();
+      const sessPsyId = (session.psychologistId || '').toLowerCase().trim();
+      const sessPsyName = (session.psychologistName || '').toLowerCase().trim();
+      const memberName = (currentMember.name || '').toLowerCase().trim();
+
+      return sessPsyId === psyEmail || sessPsyId === psyId || (memberName !== '' && sessPsyName === memberName);
+    }
+    return false;
+  };
+
   const handlePrevDay = () => setSelectedDate(prev => subDays(prev, 1));
   const handleNextDay = () => setSelectedDate(prev => addDays(prev, 1));
   const handleToday = () => setSelectedDate(new Date());
 
   const handleOpenCreateForSlot = (psyEmail: string, time: string) => {
-    const psy = psychologists.find(p => p.email === psyEmail || p.id === psyEmail);
+    let targetPsyEmail = psyEmail;
+    // Se o usuário for psicólogo, só pode agendar para si mesmo
+    if (currentMember?.role === 'psychologist' && currentMember.email) {
+      targetPsyEmail = currentMember.email;
+    }
+    const psy = psychologists.find(p => p.email === targetPsyEmail || p.id === targetPsyEmail);
     setFormData({
       patientName: '',
-      psychologistEmail: psyEmail,
+      psychologistEmail: targetPsyEmail,
       time: time,
       duration: '50min',
       room: activeRooms[0] || 'Sala 01 - Presencial',
@@ -437,58 +457,69 @@ export default function ClinicMasterAgendaView({
                   </div>
                 </div>
 
-                {/* Alterar Status Rápido */}
-                <div>
-                  <label className="block text-text-muted font-medium mb-1.5">Atualizar Status do Atendimento:</label>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-                    {(['Confirmada', 'Em Atendimento', 'Realizada', 'Desmarcou', 'Agendada'] as const).map((st) => (
+                {!canManageSession(selectedSessionForDetail) ? (
+                  <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs flex items-center gap-2.5">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span className="leading-tight">
+                      Sessão sob responsabilidade de <strong>{selectedSessionForDetail.psychologistName || 'outro profissional'}</strong>. Apenas o próprio psicólogo responsável ou a recepção podem alterar o status ou cancelar este atendimento.
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    {/* Alterar Status Rápido */}
+                    <div>
+                      <label className="block text-text-muted font-medium mb-1.5">Atualizar Status do Atendimento:</label>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                        {(['Confirmada', 'Em Atendimento', 'Realizada', 'Desmarcou', 'Agendada'] as const).map((st) => (
+                          <button
+                            key={st}
+                            onClick={() => {
+                              onUpdateSession({ ...selectedSessionForDetail, status: st });
+                              setSelectedSessionForDetail(prev => prev ? { ...prev, status: st } : null);
+                            }}
+                            className={`p-2 rounded-xl border text-[11px] font-bold transition-all ${
+                              selectedSessionForDetail.status === st
+                                ? 'bg-primary text-text-main border-primary'
+                                : 'bg-surface-muted border-border-ui text-text-muted hover:text-text-main'
+                            }`}
+                          >
+                            {st}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Marcar Pagamento */}
+                    <div className="pt-2 flex items-center justify-between">
                       <button
-                        key={st}
                         onClick={() => {
-                          onUpdateSession({ ...selectedSessionForDetail, status: st });
-                          setSelectedSessionForDetail(prev => prev ? { ...prev, status: st } : null);
+                          const newPaid = !selectedSessionForDetail.paid;
+                          onUpdateSession({ ...selectedSessionForDetail, paid: newPaid });
+                          setSelectedSessionForDetail(prev => prev ? { ...prev, paid: newPaid } : null);
                         }}
-                        className={`p-2 rounded-xl border text-[11px] font-bold transition-all ${
-                          selectedSessionForDetail.status === st
-                            ? 'bg-primary text-text-main border-primary'
-                            : 'bg-surface-muted border-border-ui text-text-muted hover:text-text-main'
+                        className={`px-3 py-2 rounded-xl border text-xs font-bold transition-all ${
+                          selectedSessionForDetail.paid
+                            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                            : 'bg-amber-500/10 border-amber-500/20 text-amber-400'
                         }`}
                       >
-                        {st}
+                        {selectedSessionForDetail.paid ? '✓ Pagamento Registrado' : 'Marcar como Pago'}
                       </button>
-                    ))}
-                  </div>
-                </div>
 
-                {/* Marcar Pagamento */}
-                <div className="pt-2 flex items-center justify-between">
-                  <button
-                    onClick={() => {
-                      const newPaid = !selectedSessionForDetail.paid;
-                      onUpdateSession({ ...selectedSessionForDetail, paid: newPaid });
-                      setSelectedSessionForDetail(prev => prev ? { ...prev, paid: newPaid } : null);
-                    }}
-                    className={`px-3 py-2 rounded-xl border text-xs font-bold transition-all ${
-                      selectedSessionForDetail.paid
-                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
-                        : 'bg-amber-500/10 border-amber-500/20 text-amber-400'
-                    }`}
-                  >
-                    {selectedSessionForDetail.paid ? '✓ Pagamento Registrado' : 'Marcar como Pago'}
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      if (confirm('Deseja realmente excluir este agendamento da clínica?')) {
-                        onDeleteSession(selectedSessionForDetail.id);
-                        setSelectedSessionForDetail(null);
-                      }
-                    }}
-                    className="px-3 py-2 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 text-xs font-bold hover:bg-red-500/20 transition-all"
-                  >
-                    Excluir
-                  </button>
-                </div>
+                      <button
+                        onClick={() => {
+                          if (confirm('Deseja realmente excluir este agendamento da clínica?')) {
+                            onDeleteSession(selectedSessionForDetail.id);
+                            setSelectedSessionForDetail(null);
+                          }
+                        }}
+                        className="px-3 py-2 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 text-xs font-bold hover:bg-red-500/20 transition-all"
+                      >
+                        Excluir
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             </motion.div>
           </div>
@@ -541,8 +572,9 @@ export default function ClinicMasterAgendaView({
                     <label className="block text-text-muted font-medium mb-1">Psicólogo(a) *</label>
                     <select
                       value={formData.psychologistEmail}
+                      disabled={currentMember?.role === 'psychologist'}
                       onChange={(e) => setFormData({ ...formData, psychologistEmail: e.target.value })}
-                      className="w-full px-3 py-2.5 rounded-xl bg-surface-muted border border-border-ui focus:border-primary text-sm focus:outline-none"
+                      className="w-full px-3 py-2.5 rounded-xl bg-surface-muted border border-border-ui focus:border-primary text-sm focus:outline-none disabled:opacity-80 disabled:cursor-not-allowed"
                     >
                       {psychologists.map((p) => (
                         <option key={p.id} value={p.email}>{p.name || p.email}</option>

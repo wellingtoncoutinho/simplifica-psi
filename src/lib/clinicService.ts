@@ -45,6 +45,7 @@ export const DEFAULT_DEMO_MEMBERS: ClinicMember[] = [
     crp: '06/142981',
     phone: '(11) 98888-1111',
     supervisorId: 'marcos.supervisao@reinventar.com',
+    commissionRate: 60,
     joinedAt: '2026-01-10T00:00:00.000Z'
   },
   {
@@ -56,6 +57,7 @@ export const DEFAULT_DEMO_MEMBERS: ClinicMember[] = [
     clinicId: 'reinventar',
     crp: '06/189234',
     phone: '(11) 97777-2222',
+    commissionRate: 50,
     joinedAt: '2026-01-15T00:00:00.000Z'
   },
   {
@@ -100,6 +102,7 @@ export const DEMO_PILOT_CLINIC: Clinic = {
     allowPsychologistSetPrice: true,
     allowSupervision: true,
     defaultSessionDuration: 50,
+    defaultCommissionRate: 60,
     rooms: ['Sala 01 - Presencial', 'Sala 02 - Terapia Infantil', 'Sala 03 - Atendimento Online']
   },
   createdAt: new Date().toISOString()
@@ -258,33 +261,137 @@ export function detectCurrentClinicSlug(): string | null {
   return null;
 }
 
+function adjustHexBrightness(hex: string, percent: number): string {
+  try {
+    const cleanHex = hex.replace('#', '').trim();
+    if (cleanHex.length !== 6 && cleanHex.length !== 3) return hex;
+    const fullHex = cleanHex.length === 3 
+      ? cleanHex.split('').map(c => c + c).join('') 
+      : cleanHex;
+    const num = parseInt(fullHex, 16);
+    let r = (num >> 16) + Math.round(255 * (percent / 100));
+    let g = ((num >> 8) & 0x00FF) + Math.round(255 * (percent / 100));
+    let b = (num & 0x0000FF) + Math.round(255 * (percent / 100));
+    r = Math.min(255, Math.max(0, r));
+    g = Math.min(255, Math.max(0, g));
+    b = Math.min(255, Math.max(0, b));
+    return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+  } catch (e) {
+    return hex;
+  }
+}
+
 /**
- * Aplica as variáveis CSS dinamicamente para colorir a plataforma com as cores da clínica
+ * Aplica as variáveis CSS dinamicamente para colorir a plataforma com as cores da clínica,
+ * injetando tags de estilo com !important para garantir sobreposição no Tailwind e body.light.
  */
 export function applyClinicTheme(theme?: ClinicTheme) {
   if (typeof document === 'undefined') return;
 
-  const root = document.documentElement;
+  const styleId = 'simplepsi-clinic-theme-override';
+  let styleEl = document.getElementById(styleId) as HTMLStyleElement | null;
 
   if (!theme || !theme.primaryColor) {
-    // Restaura as cores originais padrão
-    root.style.removeProperty('--color-primary');
-    root.style.removeProperty('--color-primary-dark');
-    root.style.removeProperty('--color-secondary');
-    root.style.removeProperty('--color-accent');
+    if (styleEl) styleEl.remove();
+    document.documentElement.style.removeProperty('--color-primary');
+    document.documentElement.style.removeProperty('--color-primary-dark');
+    document.documentElement.style.removeProperty('--color-secondary');
+    document.documentElement.style.removeProperty('--color-accent');
+    document.body.style.removeProperty('--color-primary');
+    document.body.style.removeProperty('--color-primary-dark');
+    document.body.style.removeProperty('--color-secondary');
+    document.body.style.removeProperty('--color-accent');
     return;
   }
 
-  // Aplica a cor primária da clínica
-  root.style.setProperty('--color-primary', theme.primaryColor);
-  
-  // Se tiver cor secundária ou acento, aplica também
-  if (theme.secondaryColor) {
-    root.style.setProperty('--color-secondary', theme.secondaryColor);
+  const primary = theme.primaryColor;
+  const primaryDark = theme.accentColor || adjustHexBrightness(primary, -15);
+  const secondary = theme.secondaryColor || primary;
+  const accent = theme.accentColor || secondary;
+
+  if (!styleEl) {
+    styleEl = document.createElement('style');
+    styleEl.id = styleId;
+    document.head.appendChild(styleEl);
   }
-  if (theme.accentColor) {
-    root.style.setProperty('--color-accent', theme.accentColor);
+
+  // Injeção de estilo com alta especificidade para Tailwind e temas claro/escuro
+  styleEl.innerHTML = `
+    :root, body, body.light, body.dark {
+      --color-primary: ${primary} !important;
+      --color-primary-dark: ${primaryDark} !important;
+      --color-secondary: ${secondary} !important;
+      --color-accent: ${accent} !important;
+    }
+    .bg-primary { background-color: ${primary} !important; }
+    .text-primary { color: ${primary} !important; }
+    .border-primary { border-color: ${primary} !important; }
+    .bg-secondary { background-color: ${secondary} !important; }
+    .text-secondary { color: ${secondary} !important; }
+    .border-secondary { border-color: ${secondary} !important; }
+  `;
+
+  document.documentElement.style.setProperty('--color-primary', primary);
+  document.documentElement.style.setProperty('--color-primary-dark', primaryDark);
+  document.documentElement.style.setProperty('--color-secondary', secondary);
+  document.documentElement.style.setProperty('--color-accent', accent);
+
+  document.body.style.setProperty('--color-primary', primary);
+  document.body.style.setProperty('--color-primary-dark', primaryDark);
+  document.body.style.setProperty('--color-secondary', secondary);
+  document.body.style.setProperty('--color-accent', accent);
+}
+
+/**
+ * Carrega a lista de sessões da clínica com persistência no LocalStorage
+ */
+export function getClinicSessions(clinicId: string, targetDateStr?: string): Session[] {
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem(`simplepsi_clinic_sessions_${clinicId}`);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
   }
+  const defaults = getDemoClinicSessions(targetDateStr);
+  saveClinicSessions(clinicId, defaults);
+  return defaults;
+}
+
+/**
+ * Salva as sessões da clínica no LocalStorage
+ */
+export function saveClinicSessions(clinicId: string, sessions: Session[]): void {
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(`simplepsi_clinic_sessions_${clinicId}`, JSON.stringify(sessions));
+    } catch (e) {}
+  }
+}
+
+/**
+ * Adiciona ou atualiza uma sessão na agenda da clínica e persiste localmente
+ */
+export function addOrUpdateClinicSession(clinicId: string, session: Session): Session[] {
+  const current = getClinicSessions(clinicId);
+  const exists = current.some(s => s.id === session.id);
+  const updated = exists 
+    ? current.map(s => s.id === session.id ? session : s)
+    : [session, ...current];
+  saveClinicSessions(clinicId, updated);
+  return updated;
+}
+
+/**
+ * Remove uma sessão da agenda da clínica e persiste localmente
+ */
+export function deleteClinicSession(clinicId: string, sessionId: string): Session[] {
+  const current = getClinicSessions(clinicId);
+  const updated = current.filter(s => s.id !== sessionId);
+  saveClinicSessions(clinicId, updated);
+  return updated;
 }
 
 /**

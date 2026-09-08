@@ -145,6 +145,10 @@ export default function ClinicReceptionCrmView({
   const [formReceiptNumber, setFormReceiptNumber] = useState('');
   const [formNotes, setFormNotes] = useState('');
 
+  // Drag and drop states
+  const [draggedLeadId, setDraggedLeadId] = useState<string | null>(null);
+  const [dragOverStage, setDragOverStage] = useState<ClinicCrmStage | null>(null);
+
   const psychologists = useMemo(() => {
     return members.filter(m => m.role === 'psychologist');
   }, [members]);
@@ -284,6 +288,26 @@ export default function ClinicReceptionCrmView({
     }
 
     const updated = updateClinicCrmLeadStage(clinic.id, leadId, nextStage, extraData);
+    setLeads(updated);
+  };
+
+  // Arrastar e soltar (Drag and drop) direto para a coluna destino
+  const handleDropLeadToStage = (leadId: string, targetStage: ClinicCrmStage) => {
+    const lead = leads.find(l => l.id === leadId);
+    if (!lead || lead.stage === targetStage) return;
+
+    let extraData: Partial<ClinicCrmLead> = {};
+    if (targetStage === 'paid') {
+      extraData.paymentStatus = 'paid';
+    } else if (targetStage === 'receipt_issued') {
+      extraData.paymentStatus = 'paid';
+      extraData.receiptIssued = true;
+      if (!lead.receiptNumber) {
+        extraData.receiptNumber = `REC-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
+      }
+    }
+
+    const updated = updateClinicCrmLeadStage(clinic.id, leadId, targetStage, extraData);
     setLeads(updated);
   };
 
@@ -455,7 +479,27 @@ export default function ClinicReceptionCrmView({
             return (
               <div 
                 key={stage.id} 
-                className={`rounded-2xl border ${stage.colorBorder} ${stage.colorBg} flex flex-col min-h-[500px] overflow-hidden`}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dragOverStage !== stage.id) setDragOverStage(stage.id);
+                }}
+                onDragLeave={(e) => {
+                  if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                  setDragOverStage(null);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOverStage(null);
+                  const leadId = e.dataTransfer.getData('text/plain') || draggedLeadId;
+                  setDraggedLeadId(null);
+                  if (leadId) {
+                    handleDropLeadToStage(leadId, stage.id);
+                  }
+                }}
+                className={`rounded-2xl border transition-all duration-200 ${stage.colorBorder} ${stage.colorBg} flex flex-col min-h-[500px] overflow-hidden ${
+                  dragOverStage === stage.id ? 'ring-2 ring-primary ring-offset-2 ring-offset-background scale-[1.01] shadow-xl' : ''
+                }`}
               >
                 {/* Cabeçalho da Coluna */}
                 <div className="p-3.5 border-b border-border-ui/60 bg-card/70 flex items-center justify-between">
@@ -477,14 +521,26 @@ export default function ClinicReceptionCrmView({
                 <div className="p-2.5 flex-1 space-y-2.5 overflow-y-auto max-h-[620px]">
                   {stageLeads.length === 0 ? (
                     <div className="p-4 text-center text-[11px] text-text-muted border border-dashed border-border-ui/60 rounded-xl my-2">
-                      Nenhum paciente nesta etapa
+                      Nenhum paciente nesta etapa (arraste aqui)
                     </div>
                   ) : (
                     stageLeads.map((lead) => {
                       return (
                         <div
                           key={lead.id}
-                          className="p-3.5 rounded-xl bg-card border border-border-ui shadow-sm hover:shadow-md hover:border-primary/40 transition-all space-y-2 text-xs"
+                          draggable={true}
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData('text/plain', lead.id);
+                            e.dataTransfer.effectAllowed = 'move';
+                            setDraggedLeadId(lead.id);
+                          }}
+                          onDragEnd={() => {
+                            setDraggedLeadId(null);
+                            setDragOverStage(null);
+                          }}
+                          className={`p-3.5 rounded-xl bg-card border border-border-ui shadow-sm hover:shadow-md hover:border-primary/40 transition-all space-y-2 text-xs cursor-grab active:cursor-grabbing select-none ${
+                            draggedLeadId === lead.id ? 'opacity-40 border-dashed border-primary scale-95' : ''
+                          }`}
                         >
                           <div className="flex items-start justify-between gap-1.5">
                             <h4 className="font-bold text-text-main text-xs">{lead.name}</h4>

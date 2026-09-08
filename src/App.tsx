@@ -205,7 +205,8 @@ import {
   Upload,
   Building,
   GraduationCap,
-  Phone
+  Phone,
+  Lock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency, getWhatsAppLink } from './lib/utils';
@@ -220,6 +221,7 @@ import ClinicDashboardView from './components/clinic/ClinicDashboardView';
 import ClinicMasterAgendaView from './components/clinic/ClinicMasterAgendaView';
 import ClinicSupervisionView from './components/clinic/ClinicSupervisionView';
 import ClinicReceptionCrmView from './components/clinic/ClinicReceptionCrmView';
+import ClinicFinanceView from './components/clinic/ClinicFinanceView';
 import ClinicLoginPage from './components/clinic/ClinicLoginPage';
 import { GoogleMeetExtensionModal, CHROME_EXTENSION_STORE_URL, TCLE_TEMPLATE_TEXT } from './components/GoogleMeetExtensionModal';
 const DataMigrationModal = React.lazy(() => 
@@ -244,6 +246,10 @@ import {
   getSimulatedClinicMember,
   setSimulatedClinicMember,
   getDemoClinicSessions,
+  getClinicSessions,
+  saveClinicSessions,
+  addOrUpdateClinicSession,
+  deleteClinicSession,
   DEFAULT_DEMO_MEMBERS,
   subscribeClinicMembers
 } from './lib/clinicService';
@@ -562,6 +568,9 @@ export default function App() {
 
   useEffect(() => {
     if (!currentClinic?.id) return;
+    const loadedSessions = getClinicSessions(currentClinic.id);
+    setClinicSessions(loadedSessions);
+
     const unsub = subscribeClinicMembers(currentClinic.id, (loaded) => {
       setClinicMembers(loaded);
     });
@@ -1244,6 +1253,14 @@ Como posso te ajudar hoje?`
           smartNotes: { padroes: "", progresso: "", sugestao: "", topicos: [] }
         }
       };
+
+      if (currentClinic) {
+        const assignedPsy = clinicMembers.find(m => m.id === data.psychologistId || m.email === data.psychologistId) || currentClinicMember;
+        patientData.clinicId = currentClinic.id;
+        patientData.psychologistId = data.psychologistId || currentClinicMember?.email || '';
+        patientData.psychologistName = assignedPsy?.name || data.psychologistId || '';
+      }
+
       const patientRef = await addDoc(collection(db, 'patients'), patientData);
       const newPatientId = patientRef.id;
 
@@ -2163,6 +2180,32 @@ Como posso te ajudar hoje?`
       const ref = await addDoc(collection(db, 'sessions'), sessionData);
       createdIds.push(ref.id);
 
+      // Sincronização com a Agenda Geral da Clínica caso esteja no modo Clínica
+      if (currentClinic) {
+        const psyEmail = currentClinicMember?.email || user.email || '';
+        const psyName = currentClinicMember?.name || 'Psicólogo(a)';
+        const pat = patients.find(p => p.id === data.patientId);
+        const clinicSess: Session = {
+          id: ref.id,
+          clinicId: currentClinic.id,
+          patientId: data.patientId || '',
+          patientName: pat?.name || data.triageName || 'Paciente',
+          psychologistId: psyEmail,
+          psychologistName: psyName,
+          date: data.date,
+          time: data.time,
+          duration: data.duration || '50min',
+          type: data.type || 'Presencial',
+          room: currentClinic.settings?.rooms?.[0] || 'Sala 01 - Presencial',
+          status: data.status === 'Recorrente' ? 'Agendada' : (data.status || 'Agendada'),
+          amount: parseFloat(data.amount) || 0,
+          paid: data.paid || false,
+          notes: ''
+        };
+        const updatedClinicSessions = addOrUpdateClinicSession(currentClinic.id, clinicSess);
+        setClinicSessions(updatedClinicSessions);
+      }
+
       // Google Agenda Sync
       if (sessionData.status !== 'Cancelada') {
         await syncSessionToGoogleCalendar(sessionData, ref.id);
@@ -2371,6 +2414,20 @@ Como posso te ajudar hoje?`
       }
       await updateDoc(sessionRef, updatedData);
 
+      // Sincronizar com clinicSessions se no modo clínica
+      if (currentClinic) {
+        const existingClinicSess = clinicSessions.find(s => s.id === id);
+        if (existingClinicSess) {
+          const updatedClinicSess: Session = {
+            ...existingClinicSess,
+            ...data,
+            id
+          };
+          const updatedList = addOrUpdateClinicSession(currentClinic.id, updatedClinicSess);
+          setClinicSessions(updatedList);
+        }
+      }
+
       // Google Agenda Sync
       if (data.googleEventId) {
         if (data.status === 'Cancelada') {
@@ -2387,6 +2444,11 @@ Como posso te ajudar hoje?`
   const handleDeleteSession = async (id: string) => {
     if (!user) return;
     try {
+      if (currentClinic) {
+        const updatedList = deleteClinicSession(currentClinic.id, id);
+        setClinicSessions(updatedList);
+      }
+
       // Se a sessão de fato existe no banco (mesmo com ID iniciando em 'virtual-'), vamos excluí-la
       const sessionExists = sessions.some(s => s.id === id);
       if (sessionExists) {
@@ -2537,6 +2599,26 @@ Como posso te ajudar hoje?`
   const isClinicAdmin = useMemo(() => {
     return clinicRole === 'clinic_admin';
   }, [clinicRole]);
+
+  // Sincroniza sessões do psicólogo: une as sessões pessoais com as sessões da clínica atribuídas a ele
+  const displayedPersonalSessions = useMemo(() => {
+    if (!currentClinic || clinicRole !== 'psychologist') return sessions;
+
+    const myEmail = (currentClinicMember?.email || '').toLowerCase().trim();
+    const myId = (currentClinicMember?.id || '').toLowerCase().trim();
+    const myName = (currentClinicMember?.name || '').toLowerCase().trim();
+
+    const myClinicSessions = clinicSessions.filter(cs => {
+      const pId = (cs.psychologistId || '').toLowerCase().trim();
+      const pName = (cs.psychologistName || '').toLowerCase().trim();
+      return pId === myEmail || pId === myId || (myName !== '' && pName === myName);
+    });
+
+    const sessionMap = new Map<string, Session>();
+    sessions.forEach(s => sessionMap.set(s.id, s));
+    myClinicSessions.forEach(cs => sessionMap.set(cs.id, cs));
+    return Array.from(sessionMap.values());
+  }, [sessions, clinicSessions, currentClinic, clinicRole, currentClinicMember]);
 
   const menuItems = useMemo(() => {
     if (currentClinic) {
@@ -3156,6 +3238,10 @@ Como posso te ajudar hoje?`
                 onGoToAgenda={() => setActiveTab('agenda')}
                 isMigrationAllowed={isMigrationAllowed}
                 onOpenMigrationModal={() => setShowMigrationModal(true)}
+                currentClinic={currentClinic}
+                clinicMembers={clinicMembers}
+                clinicRole={clinicRole}
+                currentClinicMember={currentClinicMember}
               />
             )}
             {activeTab === 'pacientes' && selectedPatient && (
@@ -3174,6 +3260,8 @@ Como posso te ajudar hoje?`
                 profileSettings={profileSettings}
                 hasAcceptedExtensionTerms={hasAcceptedExtensionTerms}
                 onOpenExtensionModal={() => setShowExtensionModal(true)}
+                clinicRole={clinicRole}
+                currentClinic={currentClinic}
               />
             )}
             
@@ -3201,10 +3289,27 @@ Como posso te ajudar hoje?`
                 profileSettings={profileSettings}
                 hasAcceptedExtensionTerms={hasAcceptedExtensionTerms}
                 onOpenExtensionModal={() => setShowExtensionModal(true)}
+                clinicRole={clinicRole}
+                currentClinic={currentClinic}
               />
             )}
 
-            {activeTab === 'financeiro' && (
+            {activeTab === 'financeiro' && currentClinic ? (
+              <ClinicFinanceView 
+                key="clinic-finance"
+                clinic={currentClinic}
+                members={clinicMembers}
+                sessions={clinicSessions}
+                currentMember={currentClinicMember}
+                onUpdateSession={(updated) => {
+                  setClinicSessions(addOrUpdateClinicSession(currentClinic.id, updated));
+                }}
+                onUpdateClinic={(updatedClinic) => {
+                  setCurrentClinic(updatedClinic);
+                  applyClinicTheme(updatedClinic.theme);
+                }}
+              />
+            ) : activeTab === 'financeiro' && (
               <FinanceView 
                 key="finance" 
                 sessions={sessions} 
@@ -3226,13 +3331,13 @@ Como posso te ajudar hoje?`
                 sessions={clinicSessions}
                 patients={patients}
                 onAddSession={(newSession) => {
-                  setClinicSessions(prev => [newSession as Session, ...prev]);
+                  setClinicSessions(addOrUpdateClinicSession(currentClinic.id, newSession as Session));
                 }}
                 onUpdateSession={(updated) => {
-                  setClinicSessions(prev => prev.map(s => s.id === updated.id ? updated : s));
+                  setClinicSessions(addOrUpdateClinicSession(currentClinic.id, updated));
                 }}
                 onDeleteSession={(sId) => {
-                  setClinicSessions(prev => prev.filter(s => s.id !== sId));
+                  setClinicSessions(deleteClinicSession(currentClinic.id, sId));
                 }}
                 currentMember={currentClinicMember}
               />
@@ -3241,7 +3346,7 @@ Como posso te ajudar hoje?`
             {activeTab === 'agenda' && (!currentClinic || (clinicRole !== 'clinic_admin' && clinicRole !== 'receptionist' && clinicRole !== 'supervisor')) && (
               <CalendarView 
                 key="calendar" 
-                sessions={sessions} 
+                sessions={displayedPersonalSessions} 
                 patients={patients} 
                 onAddSession={handleAddSession}
                 onDeleteSession={handleDeleteSession}
@@ -3383,6 +3488,10 @@ Como posso te ajudar hoje?`
               initialName={triageInitialName}
               initialDay={triageInitialDay}
               initialTime={triageInitialTime}
+              currentClinic={currentClinic}
+              clinicMembers={clinicMembers}
+              clinicRole={clinicRole}
+              currentClinicMember={currentClinicMember}
               onClose={() => { 
                 setIsAddingPatient(false); 
                 setTriageInitialName(''); 
@@ -4562,13 +4671,37 @@ function DashboardView({
   );
 }
 
-function AddPatientModal({ onClose, onSave, initialName = '', initialDay = 'Segunda-feira', initialTime = '' }: { 
+function AddPatientModal({ 
+  onClose, 
+  onSave, 
+  initialName = '', 
+  initialDay = 'Segunda-feira', 
+  initialTime = '',
+  currentClinic,
+  clinicMembers = [],
+  clinicRole,
+  currentClinicMember
+}: { 
   onClose: () => void, 
   onSave: (data: any) => void, 
   initialName?: string,
   initialDay?: string,
-  initialTime?: string
+  initialTime?: string,
+  currentClinic?: Clinic | null,
+  clinicMembers?: ClinicMember[],
+  clinicRole?: ClinicUserRole | null,
+  currentClinicMember?: ClinicMember | null
 }) {
+  const defaultPsy = clinicRole === 'psychologist' && currentClinicMember 
+    ? (currentClinicMember.email || currentClinicMember.id) 
+    : (clinicMembers.find(m => m.role === 'psychologist')?.email || '');
+
+  const isPriceLocked = Boolean(
+    currentClinic && 
+    clinicRole === 'psychologist' && 
+    currentClinic.settings?.allowPsychologistSetPrice === false
+  );
+
   const [formData, setFormData] = useState({
     name: initialName,
     gender: '',
@@ -4584,11 +4717,12 @@ function AddPatientModal({ onClose, onSave, initialName = '', initialDay = 'Segu
     sessions: '' as any,
     sessionDay: initialDay || 'Segunda-feira',
     nextSessionTime: initialTime,
-    amount: '',
+    amount: '180',
     recurrence: 'Semanal',
     modality: 'Online',
     meetingLink: '',
-    firstSessionDate: new Date().toISOString().split('T')[0]
+    firstSessionDate: new Date().toISOString().split('T')[0],
+    psychologistId: defaultPsy
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -4623,6 +4757,23 @@ function AddPatientModal({ onClose, onSave, initialName = '', initialDay = 'Segu
               <div className="space-y-5">
                 <p className="font-bold text-xs text-primary uppercase tracking-widest pl-1">Informações Básicas</p>
                 <div className="space-y-4">
+                  {currentClinic && (
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                        Psicólogo(a) Responsável na Clínica *
+                      </label>
+                      <select
+                        value={formData.psychologistId}
+                        disabled={clinicRole === 'psychologist'}
+                        onChange={(e) => setFormData({ ...formData, psychologistId: e.target.value })}
+                        className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary appearance-none disabled:opacity-75 disabled:cursor-not-allowed"
+                      >
+                        {clinicMembers.filter(m => m.role === 'psychologist').map((p) => (
+                          <option key={p.id} value={p.email}>{p.name || p.email}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Nome Completo</label>
                     <input required placeholder="Ex: João Silva" value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
@@ -4745,8 +4896,22 @@ function AddPatientModal({ onClose, onSave, initialName = '', initialDay = 'Segu
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Valor da Sessão/Plano (R$)</label>
-                    <input type="number" placeholder="Ex: 250" value={formData.amount} onChange={(e) => setFormData({...formData, amount: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Valor da Sessão/Plano (R$)</label>
+                      {isPriceLocked && (
+                        <span className="text-[9px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 flex items-center gap-1">
+                          <Lock size={10} /> Definido pela Clínica
+                        </span>
+                      )}
+                    </div>
+                    <input 
+                      type="number" 
+                      placeholder="Ex: 180" 
+                      disabled={isPriceLocked}
+                      value={formData.amount} 
+                      onChange={(e) => setFormData({...formData, amount: e.target.value})} 
+                      className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary disabled:opacity-70 disabled:cursor-not-allowed" 
+                    />
                   </div>
 
                   <div className="space-y-2">
@@ -4886,7 +5051,11 @@ function PatientsListView({
   onUpdatePatient,
   onGoToAgenda,
   isMigrationAllowed = false,
-  onOpenMigrationModal
+  onOpenMigrationModal,
+  currentClinic,
+  clinicMembers = [],
+  clinicRole,
+  currentClinicMember
 }: { 
   onSelect: (id: string) => void, 
   filteredPatients: any[], 
@@ -4895,12 +5064,19 @@ function PatientsListView({
   onUpdatePatient: (patient: any) => void,
   onGoToAgenda: () => void,
   isMigrationAllowed?: boolean,
-  onOpenMigrationModal?: () => void
+  onOpenMigrationModal?: () => void,
+  currentClinic?: Clinic | null,
+  clinicMembers?: ClinicMember[],
+  clinicRole?: ClinicUserRole | null,
+  currentClinicMember?: ClinicMember | null
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'ativos' | 'inativos'>('ativos');
   const [sortBy, setSortBy] = useState<'alfabetica' | 'recentes' | 'atividade'>('alfabetica');
   const [isSortDropdownOpen, setIsSortDropdownOpen] = useState(false);
+  const [selectedPsyFilter, setSelectedPsyFilter] = useState<string>(
+    clinicRole === 'psychologist' && currentClinicMember?.email ? currentClinicMember.email : 'all'
+  );
 
   // Close menus when clicking outside
   useEffect(() => {
@@ -4913,8 +5089,17 @@ function PatientsListView({
   }, []);
 
   const displayPatients = useMemo(() => {
-    const list = filteredPatients.filter(p => activeTab === 'ativos' ? p.status !== 'Inativo' : p.status === 'Inativo');
+    let list = filteredPatients.filter(p => activeTab === 'ativos' ? p.status !== 'Inativo' : p.status === 'Inativo');
     
+    if (currentClinic && selectedPsyFilter !== 'all') {
+      const filterLower = selectedPsyFilter.toLowerCase().trim();
+      list = list.filter(p => {
+        const pEmail = (p.psychologistId || '').toLowerCase().trim();
+        const pName = (p.psychologistName || '').toLowerCase().trim();
+        return pEmail === filterLower || pName.includes(filterLower);
+      });
+    }
+
     return [...list].sort((a, b) => {
       if (sortBy === 'alfabetica') {
         return a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' });
@@ -5020,10 +5205,29 @@ function PatientsListView({
                       <span>Última Atividade</span>
                       {sortBy === 'atividade' && <Check size={12} />}
                     </button>
-                  </motion.div>
+                    </motion.div>
                 )}
               </AnimatePresence>
             </div>
+
+            {currentClinic && (
+              <div className="flex items-center gap-1.5 bg-surface-muted px-3 py-1.5 rounded-full border border-white/5 shadow-sm">
+                <Users size={12} className="text-primary shrink-0" />
+                <span className="text-[10px] text-text-muted font-bold uppercase tracking-widest">Psi:</span>
+                <select
+                  value={selectedPsyFilter}
+                  onChange={(e) => setSelectedPsyFilter(e.target.value)}
+                  className="bg-transparent text-[10px] font-bold text-text-main outline-none cursor-pointer"
+                >
+                  <option value="all" className="bg-card text-text-main">Todos da Clínica</option>
+                  {clinicMembers.filter(m => m.role === 'psychologist').map(p => (
+                    <option key={p.id} value={p.email} className="bg-card text-text-main">
+                      {p.name || p.email}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
         </div>
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto">
@@ -5069,11 +5273,19 @@ function PatientsListView({
                 >
                   <td className="px-6 py-5">
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold">
+                      <div className="w-9 h-9 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold shrink-0">
                         {patient.name[0]}
                       </div>
                       <div>
-                        <p className="font-medium text-sm">{patient.name}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium text-sm">{patient.name}</p>
+                          {currentClinic && (patient.psychologistName || patient.psychologistId) && (
+                            <span className="px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 text-[10px] font-semibold flex items-center gap-1 shrink-0">
+                              <Users size={10} />
+                              {patient.psychologistName || patient.psychologistId}
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs text-text-muted">{patient.email}</p>
                       </div>
                     </div>
@@ -5185,7 +5397,15 @@ function PatientsListView({
                     {patient.name[0]}
                   </div>
                   <div>
-                    <p className="font-bold text-sm">{patient.name}</p>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <p className="font-bold text-sm">{patient.name}</p>
+                      {currentClinic && (patient.psychologistName || patient.psychologistId) && (
+                        <span className="px-1.5 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 text-[9px] font-semibold flex items-center gap-1">
+                          <Users size={9} />
+                          {patient.psychologistName || patient.psychologistId}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-text-muted truncate max-w-[150px]">{patient.email}</p>
                   </div>
                 </div>
@@ -5320,7 +5540,9 @@ function PatientDetailsView({
   currentUserEmail = '',
   defaultSubTab = 'perfil',
   hasAcceptedExtensionTerms = false,
-  onOpenExtensionModal
+  onOpenExtensionModal,
+  clinicRole,
+  currentClinic
 }: { 
   patientId: string, 
   onBack: () => void, 
@@ -5335,11 +5557,23 @@ function PatientDetailsView({
   currentUserEmail?: string,
   defaultSubTab?: 'perfil' | 'prontuario' | 'anamnese' | 'smartnotes' | 'biblioteca' | 'tratamento' | 'reembolso',
   hasAcceptedExtensionTerms?: boolean,
-  onOpenExtensionModal?: () => void
+  onOpenExtensionModal?: () => void,
+  clinicRole?: ClinicUserRole | null,
+  currentClinic?: Clinic | null
 }) {
   const patient = patients.find(p => p.id === patientId);
   const user = auth.currentUser;
-  const [activeSubTab, setActiveSubTab] = useState<'perfil' | 'prontuario' | 'anamnese' | 'smartnotes' | 'biblioteca' | 'tratamento' | 'reembolso'>(defaultSubTab);
+  
+  // Regra de Sigilo Ético (CFP / LGPD):
+  // Recepcionista, Gestor/Admin e Supervisor não têm acesso aos prontuários clínicos privados, apenas perfil e reembolso.
+  const isRestrictedRole = Boolean(currentClinic && clinicRole && clinicRole !== 'psychologist');
+
+  const [activeSubTab, setActiveSubTab] = useState<'perfil' | 'prontuario' | 'anamnese' | 'smartnotes' | 'biblioteca' | 'tratamento' | 'reembolso'>(() => {
+    if (isRestrictedRole) {
+      return defaultSubTab === 'reembolso' ? 'reembolso' : 'perfil';
+    }
+    return defaultSubTab;
+  });
   const [isAddingEvolution, setIsAddingEvolution] = useState(false);
   const [newEvolutionNote, setNewEvolutionNote] = useState("");
   const [isRecording, setIsRecording] = useState(false);
@@ -7240,7 +7474,18 @@ Relato:
         {/* Nav with overflow for mobile */}
         <div className="lg:col-span-3">
           <div className="flex flex-row overflow-x-auto pb-4 lg:flex-col lg:overflow-visible gap-2 no-scrollbar">
-            {[
+            {isRestrictedRole && (
+              <div className="p-3 mb-2 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-500 text-[11px] leading-relaxed flex items-start gap-2">
+                <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  <strong>Sigilo Profissional (CFP/LGPD):</strong> Prontuários e anotações clínicas são confidenciais e de acesso exclusivo do psicólogo assistente.
+                </span>
+              </div>
+            )}
+            {(isRestrictedRole ? [
+              { id: 'perfil', label: 'Dados do Paciente (Perfil)', icon: Users },
+              { id: 'reembolso', label: 'Recibos & Reembolso', icon: Receipt },
+            ] : [
               { id: 'perfil', label: 'Perfil', icon: Users },
               { id: 'prontuario', label: 'Evoluções', icon: FileText, badge: 'NOVO' },
               { 
@@ -7263,7 +7508,7 @@ Relato:
               },
               { id: 'smartnotes', label: 'Resumo', icon: BarChart3 },
               { id: 'reembolso', label: 'Reembolso', icon: Receipt },
-            ].map(item => (
+            ]).map(item => (
              <button
                 key={item.id}
                 onClick={() => setActiveSubTab(item.id as any)}
@@ -7288,6 +7533,29 @@ Relato:
         <div className="lg:col-span-9 space-y-6">
            <section className="glass-card rounded-[24px] sm:rounded-[32px] p-4 sm:p-8 min-h-[500px] sm:min-h-[600px] overflow-hidden">
               <AnimatePresence mode="wait">
+                {isRestrictedRole && activeSubTab !== 'perfil' && activeSubTab !== 'reembolso' && (
+                  <motion.div 
+                    key="restricted-notice"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="p-12 text-center space-y-4 max-w-md mx-auto my-auto"
+                  >
+                    <div className="w-16 h-16 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-500 flex items-center justify-center mx-auto">
+                      <ShieldCheck size={32} />
+                    </div>
+                    <h3 className="text-lg font-bold text-text-main">Acesso Clínico Restrito</h3>
+                    <p className="text-xs text-text-muted leading-relaxed">
+                      Em estrita conformidade com o Código de Ética Profissional do Psicólogo (Resolução CFP nº 01/2009) e a LGPD, o acesso a prontuários, evoluções clínicas, anamneses e anotações confidenciais é de acesso exclusivo do(a) psicólogo(a) responsável pelo paciente.
+                    </p>
+                    <button
+                      onClick={() => setActiveSubTab('perfil')}
+                      className="px-5 py-2.5 rounded-xl bg-primary text-text-main font-bold text-xs hover:opacity-90 transition-all shadow-md shadow-primary/20"
+                    >
+                      Voltar aos Dados do Paciente
+                    </button>
+                  </motion.div>
+                )}
                 {activeSubTab === 'perfil' && (
                   <motion.div 
                     key="perfil"

@@ -47,6 +47,9 @@ export interface Patient {
   contractSignedText?: string;
   contractManualOverride?: boolean;
   contractManualNotes?: string;
+  clinicId?: string;
+  psychologistId?: string;
+  psychologistName?: string;
   createdAt?: string;
   updatedAt?: string;
   clinicalData?: {
@@ -159,6 +162,8 @@ export interface Session {
   psychologistName?: string;
   room?: string;
   notes?: string;
+  clinicCommissionRate?: number;
+  clinicCommissionPaid?: boolean;
 }
 
 export interface Transaction {
@@ -351,6 +356,7 @@ export interface ClinicSettings {
   allowSupervision?: boolean;
   defaultSessionDuration?: number; // minutos
   rooms?: string[]; // Lista de salas disponíveis (ex: ["Sala 1 - Principal", "Sala 2 - Infantil"])
+  defaultCommissionRate?: number; // Porcentagem padrão de repasse ao psicólogo (ex: 60%)
 }
 
 export interface ClinicMember {
@@ -363,6 +369,7 @@ export interface ClinicMember {
   crp?: string;
   phone?: string;
   supervisorId?: string; // ID do supervisor responsável caso seja supervisionado
+  commissionRate?: number; // Taxa de repasse individual deste psicólogo (ex: 50% ou 70%). Se não definido, usa a padrão da clínica
   joinedAt?: string;
   invitedAt?: string;
 }
