@@ -146,8 +146,8 @@ export default function ClinicDashboardView({
           </div>
           <div>
             <div className="flex items-baseline gap-2">
-              <span className="text-2xl font-black text-text-main">{usedPsychologistSeats} / {maxPsychologistSeats}</span>
-              <span className="text-xs font-semibold text-emerald-400">
+              <span className={cn("text-2xl font-black text-text-main transition-all", isPrivacyMode && "privacy-blur-strong")}>{usedPsychologistSeats} / {maxPsychologistSeats}</span>
+              <span className={cn("text-xs font-semibold text-emerald-400 transition-all", isPrivacyMode && "privacy-blur")}>
                 ({availablePsychologistSeats} livres)
               </span>
             </div>
@@ -167,7 +167,7 @@ export default function ClinicDashboardView({
           </div>
           <div>
             <div className="flex items-baseline gap-2">
-              <span className="text-2xl font-black text-text-main">{todaySessions.length}</span>
+              <span className={cn("text-2xl font-black text-text-main transition-all", isPrivacyMode && "privacy-blur-strong")}>{todaySessions.length}</span>
               <span className="text-xs text-text-muted">sessões agendadas</span>
             </div>
             <p className="text-[11px] text-text-muted mt-1">
@@ -186,7 +186,7 @@ export default function ClinicDashboardView({
           </div>
           <div>
             <div className="flex items-baseline gap-2">
-              <span className="text-2xl font-black text-text-main">{occupiedRoomsToday} / {roomsCount}</span>
+              <span className={cn("text-2xl font-black text-text-main transition-all", isPrivacyMode && "privacy-blur-strong")}>{occupiedRoomsToday} / {roomsCount}</span>
               <span className="text-xs text-text-muted">salas ativas hoje</span>
             </div>
             <p className="text-[11px] text-text-muted mt-1">

@@ -661,6 +661,7 @@ Como posso te ajudar hoje?`
   const [showMigrationModal, setShowMigrationModal] = useState(false);
   const [hasAcceptedExtensionTerms, setHasAcceptedExtensionTerms] = useState(() => safeGetStorage("simplepsi_meet_extension_consent") === "true");
   const [isExtensionBannerDismissed, setIsExtensionBannerDismissed] = useState(() => safeGetStorage("simplepsi_meet_banner_dismissed") === "true");
+  const [isMigrationBannerDismissed, setIsMigrationBannerDismissed] = useState(() => safeGetStorage("simplepsi_migration_banner_dismissed") === "true");
 
   const isMigrationAllowed = useMemo(() => {
     const email = user?.email?.toLowerCase().trim();
@@ -3287,27 +3288,21 @@ Como posso te ajudar hoje?`
               </button>
             )}
 
-            {/* Botão Modo Privacidade / Foto (Instagram) */}
+            {/* Botão Modo Privacidade (Instagram) */}
             <button
               onClick={togglePrivacyMode}
               className={cn(
-                "p-2 rounded-xl transition-all shadow-sm flex items-center gap-1.5 cursor-pointer relative",
+                "p-2 rounded-xl transition-all shadow-sm flex items-center justify-center cursor-pointer relative",
                 isPrivacyMode 
                   ? "bg-purple-600 text-white shadow-purple-500/25 ring-2 ring-purple-500/40" 
                   : "bg-surface-muted text-text-muted hover:text-text-main hover:opacity-80"
               )}
-              title={isPrivacyMode ? "Desativar Modo Foto / Privacidade" : "Ativar Modo Foto / Insta (Ocultar dados confidenciais)"}
+              title={isPrivacyMode ? "Desativar Modo Privacidade" : "Ativar Modo Privacidade (Ocultar dados)"}
             >
               {isPrivacyMode ? (
-                <>
-                  <EyeOff size={18} className="lg:w-5 lg:h-5 text-white" />
-                  <span className="text-[11px] font-bold hidden md:inline px-1">Modo Foto</span>
-                </>
+                <EyeOff size={18} className="lg:w-5 lg:h-5 text-white" />
               ) : (
-                <>
-                  <Camera size={18} className="lg:w-5 lg:h-5" />
-                  <span className="text-[11px] font-medium hidden lg:inline">Modo Foto</span>
-                </>
+                <Eye size={18} className="lg:w-5 lg:h-5" />
               )}
             </button>
 
@@ -3397,6 +3392,11 @@ Como posso te ajudar hoje?`
                   safeSetStorage('simplepsi_meet_banner_dismissed', 'true');
                 }}
                 isMigrationAllowed={isMigrationAllowed}
+                isMigrationBannerDismissed={isMigrationBannerDismissed}
+                onDismissMigrationBanner={() => {
+                  setIsMigrationBannerDismissed(true);
+                  safeSetStorage('simplepsi_migration_banner_dismissed', 'true');
+                }}
                 onOpenMigrationModal={() => setShowMigrationModal(true)}
               />
             )}
@@ -3962,6 +3962,8 @@ function DashboardView({
   isExtensionBannerDismissed = false,
   onDismissExtensionBanner,
   isMigrationAllowed = false,
+  isMigrationBannerDismissed = false,
+  onDismissMigrationBanner,
   onOpenMigrationModal,
   isPrivacyMode = false,
   onTogglePrivacyMode
@@ -3983,6 +3985,8 @@ function DashboardView({
   isExtensionBannerDismissed?: boolean,
   onDismissExtensionBanner?: () => void,
   isMigrationAllowed?: boolean,
+  isMigrationBannerDismissed?: boolean,
+  onDismissMigrationBanner?: () => void,
   onOpenMigrationModal?: () => void,
   isPrivacyMode?: boolean,
   onTogglePrivacyMode?: () => void
@@ -3992,6 +3996,12 @@ function DashboardView({
   const [selectedDayPayments, setSelectedDayPayments] = useState<any[]>([]);
   const [selectedDayLabel, setSelectedDayLabel] = useState<string>('');
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+
+  useEffect(() => {
+    // Registra que as novidades já foram exibidas no dashboard para nunca mais reaparecerem em sessões futuras
+    safeSetStorage('simplepsi_meet_banner_dismissed', 'true');
+    safeSetStorage('simplepsi_migration_banner_dismissed', 'true');
+  }, []);
 
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(monthStart);
@@ -4297,118 +4307,60 @@ function DashboardView({
         <p className="text-[10px] text-text-muted mt-1 uppercase tracking-wider">Última atualização: {new Date().toLocaleTimeString()}</p>
       </div>
 
-      {/* Banner de Modo Foto & Privacidade Ativo */}
-      {isPrivacyMode && (
+      {/* Banner da Extensão do Google Meet */}
+      {!isExtensionBannerDismissed && (
         <motion.div 
-          initial={{ opacity: 0, y: -8 }}
+          initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-purple-600/10 border border-purple-500/25 rounded-2xl p-4 flex items-center justify-between gap-4 text-purple-300 shadow-sm"
+          className="bg-gradient-to-r from-primary/20 via-primary/10 to-surface-muted border border-primary/30 rounded-3xl p-5 sm:p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-5 relative shadow-lg shadow-primary/5 text-left"
         >
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center shrink-0 border border-purple-500/30">
-              <Camera size={20} />
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-primary text-white flex items-center justify-center shrink-0 shadow-md shadow-primary/25 mt-0.5">
+              <Video size={24} />
             </div>
-            <div>
-              <p className="text-xs sm:text-sm font-bold text-white flex items-center gap-2">
-                Modo Foto & Privacidade Ativo 📸
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] bg-primary text-white px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                  Novidade Oficial
+                </span>
+                <h4 className="text-sm sm:text-base font-bold text-text-main">
+                  Transcreva suas consultas online pelo Google Meet
+                </h4>
+              </div>
+              <p className="text-xs text-text-muted leading-relaxed max-w-2xl">
+                Instale nossa extensão oficial para o Google Chrome. Ela captura as falas com 100% de sigilo local e gera a evolução clínica na sua abordagem em 1 clique.
               </p>
-              <p className="text-[11px] text-purple-200/80 mt-0.5">
-                Nomes de pacientes, valores financeiros e dados confidenciais estão ocultos para você postar fotos com segurança.
+              <p className="text-[10.5px] text-primary font-bold">
+                ⭐ * Requisito: manter legendas ativadas em Português no Google Meet durante a chamada.
               </p>
             </div>
           </div>
-          {onTogglePrivacyMode && (
+
+          <div className="flex items-center gap-3 w-full md:w-auto shrink-0">
             <button
-              onClick={onTogglePrivacyMode}
-              className="px-3 py-1.5 bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500/40 text-white rounded-xl text-xs font-semibold transition-all shrink-0 cursor-pointer"
+              type="button"
+              onClick={onOpenExtensionModal}
+              className="flex-1 md:flex-none px-5 py-3 bg-primary text-white hover:opacity-90 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/20 cursor-pointer"
             >
-              Desativar
+              <Chrome size={15} />
+              Ativar Extensão
             </button>
-          )}
+            {onDismissExtensionBanner && (
+              <button
+                type="button"
+                onClick={onDismissExtensionBanner}
+                className="p-3 text-text-muted hover:text-text-main rounded-2xl hover:bg-surface-muted transition-colors cursor-pointer"
+                title="Dispensar do Dashboard"
+              >
+                <X size={18} />
+              </button>
+            )}
+          </div>
         </motion.div>
       )}
 
-      {/* Banner da Extensão do Google Meet */}
-      {!hasAcceptedExtensionTerms ? (
-        !isExtensionBannerDismissed && (
-          <motion.div 
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-gradient-to-r from-primary/20 via-primary/10 to-surface-muted border border-primary/30 rounded-3xl p-5 sm:p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-5 relative shadow-lg shadow-primary/5 text-left"
-          >
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 rounded-2xl bg-primary text-white flex items-center justify-center shrink-0 shadow-md shadow-primary/25 mt-0.5">
-                <Video size={24} />
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[10px] bg-primary text-white px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider">
-                    Novidade Oficial
-                  </span>
-                  <h4 className="text-sm sm:text-base font-bold text-text-main">
-                    Transcreva suas consultas online pelo Google Meet
-                  </h4>
-                </div>
-                <p className="text-xs text-text-muted leading-relaxed max-w-2xl">
-                  Instale nossa extensão oficial para o Google Chrome. Ela captura as falas com 100% de sigilo local e gera a evolução clínica na sua abordagem em 1 clique.
-                </p>
-                <p className="text-[10.5px] text-primary font-bold">
-                  ⭐ * Requisito: manter legendas ativadas em Português no Google Meet durante a chamada.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 w-full md:w-auto shrink-0">
-              <button
-                type="button"
-                onClick={onOpenExtensionModal}
-                className="flex-1 md:flex-none px-5 py-3 bg-primary text-white hover:opacity-90 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/20 cursor-pointer"
-              >
-                <Chrome size={15} />
-                Ativar Extensão
-              </button>
-              {onDismissExtensionBanner && (
-                <button
-                  type="button"
-                  onClick={onDismissExtensionBanner}
-                  className="p-3 text-text-muted hover:text-text-main rounded-2xl hover:bg-surface-muted transition-colors cursor-pointer"
-                  title="Dispensar do Dashboard"
-                >
-                  <X size={18} />
-                </button>
-              )}
-            </div>
-          </motion.div>
-        )
-      ) : (
-        <div className="bg-surface-muted/60 border border-border-ui rounded-2xl px-5 py-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-left">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-green-500/10 text-green-400 border border-green-500/20 flex items-center justify-center shrink-0">
-              <Chrome size={16} />
-            </div>
-            <div>
-              <p className="text-xs font-bold text-text-main flex items-center gap-2">
-                Extensão do Google Meet Ativa
-                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-              </p>
-              <p className="text-[10px] text-text-muted">
-                Suas teleconsultas com legendas ativadas geram relatos automáticos com IA no SimplePsi.
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onOpenExtensionModal}
-            className="px-3.5 py-2 bg-surface-muted hover:bg-border-ui text-text-main border border-border-ui rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
-          >
-            <ExternalLink size={12} />
-            Instruções & Termo TCLE
-          </button>
-        </div>
-      )}
-
       {/* Banner de Migração de Dados (Apenas Contas Autorizadas) */}
-      {isMigrationAllowed && (
+      {isMigrationAllowed && !isMigrationBannerDismissed && (
         <div className="bg-gradient-to-r from-primary/15 via-surface-muted to-card border border-primary/25 rounded-3xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-left shadow-sm">
           <div className="flex items-center gap-3.5">
             <div className="w-11 h-11 rounded-2xl bg-primary/20 text-primary flex items-center justify-center shrink-0 border border-primary/30 shadow-md shadow-primary/10">
@@ -4428,23 +4380,35 @@ function DashboardView({
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onOpenMigrationModal}
-            className="w-full sm:w-auto px-5 py-2.5 bg-primary text-white hover:opacity-90 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-md shadow-primary/20 shrink-0 cursor-pointer active:scale-[0.98]"
-          >
-            <Upload size={14} />
-            Testar Migração
-          </button>
+          <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
+            <button
+              type="button"
+              onClick={onOpenMigrationModal}
+              className="w-full sm:w-auto px-5 py-2.5 bg-primary text-white hover:opacity-90 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-md shadow-primary/20 shrink-0 cursor-pointer active:scale-[0.98]"
+            >
+              <Upload size={14} />
+              Testar Migração
+            </button>
+            {onDismissMigrationBanner && (
+              <button
+                type="button"
+                onClick={onDismissMigrationBanner}
+                className="p-2.5 text-text-muted hover:text-text-main rounded-xl hover:bg-surface-muted transition-colors cursor-pointer"
+                title="Dispensar do Dashboard"
+              >
+                <X size={18} />
+              </button>
+            )}
+          </div>
         </div>
       )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard onClick={onGoToAgenda} title="Sessões Hoje" value={sessionsTodayCount.toString()} subtext="Agendadas para hoje" icon={CalendarIcon} color="text-purple-400" />
-        <StatCard onClick={onGoToPacientes} title="Pacientes Ativos" value={patients.filter(p => p.status !== 'Inativo').length.toString()} subtext="Gestão total" icon={Users} color="text-blue-400" />
+        <StatCard onClick={onGoToAgenda} title="Sessões Hoje" value={sessionsTodayCount.toString()} subtext="Agendadas para hoje" icon={CalendarIcon} color="text-purple-400" isBlurred={isPrivacyMode} />
+        <StatCard onClick={onGoToPacientes} title="Pacientes Ativos" value={patients.filter(p => p.status !== 'Inativo').length.toString()} subtext="Gestão total" icon={Users} color="text-blue-400" isBlurred={isPrivacyMode} />
         <StatCard onClick={onGoToFinanceiro} title="Receita Mensal Prevista" value={formatCurrency(monthlyPredictedIncome)} subtext="Previsão baseada em sessões" icon={DollarSign} color="text-pink-400" isBlurred={isPrivacyMode} />
-        <StatCard onClick={onGoToAgenda} title="Agendamentos da Semana" value={weeklySessionsCount.toString()} subtext="Sessões nesta semana" icon={BarChart3} color="text-orange-400" />
+        <StatCard onClick={onGoToAgenda} title="Agendamentos da Semana" value={weeklySessionsCount.toString()} subtext="Sessões nesta semana" icon={BarChart3} color="text-orange-400" isBlurred={isPrivacyMode} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

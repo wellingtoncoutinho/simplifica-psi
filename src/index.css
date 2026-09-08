@@ -63,19 +63,19 @@
 }
 
 .privacy-blur {
-  filter: blur(5px);
-  user-select: none;
-  pointer-events: none;
-  transition: filter 0.25s ease, opacity 0.25s ease;
-  opacity: 0.85;
-}
-
-.privacy-blur-strong {
   filter: blur(8px);
   user-select: none;
   pointer-events: none;
   transition: filter 0.25s ease, opacity 0.25s ease;
   opacity: 0.75;
+}
+
+.privacy-blur-strong {
+  filter: blur(14px);
+  user-select: none;
+  pointer-events: none;
+  transition: filter 0.25s ease, opacity 0.25s ease;
+  opacity: 0.6;
 }
 
 .bg-surface-muted {
