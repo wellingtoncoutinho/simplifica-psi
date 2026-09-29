@@ -79,13 +79,16 @@ export default async function handler(req: any, res: any) {
     // ==========================================
     // DISPARO 1: LEMBRETE DE VÉSPERA (D-1)
     // ==========================================
-    // Sessões de amanhã onde status é 'Agendada' e ainda não recebeu D-1
-    const d1Candidates = recordedSessions.filter(s => 
-      s.date === tomorrowYMD && 
-      s.status === 'Agendada' && 
-      !s.reminderD1Sent &&
-      !s.reminderDisabled
-    );
+    // Envia a partir das 08h da manhã até as 21h para sessões do dia seguinte
+    const isDaytimeForD1 = curHour >= 8 && curHour <= 21;
+    const d1Candidates = isDaytimeForD1
+      ? recordedSessions.filter(s => 
+          s.date === tomorrowYMD && 
+          s.status === 'Agendada' && 
+          !s.reminderD1Sent &&
+          !s.reminderDisabled
+        )
+      : [];
 
     for (const session of d1Candidates) {
       const patient = patientsMap.get(session.patientId);
