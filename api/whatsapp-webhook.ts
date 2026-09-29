@@ -1,27 +1,39 @@
-import { getDb } from './_firebase';
+import { getDb } from './_firebase.js';
 import { 
   sendWhatsAppTextMessage, 
   sendWhatsAppCancellationAlert,
   formatWhatsAppPhone, 
   getWhatsAppConfig 
-} from '../src/lib/whatsappService';
+} from './_whatsapp.js';
 
 export default async function handler(req: any, res: any) {
   // 1. Verificação do Webhook pela Meta (GET)
   if (req.method === 'GET') {
-    const mode = req.query['hub.mode'];
-    const token = req.query['hub.verify_token'];
-    const challenge = req.query['hub.challenge'];
+    const url = new URL(req.url || '', 'https://www.simplepsi.com');
+    const query = req.query || Object.fromEntries(url.searchParams.entries());
+
+    const mode = query['hub.mode'];
+    const token = query['hub.verify_token'];
+    const challenge = query['hub.challenge'];
 
     const config = getWhatsAppConfig();
     const expectedToken = config.verifyToken;
 
     if (mode === 'subscribe' && token === expectedToken) {
       console.log('✅ Webhook do WhatsApp verificado com sucesso pela Meta!');
-      return res.status(200).send(challenge);
+      if (res.status && res.send) {
+        return res.status(200).send(challenge);
+      }
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/plain');
+      return res.end(challenge);
     } else {
       console.warn('❌ Falha na verificação do Webhook. Token incorreto.');
-      return res.status(403).send('Forbidden');
+      if (res.status && res.send) {
+        return res.status(403).send('Forbidden');
+      }
+      res.statusCode = 403;
+      return res.end('Forbidden');
     }
   }
 
@@ -71,6 +83,7 @@ export default async function handler(req: any, res: any) {
       // Buscar a sessão no Firestore
       let sessionData: any = null;
       let sessionRef: any = null;
+      let matchedPatient: any = null;
 
       if (targetSessionId && !targetSessionId.startsWith('virtual-')) {
         if (isAdmin) {
@@ -83,7 +96,6 @@ export default async function handler(req: any, res: any) {
       // Se não achou por ID direto, busca pela sessão mais próxima do paciente com esse telefone
       if (!sessionData && isAdmin) {
         const patientsSnap = await db.collection('patients').get();
-        let matchedPatient: any = null;
 
         for (const doc of patientsSnap.docs) {
           const p = doc.data();

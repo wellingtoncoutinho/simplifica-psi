@@ -1,10 +1,12 @@
-import { getDb } from './_firebase';
+import { getDb } from './_firebase.js';
 import { 
   sendD1ConfirmationReminder, 
   sendD0StartReminder, 
   formatWhatsAppPhone 
-} from '../src/lib/whatsappService';
-import { Session, Patient } from '../src/types';
+} from './_whatsapp.js';
+
+type Patient = any;
+type Session = any;
 
 export default async function handler(req: any, res: any) {
   // Opcional: Proteger a rota com chave secreta caso configurada
