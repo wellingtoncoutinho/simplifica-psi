@@ -9,3 +9,5 @@ coverage/
 .vercel
 .env*.local
 scratch/
+service-account*.json
+

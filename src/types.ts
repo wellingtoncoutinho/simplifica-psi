@@ -38,6 +38,7 @@ export interface Patient {
   recurrenceStart?: string;
   modality?: 'Online' | 'Presencial';
   meetingLink?: string;
+  optOutWhatsapp?: boolean;
   // Contrato Terapêutico
   contractSigned?: boolean;
   contractSignedAt?: string;
@@ -164,6 +165,16 @@ export interface Session {
   notes?: string;
   clinicCommissionRate?: number;
   clinicCommissionPaid?: boolean;
+  // WhatsApp Reminders Tracking
+  patientPhone?: string;
+  meetingLink?: string;
+  reminderD1Sent?: boolean;
+  reminderD1SentAt?: string;
+  reminderD0Sent?: boolean;
+  reminderD0SentAt?: string;
+  reminderStatus?: 'pending' | 'd1_sent' | 'd0_sent' | 'confirmed' | 'cancelled' | 'error';
+  reminderError?: string;
+  reminderDisabled?: boolean;
 }
 
 export interface Transaction {
@@ -411,13 +422,20 @@ export interface SupervisionCase {
   supervisorName?: string;
   sessionNumber?: number;
   sessionDate?: string;
-  evolutionNote: string; // Conteúdo selecionado/editado pelo psicólogo para a supervisão
+  evolutionNote?: string; // Conteúdo selecionado/editado pelo psicólogo para a supervisão
   psychologistDoubts?: string; // Dúvidas ou impasses trazidos para discussão
   approach?: string;
   complaint?: string;
   needsReview?: boolean;
   feedback?: string;
   recommendations?: string;
+  age?: number;
+  sessionsCount?: number;
+  lastEvolutionSummary?: string;
+  clinicalNotes?: string;
+  doubts?: string;
+  supervisorEmail?: string;
+  status?: string;
   reviewedAt?: string;
   createdAt: string;
   updatedAt?: string;

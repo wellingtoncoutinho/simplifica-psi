@@ -176,6 +176,7 @@ import {
   LogIn,
   Trash2,
   PenTool,
+  MessageSquare,
   FileDown,
   Paperclip,
   TrendingUp,
@@ -227,6 +228,7 @@ import ClinicSupervisionView from './components/clinic/ClinicSupervisionView';
 import ClinicReceptionCrmView from './components/clinic/ClinicReceptionCrmView';
 import ClinicFinanceView from './components/clinic/ClinicFinanceView';
 import ClinicLoginPage from './components/clinic/ClinicLoginPage';
+import { WhatsAppRemindersPanel } from './components/WhatsAppRemindersPanel';
 import { GoogleMeetExtensionModal, CHROME_EXTENSION_STORE_URL, TCLE_TEMPLATE_TEXT } from './components/GoogleMeetExtensionModal';
 const DataMigrationModal = React.lazy(() => 
   import('./components/DataMigrationModal').then(m => ({ default: m.DataMigrationModal }))
@@ -2832,6 +2834,7 @@ Como posso te ajudar hoje?`
       { id: 'import-transcript', label: 'Importar Transcrição', icon: FileDown },
     ];
     if (user?.email && user.email.toLowerCase().trim() === 'wellcoutinho99@gmail.com') {
+      items.push({ id: 'whatsapp-lembretes', label: 'Lembretes WhatsApp', icon: MessageSquare });
       items.push({ id: 'admin', label: 'Painel Admin', icon: ShieldCheck });
     }
     return items;
@@ -3554,6 +3557,17 @@ Como posso te ajudar hoje?`
                   setIsAddingPatient(true);
                 }}
                 isScheduleAutonomyDisabled={Boolean(currentClinic && clinicRole === 'psychologist' && currentClinic.settings?.allowPsychologistManageAgenda === false)}
+                onOpenWhatsAppReminders={() => setActiveTab('whatsapp-lembretes')}
+                isWhatsAppAdmin={Boolean(user?.email && user.email.toLowerCase().trim() === 'wellcoutinho99@gmail.com')}
+              />
+            )}
+
+            {activeTab === 'whatsapp-lembretes' && user?.email && user.email.toLowerCase().trim() === 'wellcoutinho99@gmail.com' && (
+              <WhatsAppRemindersPanel
+                key="whatsapp-lembretes"
+                user={user}
+                sessions={displayedPersonalSessions}
+                patients={patients}
               />
             )}
             
@@ -11221,7 +11235,9 @@ function CalendarView({
   onOpenSettings,
   onSyncGoogleCalendar,
   onConnectGoogleCalendar,
-  isScheduleAutonomyDisabled = false
+  isScheduleAutonomyDisabled = false,
+  onOpenWhatsAppReminders,
+  isWhatsAppAdmin = false
 }: { 
   sessions: any[], 
   patients: any[], 
@@ -11235,10 +11251,18 @@ function CalendarView({
   onOpenSettings?: () => void,
   onSyncGoogleCalendar?: () => void,
   onConnectGoogleCalendar?: () => void,
-  isScheduleAutonomyDisabled?: boolean
+  isScheduleAutonomyDisabled?: boolean,
+  onOpenWhatsAppReminders?: () => void,
+  isWhatsAppAdmin?: boolean
 }) {
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [viewMode, setViewMode] = useState<'day' | 'week' | 'month'>('day');
+  const [viewMode, setViewModeState] = useState<'day' | 'week' | 'month'>(() => {
+    return (localStorage.getItem('simplepsi_calendar_view') as any) || 'week';
+  });
+  const setViewMode = (mode: 'day' | 'week' | 'month') => {
+    localStorage.setItem('simplepsi_calendar_view', mode);
+    setViewModeState(mode);
+  };
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingSession, setEditingSession] = useState<any>(null);
   const [selectedMobileDay, setSelectedMobileDay] = useState<Date | null>(null);
@@ -11448,6 +11472,17 @@ function CalendarView({
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-yellow-500" />
                 {isGoogleCalendarEnabled ? 'Reconectar Google Agenda' : 'Conectar Google Agenda'}
+              </button>
+            )}
+            {isWhatsAppAdmin && onOpenWhatsAppReminders && (
+              <button
+                type="button"
+                onClick={onOpenWhatsAppReminders}
+                className="flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/25 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm transition-all shrink-0 cursor-pointer"
+                title="Abrir Central de Lembretes WhatsApp"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Lembretes WhatsApp
               </button>
             )}
           </div>
