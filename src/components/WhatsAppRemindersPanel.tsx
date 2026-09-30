@@ -95,7 +95,7 @@ export function WhatsAppRemindersPanel({
       const phoneId = '1261779623696198';
       const targetPhone = formatWhatsAppPhone(manualPhone);
 
-      // Envia modelo de teste inicial ou texto
+      // Envia modelo oficial aprovado de confirmação
       const response = await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
         method: 'POST',
         headers: {
@@ -107,8 +107,37 @@ export function WhatsAppRemindersPanel({
           to: targetPhone,
           type: 'template',
           template: {
-            name: 'hello_world',
-            language: { code: 'en_US' }
+            name: 'lembrete_sessao_confirmacao',
+            language: { code: 'pt_BR' },
+            components: [
+              {
+                type: 'body',
+                parameters: [
+                  { type: 'text', text: 'Wellington (Teste)' },
+                  { type: 'text', text: 'Amanhã' },
+                  { type: 'text', text: '15:00' },
+                  { type: 'text', text: 'Psi Wellington Coutinho' },
+                ]
+              },
+              {
+                type: 'button',
+                sub_type: 'quick_reply',
+                index: '0',
+                parameters: [{ type: 'payload', payload: 'CONFIRM_TEST' }]
+              },
+              {
+                type: 'button',
+                sub_type: 'quick_reply',
+                index: '1',
+                parameters: [{ type: 'payload', payload: 'CANCEL_TEST' }]
+              },
+              {
+                type: 'button',
+                sub_type: 'quick_reply',
+                index: '2',
+                parameters: [{ type: 'payload', payload: 'OPTOUT_TEST' }]
+              }
+            ]
           }
         })
       });
