@@ -11762,11 +11762,15 @@ function CalendarView({
                                 "p-3 rounded-2xl border text-xs relative transition-all shadow-sm flex flex-col justify-between gap-2.5",
                                 session.status === 'Cancelada'
                                   ? "bg-red-500/10 border-red-500/20 text-red-300 opacity-60 line-through"
-                                  : session.isTriage
-                                    ? "bg-orange-500/10 border-orange-500/30 text-text-main"
-                                    : session.status === 'Realizada'
-                                      ? "bg-emerald-500/10 border-emerald-500/30 text-text-main"
-                                      : "bg-primary/10 border-primary/30 text-text-main"
+                                  : session.status === 'Desmarcou'
+                                    ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                                    : session.status === 'Confirmada'
+                                      ? "bg-emerald-500/10 border-emerald-500/40 text-text-main ring-1 ring-emerald-500/30 shadow-emerald-500/5"
+                                      : session.isTriage
+                                        ? "bg-orange-500/10 border-orange-500/30 text-text-main"
+                                        : session.status === 'Realizada'
+                                          ? "bg-emerald-500/10 border-emerald-500/30 text-text-main"
+                                          : "bg-primary/10 border-primary/30 text-text-main"
                               )}
                             >
                               <div className="flex items-start justify-between gap-2">
@@ -11778,11 +11782,16 @@ function CalendarView({
                                     <span className={cn(
                                       "px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider",
                                       session.status === 'Realizada' ? "bg-emerald-500/20 text-emerald-400" :
+                                      session.status === 'Confirmada' ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-extrabold" :
+                                      session.status === 'Desmarcou' ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" :
                                       session.status === 'Cancelada' ? "bg-red-500/20 text-red-400" :
                                       session.isTriage ? "bg-orange-500/20 text-orange-400" :
                                       "bg-primary/20 text-primary"
                                     )}>
-                                      {session.status === 'Cancelada' ? 'Cancelada' : session.isTriage ? 'Triagem' : session.type || 'Sessão'}
+                                      {session.status === 'Cancelada' ? 'Cancelada' : 
+                                       session.status === 'Confirmada' ? '✓ Confirmada' : 
+                                       session.status === 'Desmarcou' ? 'Desmarcou' : 
+                                       session.isTriage ? 'Triagem' : session.type || 'Sessão'}
                                     </span>
                                     {session.sessionNumber && (
                                       <span className="text-[9px] text-text-muted font-bold">
@@ -11955,17 +11964,29 @@ function CalendarView({
                             "p-2 rounded-xl border text-[10px] font-semibold flex flex-col gap-1 transition-all",
                             session.status === 'Cancelada'
                               ? "bg-red-500/10 border-red-500/20 text-red-400 opacity-60 line-through"
-                              : session.isTriage
-                                ? "bg-orange-500/10 border-orange-500/20 text-orange-300"
-                                : session.status === 'Realizada'
-                                  ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300"
-                                  : "bg-primary/10 border-primary/20 text-text-main"
+                              : session.status === 'Desmarcou'
+                                ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                                : session.status === 'Confirmada'
+                                  ? "bg-emerald-500/10 border-emerald-500/40 text-text-main ring-1 ring-emerald-500/30 shadow-emerald-500/5"
+                                  : session.isTriage
+                                    ? "bg-orange-500/10 border-orange-500/20 text-orange-300"
+                                    : session.status === 'Realizada'
+                                      ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300"
+                                      : "bg-primary/10 border-primary/20 text-text-main"
                           )}
                         >
                           <div className="flex items-center justify-between gap-1">
                             <span className="font-mono font-bold text-primary">{session.time}</span>
-                            <span className="text-[8px] uppercase tracking-wider font-bold opacity-75 truncate">
-                              {session.status === 'Cancelada' ? 'Cancelada' : session.type}
+                            <span className={cn(
+                              "text-[8px] uppercase tracking-wider font-extrabold truncate px-1.5 py-0.5 rounded",
+                              session.status === 'Confirmada' ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" :
+                              session.status === 'Desmarcou' ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" :
+                              "opacity-75"
+                            )}>
+                              {session.status === 'Cancelada' ? 'Cancelada' : 
+                               session.status === 'Confirmada' ? '✓ Confirmada' : 
+                               session.status === 'Desmarcou' ? 'Desmarcou' : 
+                               session.type}
                             </span>
                           </div>
                           <div className="flex items-center justify-between gap-1">
@@ -12153,9 +12174,13 @@ function CalendarView({
                         "p-4 rounded-2xl border text-sm font-bold relative",
                         session.status === 'Cancelada' 
                           ? "bg-red-500/10 border-red-500/20 text-red-400 opacity-80" 
-                          : session.isTriage 
-                            ? "bg-orange-500/10 border-orange-500/20 text-orange-400" 
-                            : "bg-primary/10 border-primary/20 text-primary"
+                          : session.status === 'Desmarcou'
+                            ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                            : session.status === 'Confirmada'
+                              ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-300 ring-1 ring-emerald-500/30 shadow-emerald-500/5"
+                              : session.isTriage 
+                                ? "bg-orange-500/10 border-orange-500/20 text-orange-400" 
+                                : "bg-primary/10 border-primary/20 text-primary"
                       )}
                     >
                       <div className="flex justify-between items-start mb-2">
@@ -12179,8 +12204,15 @@ function CalendarView({
                       </div>
                       
                       <div className="flex justify-between items-center text-[10px] uppercase tracking-widest font-bold mb-4 opacity-80">
-                        <span>{session.status === 'Cancelada' ? 'Cancelada' : session.type}</span>
-                        
+                        <span className={cn(
+                          session.status === 'Confirmada' ? "text-emerald-400 font-extrabold" :
+                          session.status === 'Desmarcou' ? "text-amber-400 font-extrabold" : ""
+                        )}>
+                          {session.status === 'Cancelada' ? 'Cancelada' : 
+                           session.status === 'Confirmada' ? '✓ Confirmada' : 
+                           session.status === 'Desmarcou' ? 'Desmarcou' : 
+                           session.type}
+                        </span>
                       </div>
 
                       {!isScheduleAutonomyDisabled && (
