@@ -29,23 +29,7 @@ export default async function handler(req: any, res: any) {
       console.warn('Executando cron com Client SDK (modo limitado)');
     }
 
-    // 1. Carregar Pacientes Ativos
-    const patientsSnapshot = isAdmin 
-      ? await db.collection('patients').get()
-      : await db.collection('patients').get();
-
-    const patientsMap = new Map<string, Patient>();
-    const patientsList: Patient[] = [];
-
-    patientsSnapshot.docs.forEach((doc: any) => {
-      const p = { id: doc.id, ...doc.data() } as Patient;
-      if (p.status === 'Ativo' && !p.optOutWhatsapp && p.phone) {
-        patientsMap.set(p.id, p);
-        patientsList.push(p);
-      }
-    });
-
-    // 2. Definir Horários no Fuso Horário de Brasília (America/Sao_Paulo)
+    // Definir Horários no Fuso Horário de Brasília (America/Sao_Paulo)
     const now = new Date();
     const brDateString = now.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }); // DD/MM/YYYY
     const [dayStr, monthStr, yearStr] = brDateString.split('/');
@@ -69,12 +53,32 @@ export default async function handler(req: any, res: any) {
 
     console.log(`[Cron Lembretes] Executando em ${todayYMD} às ${curHour}:${curMin} (Amanhã: ${tomorrowYMD})`);
 
-    // 3. Carregar Sessões Gravadas no Firestore
-    const sessionsSnapshot = await db.collection('sessions').get();
+    // 1. Carregar apenas Sessões de Hoje e Amanhã (economiza 99% da cota do Firestore)
+    const sessionsSnapshot = await db.collection('sessions')
+      .where('date', 'in', [todayYMD, tomorrowYMD])
+      .get();
+
     const recordedSessions: Session[] = [];
     sessionsSnapshot.docs.forEach((doc: any) => {
       recordedSessions.push({ id: doc.id, ...doc.data() } as Session);
     });
+
+    // 2. Carregar apenas os pacientes dessas sessões
+    const patientsMap = new Map<string, Patient>();
+    const patientIds = Array.from(new Set(recordedSessions.map(s => s.patientId).filter(Boolean)));
+    for (const pid of patientIds) {
+      try {
+        const pDoc = await db.collection('patients').doc(pid).get();
+        if (pDoc.exists) {
+          const p = { id: pDoc.id, ...pDoc.data() } as Patient;
+          if (p.status === 'Ativo' && !p.optOutWhatsapp && p.phone) {
+            patientsMap.set(p.id, p);
+          }
+        }
+      } catch (e: any) {
+        console.warn(`Erro ao carregar paciente ${pid}:`, e.message);
+      }
+    }
 
     // ==========================================
     // DISPARO 1: LEMBRETE DE VÉSPERA (D-1)
