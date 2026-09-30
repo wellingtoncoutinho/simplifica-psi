@@ -85,11 +85,20 @@ export default async function handler(req: any, res: any) {
       let sessionRef: any = null;
       let matchedPatient: any = null;
 
-      if (targetSessionId && !targetSessionId.startsWith('virtual-')) {
+      if (targetSessionId && !targetSessionId.startsWith('virtual-') && targetSessionId !== 'TEST') {
         if (isAdmin) {
           sessionRef = db.collection('sessions').doc(targetSessionId);
           const snap = await sessionRef.get();
-          if (snap.exists) sessionData = { id: snap.id, ...snap.data() };
+          if (snap.exists) {
+            sessionData = { id: snap.id, ...snap.data() };
+            if (sessionData.patientId) {
+              const pSnap = await db.collection('patients').doc(sessionData.patientId).get();
+              if (pSnap.exists) {
+                matchedPatient = { id: pSnap.id, ...pSnap.data() };
+                sessionData.patientName = matchedPatient.name;
+              }
+            }
+          }
         }
       }
 
@@ -120,9 +129,33 @@ export default async function handler(req: any, res: any) {
         }
       }
 
-      const patientName = sessionData?.patientName || 'Paciente';
-      const sessionDate = sessionData?.date || 'sua próxima sessão';
-      const sessionTime = sessionData?.time || '';
+      // Formatar data em português amigável (ex: "quarta-feira, 30/09")
+      let formattedDateStr = 'sua próxima sessão';
+      if (sessionData?.date) {
+        try {
+          const [year, month, day] = sessionData.date.split('-');
+          const dateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day), 12, 0, 0);
+          const weekdays = [
+            'domingo',
+            'segunda-feira',
+            'terça-feira',
+            'quarta-feira',
+            'quinta-feira',
+            'sexta-feira',
+            'sábado',
+          ];
+          const dayName = weekdays[dateObj.getDay()];
+          formattedDateStr = `${dayName}, ${day}/${month}`;
+        } catch {
+          formattedDateStr = sessionData.date;
+        }
+      }
+
+      // Pega o primeiro nome para ficar acolhedor e humanizado
+      const fullName = sessionData?.patientName || matchedPatient?.name || (targetSessionId === 'TEST' || fromPhone === '5562983208784' ? 'Wellington' : 'Paciente');
+      const patientName = fullName.split(' ')[0].trim();
+      const sessionDate = targetSessionId === 'TEST' ? 'amanhã' : formattedDateStr;
+      const sessionTime = sessionData?.time || (targetSessionId === 'TEST' ? '15:00' : '');
 
       // TRATAMENTO DA RESPOSTA:
       // A) CONFIRMAR PRESENÇA
