@@ -37,9 +37,10 @@ async function generateContentWithFallback(
   }
 ) {
   const modelsToTry = [
-    "gemini-2.5-flash",
     "gemini-3.5-flash",
-    "gemini-2.5-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash",
+    "gemini-flash-latest",
   ];
   
   const modelQueue = options.model 
@@ -229,6 +230,7 @@ import ClinicReceptionCrmView from './components/clinic/ClinicReceptionCrmView';
 import ClinicFinanceView from './components/clinic/ClinicFinanceView';
 import ClinicLoginPage from './components/clinic/ClinicLoginPage';
 import { WhatsAppRemindersPanel } from './components/WhatsAppRemindersPanel';
+import ContentIdeasModal from './components/ContentIdeasModal';
 import { GoogleMeetExtensionModal, CHROME_EXTENSION_STORE_URL, TCLE_TEMPLATE_TEXT } from './components/GoogleMeetExtensionModal';
 const DataMigrationModal = React.lazy(() => 
   import('./components/DataMigrationModal').then(m => ({ default: m.DataMigrationModal }))
@@ -4010,6 +4012,7 @@ function DashboardView({
   const [selectedDayPayments, setSelectedDayPayments] = useState<any[]>([]);
   const [selectedDayLabel, setSelectedDayLabel] = useState<string>('');
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [isContentIdeasModalOpen, setIsContentIdeasModalOpen] = useState(false);
 
   useEffect(() => {
     // Registra que as novidades já foram exibidas no dashboard para nunca mais reaparecerem em sessões futuras
@@ -4871,6 +4874,33 @@ function DashboardView({
           </div>
         )}
       </section>
+
+      {/* Acesso exclusivo Wellington: Laboratório de Conteúdo & Dores Clínicas */}
+      {user?.email?.toLowerCase().trim() === 'wellcoutinho99@gmail.com' && (
+        <div className="flex items-center justify-end pt-3 pb-8">
+          <button
+            type="button"
+            onClick={() => setIsContentIdeasModalOpen(true)}
+            className="group inline-flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-surface-muted/50 hover:bg-surface-muted border border-border-ui/40 hover:border-emerald-500/40 transition-all cursor-pointer shadow-sm text-xs"
+            title="Laboratório de Conteúdo & Dores Clínicas (Privado Wellington)"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span className="text-[11px] font-medium text-text-muted/70 group-hover:text-emerald-400 transition-colors">
+              Radar de Conteúdo
+            </span>
+          </button>
+        </div>
+      )}
+
+      {/* Modal de Ideias de Conteúdo para Redes Sociais */}
+      <ContentIdeasModal
+        isOpen={isContentIdeasModalOpen}
+        onClose={() => setIsContentIdeasModalOpen(false)}
+        patients={patients}
+      />
     </motion.div>
   );
 }
