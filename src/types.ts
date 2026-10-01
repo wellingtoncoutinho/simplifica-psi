@@ -175,6 +175,8 @@ export interface Session {
   reminderStatus?: 'pending' | 'd1_sent' | 'd0_sent' | 'confirmed' | 'cancelled' | 'error';
   reminderError?: string;
   reminderDisabled?: boolean;
+  confirmedAt?: string;
+  desmarcouAt?: string;
 }
 
 export interface Transaction {

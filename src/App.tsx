@@ -279,7 +279,8 @@ import {
   orderBy,
   getDoc,
   writeBatch,
-  getDocs
+  getDocs,
+  deleteField
 } from 'firebase/firestore';
 import { onAuthStateChanged, User, GoogleAuthProvider } from 'firebase/auth';
 import { Joyride, EventData, STATUS, Step, TooltipRenderProps } from 'react-joyride';
@@ -2250,7 +2251,7 @@ Como posso te ajudar hoje?`
       if (data.id && !data.id.toString().startsWith('virtual-')) {
         const oldDoc = sessions.find(s => s.id === data.id);
         const sessionRef = doc(db, 'sessions', data.id);
-        const updatedData = {
+        const updatedData: any = {
           patientId: data.patientId || '',
           isTriage: data.isTriage || false,
           triageName: data.triageName || '',
@@ -2261,6 +2262,20 @@ Como posso te ajudar hoje?`
           amount: parseFloat(data.amount) || parseFloat(oldDoc?.amount as any) || 0,
           updatedAt: new Date().toISOString()
         };
+
+        // Se a data ou horário mudou, OU se o status foi alterado para 'Agendada' (remarcação / reativação):
+        const isDateOrTimeChanged = oldDoc && (oldDoc.date !== data.date || oldDoc.time !== data.time);
+        const isReactivated = oldDoc && oldDoc.status === 'Desmarcou' && updatedData.status === 'Agendada';
+
+        if (isDateOrTimeChanged || isReactivated) {
+          updatedData.reminderD1Sent = false;
+          updatedData.reminderD0Sent = false;
+          updatedData.reminderStatus = 'pending';
+          updatedData.desmarcouAt = deleteField();
+          if (isDateOrTimeChanged && oldDoc?.confirmedAt) {
+            updatedData.confirmedAt = deleteField();
+          }
+        }
 
         // If the date or time changed, we should cancel the original slot if it was a recurrence day
         // to prevent ghost/recurrent sessions from showing up again on the old date.
@@ -11864,6 +11879,24 @@ function CalendarView({
                                   )}
                                   {session.status !== 'Cancelada' && (
                                     <>
+                                      {session.status === 'Desmarcou' && (
+                                        <button
+                                          onClick={() => {
+                                            onAddSession({
+                                              ...session,
+                                              id: session.id,
+                                              status: 'Agendada',
+                                              date: format(currentDate, 'yyyy-MM-dd'),
+                                              time: session.time
+                                            });
+                                          }}
+                                          className="px-2 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500 hover:text-white text-emerald-400 text-[10px] font-bold uppercase transition-all cursor-pointer flex items-center gap-1"
+                                          title="Reativar sessão como Agendada (Ativa)"
+                                        >
+                                          <Check size={11} />
+                                          <span>Reativar</span>
+                                        </button>
+                                      )}
                                       <button
                                         onClick={() => {
                                           setEditingSession({
@@ -11991,8 +12024,19 @@ function CalendarView({
                       daySess.map((session) => (
                         <div
                           key={session.id}
+                          onClick={() => {
+                            if (!isScheduleAutonomyDisabled && session.status !== 'Cancelada') {
+                              setEditingSession({
+                                ...session,
+                                date: session.date || dateStr,
+                                originalDate: session.date || dateStr,
+                                originalTime: session.time
+                              });
+                              setIsModalOpen(true);
+                            }
+                          }}
                           className={cn(
-                            "p-2 rounded-xl border text-[10px] font-semibold flex flex-col gap-1 transition-all",
+                            "p-2 rounded-xl border text-[10px] font-semibold flex flex-col gap-1 transition-all cursor-pointer hover:border-primary/40 hover:scale-[1.01]",
                             session.status === 'Cancelada'
                               ? "bg-red-500/10 border-red-500/20 text-red-400 opacity-60 line-through"
                               : session.status === 'Desmarcou'
@@ -12257,6 +12301,24 @@ function CalendarView({
                           
                           {session.status !== 'Cancelada' && (
                             <>
+                              {session.status === 'Desmarcou' && (
+                                <button 
+                                  onClick={() => {
+                                    setSelectedMobileDay(null);
+                                    onAddSession({
+                                      ...session,
+                                      id: session.id,
+                                      status: 'Agendada',
+                                      date: format(selectedMobileDay, 'yyyy-MM-dd'),
+                                      time: session.time
+                                    });
+                                  }}
+                                  className="flex-1 bg-emerald-500/20 text-emerald-400 py-2 rounded-xl text-xs font-bold hover:bg-emerald-500 hover:text-white transition-all border border-emerald-500/30 uppercase flex items-center justify-center gap-1"
+                                >
+                                  <Check size={12} />
+                                  <span>Reativar</span>
+                                </button>
+                              )}
                               <button 
                                 onClick={() => { 
                                   setSelectedMobileDay(null);
@@ -12427,7 +12489,14 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
                 <input 
                   type="date"
                   value={formData.date}
-                  onChange={(e) => setFormData({...formData, date: e.target.value})}
+                  onChange={(e) => {
+                    const newDate = e.target.value;
+                    setFormData(prev => ({
+                      ...prev,
+                      date: newDate,
+                      status: (prev.status === 'Desmarcou' && newDate !== prev.originalDate) ? 'Agendada' : prev.status
+                    }));
+                  }}
                   className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary"
                 />
               </div>
@@ -12436,7 +12505,14 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
                 <input 
                   type="time"
                   value={formData.time}
-                  onChange={(e) => setFormData({...formData, time: e.target.value})}
+                  onChange={(e) => {
+                    const newTime = e.target.value;
+                    setFormData(prev => ({
+                      ...prev,
+                      time: newTime,
+                      status: (prev.status === 'Desmarcou' && newTime !== prev.originalTime) ? 'Agendada' : prev.status
+                    }));
+                  }}
                   className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary"
                 />
               </div>
@@ -12450,6 +12526,81 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
                 onChange={(e) => setFormData({...formData, amount: e.target.value})}
                 className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary font-mono"
               />
+            </div>
+
+            {/* Seletor de Status (Agendada / Confirmada / Desmarcou) */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                  Status da Sessão
+                </label>
+                {formData.status === 'Desmarcou' && (
+                  <span className="text-[9px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20 uppercase tracking-wider">
+                    Desmarcou
+                  </span>
+                )}
+                {formData.status === 'Confirmada' && (
+                  <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20 uppercase tracking-wider">
+                    ✓ Confirmada
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setFormData(prev => ({ ...prev, status: 'Agendada' }))}
+                  className={cn(
+                    "py-2.5 px-2 rounded-xl text-[11px] font-bold border transition-all flex items-center justify-center gap-1.5 cursor-pointer",
+                    formData.status === 'Agendada'
+                      ? "bg-primary text-white border-primary shadow-sm shadow-primary/20"
+                      : "bg-surface-muted text-text-muted border-border-ui hover:border-primary/40 hover:text-text-main"
+                  )}
+                  title="Sessão ativa e normal na agenda"
+                >
+                  <Clock size={13} className={formData.status === 'Agendada' ? "text-white" : "text-primary"} />
+                  <span>Agendada (Ativa)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData(prev => ({ ...prev, status: 'Confirmada' }))}
+                  className={cn(
+                    "py-2.5 px-2 rounded-xl text-[11px] font-bold border transition-all flex items-center justify-center gap-1.5 cursor-pointer",
+                    formData.status === 'Confirmada'
+                      ? "bg-emerald-500 text-white border-emerald-500 shadow-sm shadow-emerald-500/20 font-extrabold"
+                      : "bg-surface-muted text-text-muted border-border-ui hover:border-emerald-500/40 hover:text-text-main"
+                  )}
+                  title="Presença confirmada pelo paciente"
+                >
+                  <Check size={13} className={formData.status === 'Confirmada' ? "text-white" : "text-emerald-400"} />
+                  <span>Confirmada</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData(prev => ({ ...prev, status: 'Desmarcou' }))}
+                  className={cn(
+                    "py-2.5 px-2 rounded-xl text-[11px] font-bold border transition-all flex items-center justify-center gap-1.5 cursor-pointer",
+                    formData.status === 'Desmarcou'
+                      ? "bg-amber-500 text-black border-amber-500 shadow-sm shadow-amber-500/20 font-extrabold"
+                      : "bg-surface-muted text-text-muted border-border-ui hover:border-amber-500/40 hover:text-text-main"
+                  )}
+                  title="Paciente desmarcou"
+                >
+                  <AlertTriangle size={13} className={formData.status === 'Desmarcou' ? "text-black" : "text-amber-400"} />
+                  <span>Desmarcou</span>
+                </button>
+              </div>
+              {formData.status === 'Desmarcou' && (
+                <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 flex items-center justify-between gap-2">
+                  <span>Sessão desmarcada. Para remarcar, altere a data acima ou clique em <strong>Agendada (Ativa)</strong>.</span>
+                  <button
+                    type="button"
+                    onClick={() => setFormData(prev => ({ ...prev, status: 'Agendada' }))}
+                    className="shrink-0 px-2 py-1 bg-amber-500 text-black font-bold rounded-lg text-[10px] hover:bg-amber-400 transition-colors uppercase cursor-pointer"
+                  >
+                    Ativar Agora
+                  </button>
+                </div>
+              )}
             </div>
             
             {initialData && initialData.status === 'Recorrente' && (
