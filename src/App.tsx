@@ -4900,6 +4900,7 @@ function DashboardView({
         isOpen={isContentIdeasModalOpen}
         onClose={() => setIsContentIdeasModalOpen(false)}
         patients={patients}
+        user={user}
       />
     </motion.div>
   );

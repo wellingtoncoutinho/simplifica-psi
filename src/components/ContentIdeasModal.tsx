@@ -22,6 +22,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from '@google/genai';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import { Patient } from '../types';
 import { cn } from '../lib/utils';
 
@@ -42,6 +44,7 @@ interface ContentIdeasModalProps {
   isOpen: boolean;
   onClose: () => void;
   patients: Patient[];
+  user?: any;
 }
 
 const THEME_OPTIONS = [
@@ -116,13 +119,13 @@ async function generateContentWithFallback(
   throw lastError || new Error("Falha ao comunicar com os modelos Gemini.");
 }
 
-export default function ContentIdeasModal({ isOpen, onClose, patients }: ContentIdeasModalProps) {
+export default function ContentIdeasModal({ isOpen, onClose, patients, user }: ContentIdeasModalProps) {
   const [selectedTheme, setSelectedTheme] = useState('all');
   const [timeframe, setTimeframe] = useState('30');
   const [isGenerating, setIsGenerating] = useState(false);
   const [loadingStep, setLoadingStep] = useState('');
-  const [activeSubTab, setActiveSubTab] = useState<'generated' | 'saved'>('generated');
-  const [generatedIdeas, setGeneratedIdeas] = useState<ContentIdea[]>([]);
+  
+  // Recuperar ideias salvas do localStorage
   const [savedIdeas, setSavedIdeas] = useState<ContentIdea[]>(() => {
     try {
       const stored = localStorage.getItem('simplepsi_saved_content_ideas');
@@ -131,21 +134,86 @@ export default function ContentIdeasModal({ isOpen, onClose, patients }: Content
       return [];
     }
   });
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [customApiKey, setCustomApiKey] = useState(() => {
-    return localStorage.getItem('simplepsi_gemini_api_key') || '';
-  });
-  const [showKeyInput, setShowKeyInput] = useState(false);
-  const [tempApiKeyInput, setTempApiKeyInput] = useState('');
 
-  // Sincronizar savedIdeas no localStorage
+  // Recuperar última geração do localStorage para não perder em refresh
+  const [generatedIdeas, setGeneratedIdeas] = useState<ContentIdea[]>(() => {
+    try {
+      const stored = localStorage.getItem('simplepsi_last_generated_ideas');
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Aba inicial inteligente
+  const [activeSubTab, setActiveSubTab] = useState<'generated' | 'saved'>(() => {
+    try {
+      const storedGen = localStorage.getItem('simplepsi_last_generated_ideas');
+      const genCount = storedGen ? JSON.parse(storedGen).length : 0;
+      if (genCount > 0) return 'generated';
+      const storedSaved = localStorage.getItem('simplepsi_saved_content_ideas');
+      const savedCount = storedSaved ? JSON.parse(storedSaved).length : 0;
+      if (savedCount > 0) return 'saved';
+    } catch {}
+    return 'generated';
+  });
+
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Sincronizar generatedIdeas no localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('simplepsi_last_generated_ideas', JSON.stringify(generatedIdeas));
+    } catch (e) {
+      console.error('Falha ao salvar ultimas ideias geradas:', e);
+    }
+  }, [generatedIdeas]);
+
+  // Carregar do Firestore para sincronizar entre localhost e produção
+  useEffect(() => {
+    if (!user?.uid) return;
+    const loadFromFirestore = async () => {
+      try {
+        const docRef = doc(db, 'content_ideas', user.uid);
+        const snap = await getDoc(docRef);
+        if (snap.exists()) {
+          const data = snap.data();
+          if (Array.isArray(data.savedIdeas) && data.savedIdeas.length > 0) {
+            setSavedIdeas(prev => {
+              const map = new Map<string, ContentIdea>();
+              data.savedIdeas.forEach((item: ContentIdea) => map.set(item.id, item));
+              prev.forEach(item => map.set(item.id, item));
+              return Array.from(map.values());
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("Falha ao buscar ideias salvas do Firestore:", err);
+      }
+    };
+    loadFromFirestore();
+  }, [user?.uid]);
+
+  // Sincronizar savedIdeas no localStorage e no Firestore
   useEffect(() => {
     try {
       localStorage.setItem('simplepsi_saved_content_ideas', JSON.stringify(savedIdeas));
     } catch (e) {
       console.error('Falha ao salvar ideias no localStorage:', e);
     }
-  }, [savedIdeas]);
+
+    if (user?.uid) {
+      const saveToFirestore = async () => {
+        try {
+          const docRef = doc(db, 'content_ideas', user.uid);
+          await setDoc(docRef, { savedIdeas, updatedAt: new Date().toISOString() }, { merge: true });
+        } catch (e) {
+          console.warn("Falha ao salvar no Firestore:", e);
+        }
+      };
+      saveToFirestore();
+    }
+  }, [savedIdeas, user?.uid]);
 
   // Contagem de pacientes e evoluções elegíveis
   const eligibleStats = useMemo(() => {
@@ -212,9 +280,9 @@ function parseCustomDate(dateStr: string): Date | null {
 
   const handleGenerate = async (overrideKey?: any) => {
     const passedKey = typeof overrideKey === 'string' ? overrideKey : '';
-    const keyToUse = (passedKey || import.meta.env.VITE_GEMINI_API_KEY || customApiKey || localStorage.getItem('simplepsi_gemini_api_key') || '').trim();
+    const keyToUse = (passedKey || import.meta.env.VITE_GEMINI_API_KEY || localStorage.getItem('simplepsi_gemini_api_key') || '').trim();
     if (!keyToUse) {
-      setShowKeyInput(true);
+      alert("Chave da API do Gemini não configurada no ambiente. Verifique o arquivo .env.");
       return;
     }
 
