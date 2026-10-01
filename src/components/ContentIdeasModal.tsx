@@ -291,7 +291,7 @@ function parseCustomDate(dateStr: string): Date | null {
 
     try {
       const patientList = Array.isArray(patients) ? patients : [];
-      const activePatients = patientList.filter(p => !p.status || p.status === 'Ativo' || p.status === 'ativo');
+      const activePatients = patientList.filter(p => !p.status || p.status === 'Ativo' || (p.status as string) === 'ativo');
       if (activePatients.length === 0) {
         alert("Nenhum paciente encontrado para analisar.");
         setIsGenerating(false);

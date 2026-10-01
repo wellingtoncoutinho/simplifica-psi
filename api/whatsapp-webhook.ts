@@ -115,10 +115,10 @@ export default async function handler(req: any, res: any) {
         }
 
         if (matchedPatient) {
-          // Buscar sessões desse paciente com status 'Agendada'
+          // Buscar sessões desse paciente com status 'Agendada' ou 'Confirmada'
           const sessQuery = await db.collection('sessions')
             .where('patientId', '==', matchedPatient.id)
-            .where('status', '==', 'Agendada')
+            .where('status', 'in', ['Agendada', 'Confirmada'])
             .limit(1)
             .get();
 
@@ -156,6 +156,8 @@ export default async function handler(req: any, res: any) {
       const patientName = fullName.split(' ')[0].trim();
       const sessionDate = targetSessionId === 'TEST' ? 'amanhã' : formattedDateStr;
       const sessionTime = sessionData?.time || (targetSessionId === 'TEST' ? '15:00' : '');
+      const timeSuffix = sessionTime ? ` às ${sessionTime}` : '';
+      const safeTimeForTemplate = sessionTime || 'horário agendado';
 
       // TRATAMENTO DA RESPOSTA:
       // A) CONFIRMAR PRESENÇA
@@ -169,7 +171,7 @@ export default async function handler(req: any, res: any) {
           console.log(`✅ Sessão ${sessionData?.id} marcada como Confirmada!`);
         }
 
-        const replyMsg = `Perfeito, ${patientName}! Sua sessão está confirmada para ${sessionDate} às ${sessionTime} 💜. Essa é uma mensagem automática, para qualquer outra informação gostaria de pedir para você mandar mensagem diretamente para seu psi.`;
+        const replyMsg = `Perfeito, ${patientName}! Sua sessão está confirmada para ${sessionDate}${timeSuffix} 💜. Essa é uma mensagem automática, para qualquer outra informação gostaria de pedir para você mandar mensagem diretamente para seu psi.`;
         await sendWhatsAppTextMessage(fromPhone, replyMsg);
       }
       // B) DESMARCAR SESSÃO
@@ -183,20 +185,20 @@ export default async function handler(req: any, res: any) {
           console.log(`⚠️ Sessão ${sessionData?.id} marcada como Desmarcou.`);
         }
 
-        const replyMsg = `Entendido, ${patientName}. Registramos o cancelamento da sua sessão de ${sessionDate} às ${sessionTime} e o seu psicólogo já foi notificado 🤝. Caso precise remarcar para um novo horário, por favor entre em contato diretamente com ele.`;
+        const replyMsg = `Entendido, ${patientName}. Registramos o cancelamento da sua sessão de ${sessionDate}${timeSuffix} e o seu psicólogo já foi notificado 🤝. Caso precise remarcar para um novo horário, por favor entre em contato diretamente com ele.`;
         await sendWhatsAppTextMessage(fromPhone, replyMsg);
 
         // Notificar o psicólogo (Wellington) imediatamente no WhatsApp pessoal dele
         const wellingtonPhone = process.env.WELLINGTON_PERSONAL_PHONE || '5562983208784';
         try {
-          await sendWhatsAppCancellationAlert(wellingtonPhone, patientName, sessionDate, sessionTime);
+          await sendWhatsAppCancellationAlert(wellingtonPhone, patientName, sessionDate, safeTimeForTemplate);
           console.log(`📢 Alerta de cancelamento enviado via template para o WhatsApp do Wellington (${wellingtonPhone})!`);
         } catch (alertErr: any) {
           console.warn('⚠️ Falha ao enviar template de cancelamento para o psicólogo, tentando texto simples:', alertErr?.message);
           try {
             await sendWhatsAppTextMessage(
               wellingtonPhone, 
-              `🚨 *Aviso do Consultório*\n\nO paciente *${patientName}* acabou de desmarcar a sessão que estava agendada para *${sessionDate}* às *${sessionTime}*.\n\nAcesse sua agenda no Simple Psi para ver os detalhes.`
+              `🚨 *Aviso do Consultório*\n\nO paciente *${patientName}* acabou de desmarcar a sessão que estava agendada para *${sessionDate}*${sessionTime ? ` às *${sessionTime}*` : ''}.\n\nAcesse sua agenda no Simple Psi para ver os detalhes.`
             );
           } catch (textErr: any) {
             console.error('❌ Falha ao enviar aviso de cancelamento:', textErr);

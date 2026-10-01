@@ -33,6 +33,13 @@ export function getDb() {
 
   if (serviceAccount) {
     try {
+      if (typeof serviceAccount === 'string') {
+        try { serviceAccount = JSON.parse(serviceAccount); } catch {}
+      }
+      if (serviceAccount.private_key) {
+        serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+      }
+
       if (!getApps().length) {
         initAdmin({
           credential: cert(serviceAccount),
