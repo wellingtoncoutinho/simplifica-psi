@@ -6,7 +6,6 @@ interface OrganicHeroStageProps {
   onLogin: (plan?: 'consultorio' | 'ilimitado' | null) => void;
   scrollToPlans: () => void;
   country?: 'BR' | 'PT';
-  onCountryChange?: (country: 'BR' | 'PT') => void;
 }
 
 const dynamicPhrasesBR = [
@@ -34,8 +33,7 @@ const getProgress = (val: number, start: number, end: number) => {
 export default function OrganicHeroStage({ 
   onLogin, 
   scrollToPlans,
-  country = 'BR',
-  onCountryChange
+  country = 'BR'
 }: OrganicHeroStageProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [currentPhraseIndex, setCurrentPhraseIndex] = useState(0);
@@ -214,36 +212,6 @@ export default function OrganicHeroStage({
 
           {/* Actions */}
           <div className="flex items-center gap-1.5 sm:gap-2.5">
-            {/* Country Selector Toggle */}
-            <div className="flex items-center bg-white/90 border border-[#2E3C2B]/10 rounded-full p-0.5 shadow-xs">
-              <button
-                type="button"
-                onClick={() => onCountryChange?.('PT')}
-                className={`px-2 py-1 rounded-full text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer ${
-                  country === 'PT' 
-                    ? 'bg-[#5F7D5C] text-white shadow-xs' 
-                    : 'text-[#2E3C2B]/60 hover:text-[#2E3C2B]'
-                }`}
-                title="Portugal (OPP / Euro)"
-              >
-                <span>🇵🇹</span>
-                <span className="hidden sm:inline font-mono">PT</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => onCountryChange?.('BR')}
-                className={`px-2 py-1 rounded-full text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer ${
-                  country === 'BR' 
-                    ? 'bg-[#5F7D5C] text-white shadow-xs' 
-                    : 'text-[#2E3C2B]/60 hover:text-[#2E3C2B]'
-                }`}
-                title="Brasil (CFP / Real)"
-              >
-                <span>🇧🇷</span>
-                <span className="hidden sm:inline font-mono">BR</span>
-              </button>
-            </div>
-
             <button
               onClick={() => onLogin(null)}
               className="text-xs font-bold text-[#2E3C2B]/80 hover:text-[#5F7D5C] px-2 sm:px-3 py-2 transition-colors cursor-pointer hidden sm:block"

@@ -604,36 +604,22 @@ export default function App() {
     }
     return 'BR';
   });
-  const [ptRedirectNotice, setPtRedirectNotice] = useState<boolean>(false);
-
-  // Monitor Portugal routing & persistent memory redirection (STRICTLY for unauthenticated landing page visitors)
+  // Monitor country routing strictly based on URL for unauthenticated visitors
   useEffect(() => {
     if (typeof window === 'undefined') return;
-
-    // Logged in users MUST NEVER be redirected to /pt or have their preference overridden by landing page URLs
-    if (user || loading) {
-      if (ptRedirectNotice) setPtRedirectNotice(false);
-      return;
-    }
+    if (user || loading) return;
 
     const pathname = window.location.pathname;
     const isPtPath = pathname.startsWith('/pt') || window.location.search.includes('country=pt');
-    const saved = localStorage.getItem('simplepsi_country');
 
     if (isPtPath) {
       localStorage.setItem('simplepsi_country', 'PT');
       if (currentCountry !== 'PT') setCurrentCountry('PT');
-    } else if (saved === 'PT' && (pathname === '/' || pathname === '' || pathname === '/index.html')) {
-      // Unauthenticated visitor with saved PT preference visited root
-      setPtRedirectNotice(true);
-      const timer = setTimeout(() => {
-        window.history.replaceState({}, '', '/pt');
-        setCurrentCountry('PT');
-        setPtRedirectNotice(false);
-      }, 1500);
-      return () => clearTimeout(timer);
+    } else {
+      localStorage.setItem('simplepsi_country', 'BR');
+      if (currentCountry !== 'BR') setCurrentCountry('BR');
     }
-  }, [currentCountry, user, loading, ptRedirectNotice]);
+  }, [currentCountry, user, loading]);
 
   // Guarantee that logged-in users are NEVER left on the /pt landing page URL
   useEffect(() => {
@@ -3414,36 +3400,9 @@ Como posso te ajudar hoje?`
   if (!user && !currentClinicMember) {
     return (
       <>
-        {/* Notificação amigável de redirecionamento para PT quando utilizador de Portugal acede à raiz */}
-        {ptRedirectNotice && (
-          <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[9999] max-w-md w-[92%] bg-[#2E3C2B] text-white p-4 rounded-2xl shadow-2xl border border-white/20 flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-4">
-            <div className="flex items-center gap-3">
-              <span className="text-2xl">🇵🇹</span>
-              <div className="text-left text-xs">
-                <p className="font-bold text-white">Versão de Portugal Detetada</p>
-                <p className="text-white/75 text-[11px]">A redirecionar para a versão Portugal (simplepsi.com/pt)...</p>
-              </div>
-            </div>
-            <button
-              onClick={() => {
-                localStorage.setItem('simplepsi_country', 'BR');
-                setCurrentCountry('BR');
-                setPtRedirectNotice(false);
-              }}
-              className="px-2.5 py-1 text-[10px] font-bold bg-white/10 hover:bg-white/20 rounded-lg text-white/80 transition-all cursor-pointer whitespace-nowrap"
-            >
-              Ficar no Brasil
-            </button>
-          </div>
-        )}
-
         <LandingPage 
           onLogin={handleOpenAuthModal} 
           initialCountry={currentCountry}
-          onCountryChange={(newCountry) => {
-            setCurrentCountry(newCountry);
-            localStorage.setItem('simplepsi_country', newCountry);
-          }}
         />
         
         <AuthModal 

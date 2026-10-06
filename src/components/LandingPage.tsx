@@ -47,18 +47,15 @@ import OrganicHeroStage from "./OrganicHeroStage";
 interface LandingPageProps {
   onLogin: (plan?: 'consultorio' | 'ilimitado' | null, country?: 'BR' | 'PT') => void;
   initialCountry?: 'BR' | 'PT';
-  onCountryChange?: (country: 'BR' | 'PT') => void;
 }
 
-export default function LandingPage({ onLogin, initialCountry, onCountryChange }: LandingPageProps) {
+export default function LandingPage({ onLogin, initialCountry }: LandingPageProps) {
   const [country, setCountry] = useState<'BR' | 'PT'>(() => {
     if (initialCountry) return initialCountry;
     if (typeof window !== 'undefined') {
       if (window.location.pathname.startsWith('/pt') || window.location.search.includes('country=pt')) {
         return 'PT';
       }
-      const saved = localStorage.getItem('simplepsi_country');
-      if (saved === 'PT' || saved === 'BR') return saved;
     }
     return 'BR';
   });
@@ -77,17 +74,6 @@ export default function LandingPage({ onLogin, initialCountry, onCountryChange }
       setSessionPrice(initialCountry === 'PT' ? 50 : 150);
     }
   }, [initialCountry]);
-
-  const handleCountryChange = (newCountry: 'BR' | 'PT') => {
-    setCountry(newCountry);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('simplepsi_country', newCountry);
-      const newPath = newCountry === 'PT' ? '/pt' : '/';
-      window.history.pushState({}, '', newPath);
-    }
-    setSessionPrice(newCountry === 'PT' ? 50 : 150);
-    onCountryChange?.(newCountry);
-  };
 
   const monthlySessions = weeklySessions * 4;
   const missedSessions = Math.max(1, Math.round(monthlySessions * 0.10));
@@ -297,7 +283,6 @@ export default function LandingPage({ onLogin, initialCountry, onCountryChange }
         onLogin={handleCheckout} 
         scrollToPlans={scrollToPlans} 
         country={country}
-        onCountryChange={handleCountryChange}
       />
 
       {/* ---------------------------------------------------
