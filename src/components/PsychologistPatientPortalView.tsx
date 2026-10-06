@@ -55,7 +55,7 @@ import {
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Patient, PatientPortal, PdfLibraryItem, DiaryEntry, ClinicalModuleKey, ClinicalModulesConfig, DiaryEntryData } from '../types';
-import { DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE, fillContractTemplate } from '../utils/contractDefaults';
+import { DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE, DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE_PT, fillContractTemplate } from '../utils/contractDefaults';
 
 interface PsychologistPatientPortalViewProps {
   user: any;
@@ -78,7 +78,17 @@ export default function PsychologistPatientPortalView({
 
   // Psychologist Profile & Global Contract Template State
   const [psychologistProfile, setPsychologistProfile] = useState<any | null>(null);
-  const [contractTemplate, setContractTemplate] = useState<string>(DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE);
+  const isPT = psychologistProfile?.country === 'PT' || (typeof window !== 'undefined' && (
+    localStorage.getItem('simplepsi_country') === 'PT' ||
+    localStorage.getItem('prof_country') === 'PT' ||
+    window.location.pathname.startsWith('/pt')
+  ));
+  const [contractTemplate, setContractTemplate] = useState<string>(() => {
+    if (typeof window !== 'undefined' && (localStorage.getItem('simplepsi_country') === 'PT' || localStorage.getItem('prof_country') === 'PT' || window.location.pathname.startsWith('/pt'))) {
+      return DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE_PT;
+    }
+    return DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE;
+  });
   const [contractRequired, setContractRequired] = useState<boolean>(true);
   const [savingContract, setSavingContract] = useState<boolean>(false);
   const [viewingContractModal, setViewingContractModal] = useState<boolean>(false);
@@ -135,6 +145,8 @@ export default function PsychologistPatientPortalView({
         setPsychologistProfile(data);
         if (data.contractTemplate) {
           setContractTemplate(data.contractTemplate);
+        } else if (data.country === 'PT' || localStorage.getItem('simplepsi_country') === 'PT') {
+          setContractTemplate(DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE_PT);
         }
         if (data.contractRequired !== undefined) {
           setContractRequired(data.contractRequired);
@@ -154,7 +166,7 @@ export default function PsychologistPatientPortalView({
         contractRequired: contractRequired,
         updatedAt: new Date().toISOString()
       });
-      alert('Modelo de Contrato Terapêutico salvo com sucesso! Todos os pacientes que acessarem o portal verão este modelo.');
+      alert(isPT ? 'Modelo de Contrato Terapêutico guardado com sucesso!' : 'Modelo de Contrato Terapêutico salvo com sucesso! Todos os pacientes que acessarem o portal verão este modelo.');
     } catch (err: any) {
       console.error('Erro ao salvar modelo de contrato:', err);
       alert('Erro ao salvar modelo de contrato: ' + (err.message || String(err)));
@@ -165,8 +177,8 @@ export default function PsychologistPatientPortalView({
 
   // Restore Default Contract Template
   const handleRestoreDefaultContract = () => {
-    if (window.confirm('Tem certeza que deseja restaurar o modelo padrão do SimplePsi? As alterações não salvas serão substituídas.')) {
-      setContractTemplate(DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE);
+    if (window.confirm(isPT ? 'Tem a certeza que deseja restaurar o modelo padrão do SimplePsi? As alterações não guardadas serão substituídas.' : 'Tem certeza que deseja restaurar o modelo padrão do SimplePsi? As alterações não salvas serão substituídas.')) {
+      setContractTemplate(isPT ? DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE_PT : DEFAULT_THERAPEUTIC_CONTRACT_TEMPLATE);
     }
   };
 
@@ -250,16 +262,16 @@ export default function PsychologistPatientPortalView({
         docPdf.text(`Psicólogo(a): ${psychologistProfile.name}`, rightX, lineY, { align: 'right' });
         lineY += 5;
       }
-      if (psychologistProfile?.crp) {
-        docPdf.text(`CRP: ${psychologistProfile.crp}`, rightX, lineY, { align: 'right' });
+      if (psychologistProfile?.crp || psychologistProfile?.oppNumber) {
+        docPdf.text(`${isPT ? 'Cédula OPP' : 'CRP'}: ${psychologistProfile?.oppNumber || psychologistProfile?.crp}`, rightX, lineY, { align: 'right' });
         lineY += 5;
       }
-      if (psychologistProfile?.cpfCnpj) {
-        docPdf.text(`CPF/CNPJ: ${psychologistProfile.cpfCnpj}`, rightX, lineY, { align: 'right' });
+      if (psychologistProfile?.cpfCnpj || psychologistProfile?.nif) {
+        docPdf.text(`${isPT ? 'NIF' : 'CPF/CNPJ'}: ${psychologistProfile?.nif || psychologistProfile?.cpfCnpj}`, rightX, lineY, { align: 'right' });
         lineY += 5;
       }
       if (psychologistProfile?.phone) {
-        docPdf.text(`Tel: ${psychologistProfile.phone}`, rightX, lineY, { align: 'right' });
+        docPdf.text(`${isPT ? 'Telemóvel' : 'Tel'}: ${psychologistProfile.phone}`, rightX, lineY, { align: 'right' });
         lineY += 5;
       }
 
@@ -275,17 +287,21 @@ export default function PsychologistPatientPortalView({
       const selectedPatient = patients.find(p => p.id === selectedPatientId);
       const textToRender = portalData.contractSignedText || fillContractTemplate(contractTemplate, {
         psychologistName: psychologistProfile?.name,
-        psychologistCrp: psychologistProfile?.crp,
-        psychologistCpfCnpj: psychologistProfile?.cpfCnpj,
+        psychologistCrp: psychologistProfile?.crp || psychologistProfile?.oppNumber,
+        psychologistOpp: psychologistProfile?.oppNumber || psychologistProfile?.crp,
+        psychologistCpfCnpj: psychologistProfile?.cpfCnpj || psychologistProfile?.nif,
+        psychologistNif: psychologistProfile?.nif || psychologistProfile?.cpfCnpj,
         psychologistAddress: psychologistProfile?.address,
         patientName: portalData.name,
-        patientCpf: portalData.cpf,
+        patientCpf: portalData.cpf || portalData.nif,
+        patientNif: portalData.nif || portalData.cpf,
         patientBirthDate: portalData.birthDate,
         patientAddress: portalData.address,
         patientPhone: portalData.phone,
         sessionAmount: selectedPatient?.amount,
         paymentPeriodicity: selectedPatient?.paymentPeriodicity,
-        date: portalData.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleDateString('pt-BR') : undefined
+        date: portalData.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleDateString(isPT ? 'pt-PT' : 'pt-BR') : undefined,
+        country: isPT ? 'PT' : 'BR'
       });
 
       // Split text across pages
@@ -318,26 +334,26 @@ export default function PsychologistPatientPortalView({
 
       docPdf.setFontSize(9.5);
       docPdf.setFont('helvetica', 'bold');
-      docPdf.text('REGISTRO DE ACEITE E ASSINATURA ELETRÔNICA', 14, cursorY);
+      docPdf.text(isPT ? 'REGISTO DE ACEITAÇÃO E ASSINATURA ELETRÓNICA' : 'REGISTRO DE ACEITE E ASSINATURA ELETRÔNICA', 14, cursorY);
       cursorY += 6;
 
       docPdf.setFontSize(8);
       docPdf.setFont('helvetica', 'normal');
       
       if (portalData.contractSigned && !portalData.contractManualOverride) {
-        const signedDateStr = portalData.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleString('pt-BR') : 'Data não registrada';
-        docPdf.text(`• Status: Assinado digitalmente pelo paciente no Portal SimplePsi`, 14, cursorY);
+        const signedDateStr = portalData.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleString(isPT ? 'pt-PT' : 'pt-BR') : (isPT ? 'Data não registada' : 'Data não registrada');
+        docPdf.text(isPT ? `• Estado: Assinado digitalmente pelo utente no Portal SimplePsi` : `• Status: Assinado digitalmente pelo paciente no Portal SimplePsi`, 14, cursorY);
         cursorY += 4.5;
         docPdf.text(`• Data e hora da assinatura: ${signedDateStr}`, 14, cursorY);
         cursorY += 4.5;
         docPdf.text(`• Nome do signatário: ${portalData.contractSignedBy || portalData.name}`, 14, cursorY);
         cursorY += 4.5;
-        docPdf.text(`• CPF do signatário: ${portalData.contractSignedDocument || portalData.cpf || 'Não informado'}`, 14, cursorY);
+        docPdf.text(`• ${isPT ? 'NIF' : 'CPF'} do signatário: ${portalData.contractSignedDocument || portalData.nif || portalData.cpf || 'Não informado'}`, 14, cursorY);
         cursorY += 6;
 
         if (portalData.contractSignature) {
           try {
-            docPdf.text('Rubrica / Assinatura do Paciente:', 14, cursorY);
+            docPdf.text(isPT ? 'Rubrica / Assinatura do Utente:' : 'Rubrica / Assinatura do Paciente:', 14, cursorY);
             cursorY += 3;
             docPdf.addImage(portalData.contractSignature, 'PNG', 14, cursorY, 45, 18);
             cursorY += 22;
@@ -346,15 +362,15 @@ export default function PsychologistPatientPortalView({
           }
         }
       } else if (portalData.contractManualOverride) {
-        docPdf.text(`• Status: Marcado como assinado fisicamente / em papel`, 14, cursorY);
+        docPdf.text(isPT ? `• Estado: Marcado como assinado presencialmente / em papel` : `• Status: Marcado como assinado fisicamente / em papel`, 14, cursorY);
         cursorY += 4.5;
-        docPdf.text(`• Observações do terapeuta: ${portalData.contractManualNotes || 'Contrato assinado em consultório'}`, 14, cursorY);
+        docPdf.text(`• Observações do terapeuta: ${portalData.contractManualNotes || (isPT ? 'Contrato assinado em consultório' : 'Contrato assinado em consultório')}`, 14, cursorY);
         cursorY += 4.5;
         if (portalData.contractSignedAt) {
-          docPdf.text(`• Registrado em: ${new Date(portalData.contractSignedAt).toLocaleString('pt-BR')}`, 14, cursorY);
+          docPdf.text(`• ${isPT ? 'Registado' : 'Registrado'} em: ${new Date(portalData.contractSignedAt).toLocaleString(isPT ? 'pt-PT' : 'pt-BR')}`, 14, cursorY);
         }
       } else {
-        docPdf.text(`• Status: Pendente de assinatura`, 14, cursorY);
+        docPdf.text(isPT ? `• Estado: Pendente de assinatura` : `• Status: Pendente de assinatura`, 14, cursorY);
       }
 
       const fileName = `Contrato_Terapeutico_${portalData.name.replace(/\s+/g, '_')}.pdf`;
@@ -751,10 +767,10 @@ export default function PsychologistPatientPortalView({
     <div className="flex flex-col lg:flex-row gap-6 h-full min-h-[70vh] text-left animate-in fade-in duration-300">
       {/* Left Sidebar: Patients List */}
       <div className="w-full lg:w-64 lg:shrink-0 bg-card border border-border-ui rounded-[24px] p-4 flex flex-col gap-3">
-        <h4 className="font-bold text-sm text-primary uppercase tracking-widest px-2">Pacientes</h4>
+        <h4 className="font-bold text-sm text-primary uppercase tracking-widest px-2">{isPT ? 'Utentes' : 'Pacientes'}</h4>
         <div className="flex-1 overflow-y-auto max-h-[250px] lg:max-h-[60vh] space-y-1 custom-scrollbar pr-1">
           {activePatients.length === 0 ? (
-            <p className="text-xs text-text-muted p-4">Nenhum paciente cadastrado.</p>
+            <p className="text-xs text-text-muted p-4">{isPT ? 'Nenhum utente registado.' : 'Nenhum paciente cadastrado.'}</p>
           ) : (
             activePatients.map(p => {
               const photo = p.photo;
@@ -780,7 +796,7 @@ export default function PsychologistPatientPortalView({
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="truncate text-xs font-semibold text-text-main">{p.name}</p>
-                    <p className="text-[9px] text-text-muted truncate">CPF: {p.cpf || p.document || 'Não informado'}</p>
+                    <p className="text-[9px] text-text-muted truncate">{isPT ? 'NIF: ' : 'CPF: '}{p.nif || p.cpf || p.document || (isPT ? 'Não informado' : 'Não informado')}</p>
                   </div>
                   <ArrowRight size={14} className={`opacity-40 ${selectedPatientId === p.id ? 'translate-x-1 opacity-100 transition-transform' : ''}`} />
                 </button>
@@ -796,21 +812,21 @@ export default function PsychologistPatientPortalView({
           <div className="flex-1 bg-card border border-border-ui rounded-[32px] p-8 flex flex-col items-center justify-center text-center gap-4 text-text-muted">
             <UserCircle size={48} className="text-primary animate-pulse" />
             <div>
-              <h3 className="font-bold text-lg text-text-main">Área do Paciente</h3>
-              <p className="text-sm max-w-sm mt-1">Selecione um paciente na barra lateral para carregar seu portal, compartilhar PDFs, gerenciar o plano de segurança ou ler os diários semanais.</p>
+              <h3 className="font-bold text-lg text-text-main">{isPT ? 'Área do Utente' : 'Área do Paciente'}</h3>
+              <p className="text-sm max-w-sm mt-1">{isPT ? 'Selecione um utente na barra lateral para carregar o seu portal, partilhar PDFs, gerir o plano de segurança ou ler os diários semanais.' : 'Selecione um paciente na barra lateral para carregar seu portal, compartilhar PDFs, gerenciar o plano de segurança ou ler os diários semanais.'}</p>
             </div>
           </div>
         ) : loadingPortal ? (
           <div className="flex-1 bg-card border border-border-ui rounded-[32px] p-8 flex items-center justify-center">
             <div className="flex flex-col items-center gap-3">
               <Loader2 className="animate-spin text-primary" size={32} />
-              <p className="text-xs text-text-muted font-bold uppercase tracking-widest">Carregando portal do paciente...</p>
+              <p className="text-xs text-text-muted font-bold uppercase tracking-widest">{isPT ? 'A carregar portal do utente...' : 'Carregando portal do paciente...'}</p>
             </div>
           </div>
         ) : (
           <div className="flex-1 bg-card border border-border-ui rounded-[32px] p-6 flex flex-col gap-6">
             {/* Patient Header Summary */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-white/5">
+            <div className="flex flex-col sm:row items-start sm:items-center justify-between gap-4 pb-4 border-b border-white/5">
               <div className="flex items-center gap-4">
                 {(() => {
                   const selectedPatient = patients.find(p => p.id === selectedPatientId);
@@ -831,7 +847,7 @@ export default function PsychologistPatientPortalView({
                 <div>
                   <h3 className="font-bold text-lg text-text-main">{portalData?.name}</h3>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted mt-0.5">
-                    <span>CPF: <strong className="text-text-main">{portalData?.cpf || (patients.find(p => p.id === selectedPatientId)?.cpf || patients.find(p => p.id === selectedPatientId)?.document || '').replace(/\D/g, '') || 'Não cadastrado'}</strong></span>
+                    <span>{isPT ? 'NIF: ' : 'CPF: '}<strong className="text-text-main">{portalData?.nif || portalData?.cpf || (patients.find(p => p.id === selectedPatientId)?.nif || patients.find(p => p.id === selectedPatientId)?.cpf || patients.find(p => p.id === selectedPatientId)?.document || '').replace(/\D/g, '') || (isPT ? 'Não registado' : 'Não cadastrado')}</strong></span>
                   </div>
                 </div>
               </div>
@@ -843,7 +859,7 @@ export default function PsychologistPatientPortalView({
                   className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-primary hover:bg-primary/95 text-white font-semibold text-xs rounded-xl transition-all shadow-sm"
                 >
                   {copiedLink ? <Check size={14} /> : <Copy size={14} />}
-                  <span>{copiedLink ? 'Link Copiado!' : 'Copiar Link'}</span>
+                  <span>{copiedLink ? (isPT ? 'Hiperligação Copiada!' : 'Link Copiado!') : (isPT ? 'Copiar Hiperligação' : 'Copiar Link')}</span>
                 </button>
               </div>
             </div>
@@ -2126,7 +2142,7 @@ export default function PsychologistPatientPortalView({
                 <div className="space-y-6">
                   <div>
                     <h4 className="font-bold text-sm text-text-main">Contrato Terapêutico & Assinatura Digital</h4>
-                    <p className="text-xs text-text-muted mt-0.5">Gerencie a assinatura do contrato com este paciente e customize o modelo institucional do seu consultório.</p>
+                    <p className="text-xs text-text-muted mt-0.5">{isPT ? 'Faça a gestão da assinatura do contrato com este utente e personalize o modelo institucional do seu consultório.' : 'Gerencie a assinatura do contrato com este paciente e customize o modelo institucional do seu consultório.'}</p>
                   </div>
 
                   {/* Patient-Specific Status Banner */}
@@ -2147,12 +2163,12 @@ export default function PsychologistPatientPortalView({
                           </div>
                         )}
                         <div>
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Status do Paciente</span>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted">{isPT ? 'Estado do Utente' : 'Status do Paciente'}</span>
                           <h5 className="font-bold text-sm text-text-main">
                             {portalData?.contractSigned && !portalData?.contractManualOverride
                               ? '✓ Contrato Assinado Digitalmente'
                               : portalData?.contractManualOverride
-                              ? '✓ Assinado Fisicamente (Papel / Externo)'
+                              ? (isPT ? '✓ Assinado Presencialmente (Papel / Externo)' : '✓ Assinado Fisicamente (Papel / Externo)')
                               : '⏳ Pendente de Assinatura'}
                           </h5>
                         </div>
@@ -2174,7 +2190,7 @@ export default function PsychologistPatientPortalView({
                           className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-text-main font-semibold text-xs rounded-xl transition-all border border-white/5"
                         >
                           <Download size={13} />
-                          <span>Baixar PDF</span>
+                          <span>{isPT ? 'Descarregar PDF' : 'Baixar PDF'}</span>
                         </button>
                       </div>
                     </div>
@@ -2184,13 +2200,13 @@ export default function PsychologistPatientPortalView({
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center bg-card/60 rounded-xl p-4 border border-emerald-500/20">
                         <div className="space-y-1.5 text-xs">
                           <p className="text-text-muted">
-                            <strong className="text-emerald-400">Data e Hora:</strong> {portalData.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleString('pt-BR') : 'Registrado'}
+                            <strong className="text-emerald-400">Data e Hora:</strong> {portalData.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleString(isPT ? 'pt-PT' : 'pt-BR') : (isPT ? 'Registado' : 'Registrado')}
                           </p>
                           <p className="text-text-muted">
                             <strong className="text-text-main">Signatário:</strong> {portalData.contractSignedBy || portalData.name}
                           </p>
                           <p className="text-text-muted">
-                            <strong className="text-text-main">CPF Registrado:</strong> {portalData.contractSignedDocument || portalData.cpf || 'Não informado'}
+                            <strong className="text-text-main">{isPT ? 'NIF Registado:' : 'CPF Registrado:'}</strong> {portalData.contractSignedDocument || portalData.nif || portalData.cpf || 'Não informado'}
                           </p>
                         </div>
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 md:border-l md:border-white/10 md:pl-4">
@@ -2200,13 +2216,13 @@ export default function PsychologistPatientPortalView({
                               <div className="bg-white rounded-lg p-1.5 w-fit border border-gray-200 shadow-inner">
                                 <img 
                                   src={portalData.contractSignature} 
-                                  alt="Assinatura do Paciente" 
+                                  alt={isPT ? "Assinatura do Utente" : "Assinatura do Paciente"} 
                                   className="h-10 w-auto max-w-[140px] object-contain" 
                                 />
                               </div>
                             </div>
                           ) : (
-                            <span className="text-xs text-text-muted italic">Aceite digital registrado</span>
+                            <span className="text-xs text-text-muted italic">{isPT ? 'Aceitação digital registada' : 'Aceite digital registrado'}</span>
                           )}
 
                           <button
@@ -2223,11 +2239,11 @@ export default function PsychologistPatientPortalView({
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card/60 rounded-xl p-4 border border-blue-500/20">
                         <div className="space-y-1 text-xs">
                           <p className="text-text-muted">
-                            <strong className="text-blue-400">Observação:</strong> {portalData.contractManualNotes || 'Contrato assinado fisicamente'}
+                            <strong className="text-blue-400">Observação:</strong> {portalData.contractManualNotes || (isPT ? 'Contrato assinado presencialmente' : 'Contrato assinado fisicamente')}
                           </p>
                           {portalData.contractSignedAt && (
                             <p className="text-[11px] text-text-muted">
-                              Registrado em: {new Date(portalData.contractSignedAt).toLocaleString('pt-BR')}
+                              {isPT ? 'Registado em:' : 'Registrado em:'} {new Date(portalData.contractSignedAt).toLocaleString(isPT ? 'pt-PT' : 'pt-BR')}
                             </p>
                           )}
                         </div>
@@ -2244,10 +2260,10 @@ export default function PsychologistPatientPortalView({
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-amber-500/10 border border-amber-500/20 rounded-xl p-4">
                         <div className="space-y-1 max-w-xl">
                           <p className="text-xs text-amber-200 leading-relaxed">
-                            O paciente será obrigado a ler e assinar este contrato na tela logo no primeiro login pelo link do portal.
+                            {isPT ? 'O utente terá de ler e assinar este contrato no ecrã logo no primeiro início de sessão pela hiperligação do portal.' : 'O paciente será obrigado a ler e assinar este contrato na tela logo no primeiro login pelo link do portal.'}
                           </p>
                           <p className="text-[11px] text-text-muted">
-                            Caso o paciente já tenha assinado o contrato fisicamente em papel no consultório, você pode marcar abaixo para dispensar a cobrança no portal.
+                            {isPT ? 'Caso o utente já tenha assinado o contrato presencialmente em papel no consultório, pode marcar abaixo para dispensar a assinatura no portal.' : 'Caso o paciente já tenha assinado o contrato fisicamente em papel no consultório, você pode marcar abaixo para dispensar a cobrança no portal.'}
                           </p>
                         </div>
                         <button
@@ -2256,7 +2272,7 @@ export default function PsychologistPatientPortalView({
                           className="shrink-0 flex items-center justify-center gap-2 px-4 py-2 bg-primary hover:bg-primary/95 text-white font-semibold text-xs rounded-xl transition-all shadow-sm"
                         >
                           <FileCheck size={14} />
-                          <span>Marcar como Assinado em Papel</span>
+                          <span>{isPT ? 'Marcar como Assinado em Papel' : 'Marcar como Assinado em Papel'}</span>
                         </button>
                       </div>
                     )}
@@ -2266,9 +2282,9 @@ export default function PsychologistPatientPortalView({
                   <div className="bg-surface-muted border border-border-ui rounded-2xl p-5 space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div>
-                        <h5 className="font-bold text-xs text-text-main uppercase tracking-widest">Modelo de Contrato (Geral para Todos os Pacientes)</h5>
+                        <h5 className="font-bold text-xs text-text-main uppercase tracking-widest">{isPT ? 'Modelo de Contrato (Geral para Todos os Utentes)' : 'Modelo de Contrato (Geral para Todos os Pacientes)'}</h5>
                         <p className="text-[11px] text-text-muted mt-0.5">
-                          Personalize o texto do contrato. As variáveis entre chaves duplas serão substituídas automaticamente pelos dados cadastrais de cada paciente.
+                          {isPT ? 'Personalize o texto do contrato. As variáveis entre chavetas duplas serão substituídas automaticamente pelos dados cadastrais de cada utente.' : 'Personalize o texto do contrato. As variáveis entre chaves duplas serão substituídas automaticamente pelos dados cadastrais de cada paciente.'}
                         </p>
                       </div>
                       <button
@@ -2284,7 +2300,20 @@ export default function PsychologistPatientPortalView({
                     <div className="space-y-1.5">
                       <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Variáveis Dinâmicas Disponíveis:</span>
                       <div className="flex flex-wrap gap-1.5">
-                        {[
+                        {(isPT ? [
+                          { label: '{{NOME_PACIENTE}}', desc: 'Nome do utente' },
+                          { label: '{{NIF_PACIENTE}}', desc: 'NIF do utente' },
+                          { label: '{{DATA_NASCIMENTO_PACIENTE}}', desc: 'Nascimento' },
+                          { label: '{{ENDERECO_PACIENTE}}', desc: 'Morada' },
+                          { label: '{{TELEFONE_PACIENTE}}', desc: 'Telemóvel' },
+                          { label: '{{VALOR_SESSAO}}', desc: 'Valor da consulta' },
+                          { label: '{{PERIODICIDADE_PAGAMENTO}}', desc: 'Forma pagamento' },
+                          { label: '{{NOME_PSICOLOGO}}', desc: 'O seu nome' },
+                          { label: '{{OPP_PSICOLOGO}}', desc: 'Cédula OPP' },
+                          { label: '{{NIF_PSICOLOGO}}', desc: 'O seu NIF' },
+                          { label: '{{ENDERECO_PSICOLOGO}}', desc: 'A sua morada' },
+                          { label: '{{DATA_ATUAL}}', desc: 'Data de hoje' }
+                        ] : [
                           { label: '{{NOME_PACIENTE}}', desc: 'Nome do paciente' },
                           { label: '{{CPF_PACIENTE}}', desc: 'CPF do paciente' },
                           { label: '{{DATA_NASCIMENTO_PACIENTE}}', desc: 'Nascimento' },
@@ -2297,7 +2326,7 @@ export default function PsychologistPatientPortalView({
                           { label: '{{CPF_CNPJ_PSICOLOGO}}', desc: 'Seu CPF/CNPJ' },
                           { label: '{{ENDERECO_PSICOLOGO}}', desc: 'Seu endereço' },
                           { label: '{{DATA_ATUAL}}', desc: 'Data de hoje' }
-                        ].map(tag => (
+                        ]).map(tag => (
                           <button
                             key={tag.label}
                             type="button"
@@ -2392,7 +2421,7 @@ Dica: No primeiro acesso, você poderá completar seus dados de cadastro (caso f
                 <FileCheck className="text-primary" size={20} />
                 <div>
                   <h3 className="font-bold text-base text-text-main">Contrato Terapêutico</h3>
-                  <p className="text-xs text-text-muted">Paciente: {portalData.name}</p>
+                  <p className="text-xs text-text-muted">{isPT ? 'Utente: ' : 'Paciente: '}{portalData.name}</p>
                 </div>
               </div>
               <button
@@ -2407,28 +2436,32 @@ Dica: No primeiro acesso, você poderá completar seus dados de cadastro (caso f
             <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar text-xs leading-relaxed text-text-main whitespace-pre-wrap font-mono bg-surface-muted/50 rounded-xl m-4 border border-border-ui">
               {portalData.contractSignedText || fillContractTemplate(contractTemplate, {
                 psychologistName: psychologistProfile?.name,
-                psychologistCrp: psychologistProfile?.crp,
-                psychologistCpfCnpj: psychologistProfile?.cpfCnpj,
+                psychologistCrp: psychologistProfile?.crp || psychologistProfile?.oppNumber,
+                psychologistOpp: psychologistProfile?.oppNumber || psychologistProfile?.crp,
+                psychologistCpfCnpj: psychologistProfile?.cpfCnpj || psychologistProfile?.nif,
+                psychologistNif: psychologistProfile?.nif || psychologistProfile?.cpfCnpj,
                 psychologistAddress: psychologistProfile?.address,
                 patientName: portalData.name,
-                patientCpf: portalData.cpf,
+                patientCpf: portalData.cpf || portalData.nif,
+                patientNif: portalData.nif || portalData.cpf,
                 patientBirthDate: portalData.birthDate,
                 patientAddress: portalData.address,
                 patientPhone: portalData.phone,
                 sessionAmount: patients.find(p => p.id === selectedPatientId)?.amount,
                 paymentPeriodicity: patients.find(p => p.id === selectedPatientId)?.paymentPeriodicity,
-                date: portalData.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleDateString('pt-BR') : undefined
+                date: portalData.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleDateString(isPT ? 'pt-PT' : 'pt-BR') : undefined,
+                country: isPT ? 'PT' : 'BR'
               })}
 
               <div className="pt-4 border-t border-border-ui not-italic font-sans space-y-3">
-                <h6 className="font-bold text-xs uppercase tracking-widest text-text-muted">Dados de Assinatura / Aceite</h6>
+                <h6 className="font-bold text-xs uppercase tracking-widest text-text-muted">{isPT ? 'Dados de Assinatura / Aceitação' : 'Dados de Assinatura / Aceite'}</h6>
                 {portalData.contractSigned && !portalData.contractManualOverride ? (
                   <div className="bg-card border border-emerald-500/20 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                     <div className="space-y-1">
                       <p className="font-bold text-emerald-400">✓ Assinado Eletronicamente</p>
-                      <p className="text-text-muted">Data/Hora: {portalData.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleString('pt-BR') : 'Data não registrada'}</p>
+                      <p className="text-text-muted">Data/Hora: {portalData.contractSignedAt ? new Date(portalData.contractSignedAt).toLocaleString(isPT ? 'pt-PT' : 'pt-BR') : (isPT ? 'Data não registada' : 'Data não registrada')}</p>
                       <p className="text-text-muted">Signatário: {portalData.contractSignedBy || portalData.name}</p>
-                      <p className="text-text-muted">CPF: {portalData.contractSignedDocument || portalData.cpf || 'Não informado'}</p>
+                      <p className="text-text-muted">{isPT ? 'NIF: ' : 'CPF: '}{portalData.contractSignedDocument || portalData.nif || portalData.cpf || 'Não informado'}</p>
                     </div>
                     {portalData.contractSignature && (
                       <div className="bg-white rounded-lg p-2 border border-gray-300 shadow-sm">
@@ -2438,12 +2471,12 @@ Dica: No primeiro acesso, você poderá completar seus dados de cadastro (caso f
                   </div>
                 ) : portalData.contractManualOverride ? (
                   <div className="bg-card border border-blue-500/20 rounded-xl p-4">
-                    <p className="font-bold text-blue-400">✓ Assinado Fisicamente / em Papel</p>
-                    <p className="text-text-muted mt-1">{portalData.contractManualNotes || 'Contrato assinado em consultório'}</p>
+                    <p className="font-bold text-blue-400">{isPT ? '✓ Assinado Presencialmente / em Papel' : '✓ Assinado Fisicamente / em Papel'}</p>
+                    <p className="text-text-muted mt-1">{portalData.contractManualNotes || (isPT ? 'Contrato assinado em consultório' : 'Contrato assinado em consultório')}</p>
                   </div>
                 ) : (
                   <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 text-amber-200">
-                    ⏳ Este contrato ainda não foi assinado pelo paciente.
+                    ⏳ {isPT ? 'Este contrato ainda não foi assinado pelo utente.' : 'Este contrato ainda não foi assinado pelo paciente.'}
                   </div>
                 )}
               </div>
@@ -2457,7 +2490,7 @@ Dica: No primeiro acesso, você poderá completar seus dados de cadastro (caso f
                 className="flex items-center gap-1.5 px-4 py-2 bg-white/5 hover:bg-white/10 text-text-main font-semibold text-xs rounded-xl transition-all border border-white/5"
               >
                 <Download size={14} />
-                <span>Baixar em PDF</span>
+                <span>{isPT ? 'Descarregar em PDF' : 'Baixar em PDF'}</span>
               </button>
               <button
                 type="button"
@@ -2489,7 +2522,10 @@ Dica: No primeiro acesso, você poderá completar seus dados de cadastro (caso f
             </div>
 
             <p className="text-xs text-text-muted leading-relaxed">
-              Ao marcar como assinado fisicamente, o paciente <strong className="text-text-main">{portalData.name}</strong> não será cobrado para assinar na tela ao fazer login no portal.
+              {isPT 
+                ? <>Ao marcar como assinado presencialmente, o utente <strong className="text-text-main">{portalData.name}</strong> não terá de assinar no ecrã ao aceder ao portal.</>
+                : <>Ao marcar como assinado fisicamente, o paciente <strong className="text-text-main">{portalData.name}</strong> não será cobrado para assinar na tela ao fazer login no portal.</>
+              }
             </p>
 
             <div className="space-y-1.5">

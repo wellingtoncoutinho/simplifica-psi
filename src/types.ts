@@ -11,6 +11,8 @@ export interface Patient {
   birthDate?: string;
   document?: string;
   cpf?: string;
+  nif?: string;
+  country?: 'BR' | 'PT';
   occupation?: string;
   profession?: string;
   address?: string;
@@ -36,6 +38,7 @@ export interface Patient {
   amount?: number;
   recurrence?: 'Semanal' | 'Quinzenal' | 'Mensal' | 'Nenhuma';
   recurrenceStart?: string;
+  firstSessionDate?: string;
   modality?: 'Online' | 'Presencial';
   meetingLink?: string;
   optOutWhatsapp?: boolean;
@@ -206,6 +209,8 @@ export interface PatientPortal {
   patientId: string;
   ownerId: string;
   cpf: string;
+  nif?: string;
+  country?: 'BR' | 'PT';
   patientUid: string | null;
   tutorialCompleted: boolean;
   
@@ -220,6 +225,15 @@ export interface PatientPortal {
   emergencyName: string;
   emergencyRelation: string;
   emergencyPhone: string;
+
+  // Dados do Pix do Psicólogo (Brasil)
+  pixKey?: string;
+  pixType?: string;
+  pixName?: string;
+
+  // Dados de Pagamento (Portugal)
+  mbwayPhone?: string;
+  iban?: string;
 
   // Plano de Segurança
   safetyPlan?: {
@@ -390,6 +404,7 @@ export interface ClinicMember {
   status: 'active' | 'invited' | 'disabled';
   clinicId: string;
   crp?: string;
+  opp?: string;
   phone?: string;
   supervisorId?: string; // ID do supervisor responsável caso seja supervisionado
   commissionRate?: number; // Taxa de repasse individual deste psicólogo (ex: 50% ou 70%). Se não definido, usa a padrão da clínica
@@ -491,4 +506,18 @@ export interface ClinicCrmLead {
   updatedAt: string;
 }
 
+export type SubscriptionPlan = 'free' | 'consultorio' | 'ilimitado' | 'lifetime';
+export type SubscriptionStatus = 'active' | 'trialing' | 'canceled' | 'past_due' | 'lifetime';
+
+export interface UserSubscription {
+  plan: SubscriptionPlan;
+  status: SubscriptionStatus;
+  currentPeriodEnd?: string;
+  stripeCustomerId?: string;
+  stripeSubscriptionId?: string;
+  cancelAtPeriodEnd?: boolean;
+  currency?: 'brl' | 'eur';
+  country?: 'BR' | 'PT';
+  updatedAt?: string;
+}
 

@@ -37,15 +37,20 @@ async function generateContentWithFallback(
   }
 ) {
   const modelsToTry = [
+    "gemini-3.8-flash",
     "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
-    "gemini-3.8-flash",
     "gemini-flash-latest",
   ];
   
-  const modelQueue = options.model 
-    ? [options.model, ...modelsToTry.filter(m => m !== options.model)]
-    : modelsToTry;
+  const requestedModel = (options.model && !options.model.includes('2.5'))
+    ? options.model
+    : "gemini-3.8-flash";
+
+  const modelQueue = [
+    requestedModel,
+    ...modelsToTry.filter(m => m !== requestedModel)
+  ];
 
   let lastError: any = null;
 
@@ -155,6 +160,7 @@ import {
   Clock,
   FileText, 
   DollarSign, 
+  CreditCard,
   FolderOpen, 
   BarChart3, 
   Settings,
@@ -179,6 +185,7 @@ import {
   PenTool,
   MessageSquare,
   FileDown,
+  Download,
   Paperclip,
   TrendingUp,
   TrendingDown,
@@ -215,10 +222,12 @@ import {
   Camera
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, formatCurrency, getWhatsAppLink } from './lib/utils';
+import { cn, formatCurrency, getWhatsAppLink, formatPatientFrequency, getPatientLastSessionInfo } from './lib/utils';
 import LandingPage from './components/LandingPage';
+import AuthModal from './components/AuthModal';
 import PrivacyPolicyPage from './components/PrivacyPolicyPage';
 import PaywallScreen from './components/PaywallScreen';
+import UpgradeModal from './components/UpgradeModal';
 import AdminPanel from './components/AdminPanel';
 import PatientPortalDashboard from './components/PatientPortalDashboard';
 import PsychologistPatientPortalView from './components/PsychologistPatientPortalView';
@@ -231,7 +240,7 @@ import ClinicFinanceView from './components/clinic/ClinicFinanceView';
 import ClinicLoginPage from './components/clinic/ClinicLoginPage';
 import { WhatsAppRemindersPanel } from './components/WhatsAppRemindersPanel';
 import ContentIdeasModal from './components/ContentIdeasModal';
-import { GoogleMeetExtensionModal, CHROME_EXTENSION_STORE_URL, TCLE_TEMPLATE_TEXT } from './components/GoogleMeetExtensionModal';
+import { GoogleMeetExtensionModal, CHROME_EXTENSION_STORE_URL, TCLE_TEMPLATE_TEXT, TCLE_TEMPLATE_TEXT_PT } from './components/GoogleMeetExtensionModal';
 const DataMigrationModal = React.lazy(() => 
   import('./components/DataMigrationModal').then(m => ({ default: m.DataMigrationModal }))
 );
@@ -527,6 +536,49 @@ const calculateIncomePrediction = (start: Date, end: Date, sessions: any[], pati
   return predictedTotal;
 };
 
+/**
+ * Resolves whether a logged-in user belongs to 'BR' (Brazil) or 'PT' (Portugal).
+ * Guarantees that Brazilian users (especially Wellington and accounts with CRP / Pix / CPF) are NEVER mistakenly converted to PT.
+ */
+const resolveUserCountry = (data?: any, email?: string | null): 'BR' | 'PT' => {
+  const cleanEmail = email ? email.toLowerCase().trim() : '';
+
+  // 1. Wellington & Administrators are unconditionally Brazilian
+  if (cleanEmail === 'wellcoutinho99@gmail.com' || cleanEmail === 'juniorcoutinho58@gmail.com') {
+    return 'BR';
+  }
+
+  // 2. Brazilian-specific credentials: CRP (Conselho Regional de Psicologia) or Brazilian Pix Key / CPF
+  if (data?.crp && String(data.crp).trim().length > 0) {
+    return 'BR';
+  }
+  if (data?.pixKey && String(data.pixKey).trim().length > 0) {
+    return 'BR';
+  }
+  if (data?.cpfCnpj && String(data.cpfCnpj).trim().length > 0) {
+    return 'BR';
+  }
+
+  // 3. Portugal-specific credentials: OPP (Ordem dos Psicólogos Portugueses) or MB WAY
+  if (data?.opp && String(data.opp).trim().length > 0) {
+    return 'PT';
+  }
+  if (data?.mbwayPhone && String(data.mbwayPhone).trim().length > 0) {
+    return 'PT';
+  }
+
+  // 4. Stored country in Firestore profile
+  if (data?.country === 'PT') {
+    return 'PT';
+  }
+  if (data?.country === 'BR') {
+    return 'BR';
+  }
+
+  // 5. Default fallback is always Brazil
+  return 'BR';
+};
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -535,6 +587,151 @@ export default function App() {
   const [isPrivacyMode, setIsPrivacyMode] = useState<boolean>(() => {
     return localStorage.getItem('simplepsi_privacy_mode') === 'true';
   });
+  const [currentCountry, setCurrentCountry] = useState<'BR' | 'PT'>(() => {
+    if (typeof window !== 'undefined') {
+      if (window.location.pathname.startsWith('/pt') || window.location.search.includes('country=pt')) {
+        return 'PT';
+      }
+      const saved = localStorage.getItem('simplepsi_country');
+      if (saved === 'PT' || saved === 'BR') return saved as 'BR' | 'PT';
+      const profCountry = localStorage.getItem('prof_country');
+      if (profCountry === 'PT' || profCountry === 'BR') return profCountry as 'BR' | 'PT';
+      const opp = localStorage.getItem('prof_opp');
+      if (opp) return 'PT';
+      const crp = localStorage.getItem('prof_crp');
+      const pix = localStorage.getItem('prof_pix_key');
+      if (crp || pix) return 'BR';
+    }
+    return 'BR';
+  });
+  const [ptRedirectNotice, setPtRedirectNotice] = useState<boolean>(false);
+
+  // Monitor Portugal routing & persistent memory redirection (STRICTLY for unauthenticated landing page visitors)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    // Logged in users MUST NEVER be redirected to /pt or have their preference overridden by landing page URLs
+    if (user || loading) {
+      if (ptRedirectNotice) setPtRedirectNotice(false);
+      return;
+    }
+
+    const pathname = window.location.pathname;
+    const isPtPath = pathname.startsWith('/pt') || window.location.search.includes('country=pt');
+    const saved = localStorage.getItem('simplepsi_country');
+
+    if (isPtPath) {
+      localStorage.setItem('simplepsi_country', 'PT');
+      if (currentCountry !== 'PT') setCurrentCountry('PT');
+    } else if (saved === 'PT' && (pathname === '/' || pathname === '' || pathname === '/index.html')) {
+      // Unauthenticated visitor with saved PT preference visited root
+      setPtRedirectNotice(true);
+      const timer = setTimeout(() => {
+        window.history.replaceState({}, '', '/pt');
+        setCurrentCountry('PT');
+        setPtRedirectNotice(false);
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [currentCountry, user, loading, ptRedirectNotice]);
+
+  // Guarantee that logged-in users are NEVER left on the /pt landing page URL
+  useEffect(() => {
+    if (user && typeof window !== 'undefined') {
+      if (window.location.pathname.startsWith('/pt')) {
+        window.history.replaceState({}, '', '/');
+      }
+    }
+  }, [user]);
+
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalSelectedPlan, setAuthModalSelectedPlan] = useState<'consultorio' | 'ilimitado' | null>(null);
+  const [isRedirectingToStripe, setIsRedirectingToStripe] = useState(false);
+  const [checkoutSuccessPlan, setCheckoutSuccessPlan] = useState<'consultorio' | 'ilimitado' | null>(null);
+
+  const handleOpenAuthModal = (plan?: 'consultorio' | 'ilimitado' | null, country?: 'BR' | 'PT') => {
+    if (country) {
+      setCurrentCountry(country);
+      if (country === 'PT') {
+        localStorage.setItem('simplepsi_country', 'PT');
+      }
+    }
+    setAuthModalSelectedPlan(plan || null);
+    setIsAuthModalOpen(true);
+  };
+
+  // Direct checkout listener when user chooses plan from landing page
+  useEffect(() => {
+    if (!user) return;
+    const pendingPlan = localStorage.getItem('pending_checkout_plan');
+    const pendingCountry = (localStorage.getItem('pending_checkout_country') || localStorage.getItem('simplepsi_country') || currentCountry) as 'BR' | 'PT';
+    if (pendingPlan && (pendingPlan === 'consultorio' || pendingPlan === 'ilimitado')) {
+      setIsRedirectingToStripe(true);
+      (async () => {
+        try {
+          const response = await fetch('/api/create-checkout-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              plan: pendingPlan,
+              userId: user.uid,
+              userEmail: user.email,
+              returnOrigin: window.location.origin,
+              country: pendingCountry,
+            }),
+          });
+          const data = await response.json();
+          if (data?.url) {
+            localStorage.removeItem('pending_checkout_plan');
+            localStorage.removeItem('pending_checkout_country');
+            window.location.href = data.url;
+            return;
+          }
+        } catch (err) {
+          console.error("Erro ao redirecionar para checkout pendente:", err);
+        }
+        localStorage.removeItem('pending_checkout_plan');
+        localStorage.removeItem('pending_checkout_country');
+        setIsRedirectingToStripe(false);
+      })();
+    }
+  }, [user]);
+
+  // Direct listener when user returns from successful Stripe checkout
+  useEffect(() => {
+    if (!user) return;
+    const searchParams = new URLSearchParams(window.location.search);
+    if (searchParams.get('checkout') === 'success') {
+      const planParam = searchParams.get('plan') as 'consultorio' | 'ilimitado' | null;
+      const finalPlan = (planParam === 'consultorio' || planParam === 'ilimitado') ? planParam : 'consultorio';
+
+      setCheckoutSuccessPlan(finalPlan);
+
+      // Instant profile upgrade
+      const profileRef = doc(db, 'profiles', user.uid);
+      updateDoc(profileRef, {
+        isTrial: false,
+        subscription: {
+          status: 'active',
+          plan: finalPlan,
+          updatedAt: new Date().toISOString()
+        }
+      }).catch(err => console.warn('Erro ao atualizar perfil após checkout:', err));
+
+      setProfileSettings(prev => ({
+        ...prev,
+        isTrial: false,
+        subscription: {
+          status: 'active',
+          plan: finalPlan,
+        }
+      }));
+
+      // Clean URL
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [user]);
+
   const togglePrivacyMode = () => {
     setIsPrivacyMode(prev => {
       const next = !prev;
@@ -631,6 +828,7 @@ Como posso te ajudar hoje?`
     clinicalApproach: safeGetStorage('prof_approach', 'tcc'),
     trialStartDate: safeGetStorage('prof_trial_start') || null,
     isTrial: safeGetStorage('prof_is_trial') === 'true',
+    subscription: safeGetStorageJSON<any>('prof_subscription', null),
     tccAiUsage: safeGetStorageJSON<string[]>('prof_tcc_ai_usage', []),
     cpfCnpj: safeGetStorage('prof_cpf_cnpj'),
     address: safeGetStorage('prof_address'),
@@ -638,8 +836,55 @@ Como posso te ajudar hoje?`
     signatureText: safeGetStorage('prof_signature_text'),
     pixKey: safeGetStorage('prof_pix_key'),
     pixType: safeGetStorage('prof_pix_type'),
-    pixName: safeGetStorage('prof_pix_name')
+    country: (() => {
+      const crp = safeGetStorage('prof_crp');
+      const pix = safeGetStorage('prof_pix_key');
+      if (crp || pix) return 'BR';
+      const opp = safeGetStorage('prof_opp');
+      if (opp) return 'PT';
+      const savedProf = safeGetStorage('prof_country');
+      if (savedProf === 'PT' || savedProf === 'BR') return savedProf as 'BR' | 'PT';
+      if (typeof window !== 'undefined') {
+        if (window.location.pathname.startsWith('/pt') || window.location.search.includes('country=pt')) return 'PT';
+      }
+      const savedSimple = safeGetStorage('simplepsi_country');
+      if (savedSimple === 'PT') return 'PT';
+      return 'BR';
+    })() as 'BR' | 'PT',
+    opp: safeGetStorage('prof_opp'),
+    nif: safeGetStorage('prof_nif'),
+    mbwayPhone: safeGetStorage('prof_mbway_phone'),
+    iban: safeGetStorage('prof_iban')
   });
+
+  // Keep currentCountry in sync with profileSettings.country for logged-in users
+  useEffect(() => {
+    if (user && profileSettings?.country && currentCountry !== profileSettings.country) {
+      setCurrentCountry(profileSettings.country);
+    }
+  }, [user, profileSettings?.country, currentCountry]);
+
+  const isPT = user ? profileSettings.country === 'PT' : currentCountry === 'PT';
+
+  const [isAuthorizedEmail, setIsAuthorizedEmail] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [upgradeReason, setUpgradeReason] = useState<string | undefined>(undefined);
+  const [isContentIdeasModalOpen, setIsContentIdeasModalOpen] = useState(false);
+
+  const openUpgradeModalWithReason = (reason?: string) => {
+    setUpgradeReason(reason);
+    setShowUpgradeModal(true);
+  };
+
+  const handleOpenRadar = () => {
+    if (effectivePlan === 'ilimitado' || effectivePlan === 'lifetime' || user?.email?.toLowerCase().trim() === 'wellcoutinho99@gmail.com') {
+      setIsContentIdeasModalOpen(true);
+    } else {
+      openUpgradeModalWithReason(
+        'O Radar de Conteúdo para Redes Sociais gera pautas, ganchos e carrosséis com IA a partir dos eixos clínicos dos seus pacientes com 100% de sigilo ético. Este recurso é exclusivo do Plano Ilimitado!'
+      );
+    }
+  };
 
   // Helper to calculate trial remaining days
   const trialRemainingDays = useMemo(() => {
@@ -661,6 +906,52 @@ Como posso te ajudar hoje?`
     if (currentClinic) return false;
     return profileSettings.isTrial && trialRemainingDays < 0;
   }, [profileSettings.isTrial, trialRemainingDays, currentClinic]);
+
+  // Plano Efetivo do Usuário
+  const effectivePlan = useMemo<'free' | 'consultorio' | 'ilimitado' | 'lifetime'>(() => {
+    const email = user?.email?.toLowerCase().trim();
+    // 1. Administrador ou E-mail com acesso permanente concedido
+    if (email === 'wellcoutinho99@gmail.com' || email === 'acessoriavitrinni@gmail.com') return 'lifetime';
+    if (isAuthorizedEmail) return 'lifetime';
+    if (profileSettings?.subscription?.plan === 'lifetime') return 'lifetime';
+    // Usuário legado sem trial ativo
+    if (profileSettings?.isTrial === false && !profileSettings?.subscription?.plan) return 'lifetime';
+
+    // 2. Assinatura Stripe Ativa
+    const sub = profileSettings?.subscription;
+    if (sub?.status === 'active') {
+      if (sub.plan === 'ilimitado') return 'ilimitado';
+      if (sub.plan === 'consultorio') return 'consultorio';
+    }
+
+    // 3. Período de Testes Inicial (7 dias de experiência ilimitada)
+    if (profileSettings?.isTrial && trialRemainingDays >= 0) {
+      return 'ilimitado';
+    }
+
+    // 4. Padrão: Plano Gratuito (Start)
+    return 'free';
+  }, [user, isAuthorizedEmail, profileSettings, trialRemainingDays]);
+
+  // Validação e consumo de cota diária de IA (5 usos/dia para o plano Start)
+  const checkAndConsumeDailyAiUsage = (): boolean => {
+    if (effectivePlan === 'lifetime' || effectivePlan === 'ilimitado' || effectivePlan === 'consultorio') {
+      return true;
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    const storedUsage = safeGetStorageJSON<{ date: string; count: number }>('simplepsi_free_ai_usage', { date: today, count: 0 });
+    let count = storedUsage.date === today ? storedUsage.count : 0;
+
+    if (count >= 5) {
+      openUpgradeModalWithReason('Você atingiu o limite de 5 usos diários de IA do plano Start (Gratuito). Faça o upgrade para ter inteligência artificial sem limites!');
+      return false;
+    }
+
+    count += 1;
+    safeSetStorage('simplepsi_free_ai_usage', JSON.stringify({ date: today, count }));
+    return true;
+  };
   const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(() => safeGetStorage('google_calendar_access_token') || null);
   const [showExtensionModal, setShowExtensionModal] = useState(false);
   const [showMigrationModal, setShowMigrationModal] = useState(false);
@@ -674,6 +965,18 @@ Como posso te ajudar hoje?`
   }, [user]);
 
   const [patients, setPatients] = useState<Patient[]>([]);
+
+  // Limite máximo de pacientes pelo plano
+  const maxPatientsAllowed = useMemo(() => {
+    if (effectivePlan === 'lifetime' || effectivePlan === 'ilimitado') return Infinity;
+    if (effectivePlan === 'consultorio') return 15;
+    return 5; // Plano 'free' / 'start'
+  }, [effectivePlan]);
+
+  const isPatientLimitReached = useMemo(() => {
+    if (maxPatientsAllowed === Infinity) return false;
+    return (patients || []).length >= maxPatientsAllowed;
+  }, [patients, maxPatientsAllowed]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [diaryEntries, setDiaryEntries] = useState<DiaryEntry[]>([]);
@@ -777,7 +1080,12 @@ Como posso te ajudar hoje?`
             } else {
               // Paid user already has profile
               const data = profileSnap.data();
-              setProfileSettings({
+              const resolvedCountry = resolveUserCountry(data, user.email);
+              if (data.country !== resolvedCountry) {
+                updateDoc(profileRef, { country: resolvedCountry }).catch(console.error);
+              }
+              setProfileSettings(prev => ({
+                ...prev,
                 name: data.name || '',
                 crp: data.crp || '',
                 logo: data.logo || '',
@@ -785,6 +1093,7 @@ Como posso te ajudar hoje?`
                 clinicalApproach: data.clinicalApproach || 'tcc',
                 trialStartDate: data.trialStartDate || null,
                 isTrial: false,
+                subscription: data.subscription || null,
                 tccAiUsage: data.tccAiUsage || [],
                 cpfCnpj: data.cpfCnpj || '',
                 address: data.address || '',
@@ -792,8 +1101,24 @@ Como posso te ajudar hoje?`
                 signatureText: data.signatureText || '',
                 pixKey: data.pixKey || '',
                 pixType: data.pixType || '',
-                pixName: data.pixName || ''
-              });
+                pixName: data.pixName || '',
+                country: resolvedCountry,
+                opp: data.opp || '',
+                nif: data.nif || '',
+                mbwayPhone: data.mbwayPhone || '',
+                iban: data.iban || ''
+              }));
+              safeSetStorage('prof_country', resolvedCountry);
+              if (resolvedCountry === 'BR') {
+                safeSetStorage('simplepsi_country', 'BR');
+                setCurrentCountry('BR');
+                if (typeof window !== 'undefined' && window.location.pathname.startsWith('/pt')) {
+                  window.history.replaceState({}, '', '/');
+                }
+              } else {
+                safeSetStorage('simplepsi_country', 'PT');
+                setCurrentCountry('PT');
+              }
             }
             setUser(user);
             setAuthError(null);
@@ -804,7 +1129,12 @@ Como posso te ajudar hoje?`
               // If it's a trial, we allow them in (checked for expiration in the UI).
               // If it's not a trial, they are a legacy authorized user, we let them in.
               const data = profileSnap.data();
-              setProfileSettings({
+              const resolvedCountry = resolveUserCountry(data, user.email);
+              if (data.country !== resolvedCountry) {
+                updateDoc(profileRef, { country: resolvedCountry }).catch(console.error);
+              }
+              setProfileSettings(prev => ({
+                ...prev,
                 name: data.name || '',
                 crp: data.crp || '',
                 logo: data.logo || '',
@@ -812,6 +1142,7 @@ Como posso te ajudar hoje?`
                 clinicalApproach: data.clinicalApproach || 'tcc',
                 trialStartDate: data.trialStartDate || null,
                 isTrial: data.isTrial || false,
+                subscription: data.subscription || null,
                 tccAiUsage: data.tccAiUsage || [],
                 cpfCnpj: data.cpfCnpj || '',
                 address: data.address || '',
@@ -819,12 +1150,29 @@ Como posso te ajudar hoje?`
                 signatureText: data.signatureText || '',
                 pixKey: data.pixKey || '',
                 pixType: data.pixType || '',
-                pixName: data.pixName || ''
-              });
+                pixName: data.pixName || '',
+                country: resolvedCountry,
+                opp: data.opp || '',
+                nif: data.nif || '',
+                mbwayPhone: data.mbwayPhone || '',
+                iban: data.iban || ''
+              }));
+              safeSetStorage('prof_country', resolvedCountry);
+              if (resolvedCountry === 'BR') {
+                safeSetStorage('simplepsi_country', 'BR');
+                setCurrentCountry('BR');
+                if (typeof window !== 'undefined' && window.location.pathname.startsWith('/pt')) {
+                  window.history.replaceState({}, '', '/');
+                }
+              } else {
+                safeSetStorage('simplepsi_country', 'PT');
+                setCurrentCountry('PT');
+              }
               setUser(user);
               setAuthError(null);
             } else {
               // New user signing up for the first time without purchase -> Give them the 7-day trial!
+              const resolvedNewCountry = (localStorage.getItem('pending_checkout_country') === 'PT' ? 'PT' : 'BR') as 'BR' | 'PT';
               const newProfile = {
                 name: user.displayName || '',
                 email: userEmail,
@@ -833,7 +1181,8 @@ Como posso te ajudar hoje?`
                 isTrial: true,
                 clinicalApproach: 'tcc',
                 isGoogleCalendarEnabled: false,
-                tccAiUsage: []
+                tccAiUsage: [],
+                country: resolvedNewCountry
               };
               await setDoc(profileRef, newProfile);
               setProfileSettings(prev => ({
@@ -874,6 +1223,13 @@ Como posso te ajudar hoje?`
     const unsubProfile = onSnapshot(doc(db, 'profiles', user.uid), (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.data();
+        const resolvedCountry = resolveUserCountry(data, user.email);
+
+        // Auto-heal profile doc in Firestore if it was incorrectly marked as PT
+        if (data.country !== resolvedCountry) {
+          updateDoc(doc(db, 'profiles', user.uid), { country: resolvedCountry }).catch(console.error);
+        }
+
         setProfileSettings({
           name: data.name || '',
           crp: data.crp || '',
@@ -882,6 +1238,7 @@ Como posso te ajudar hoje?`
           clinicalApproach: data.clinicalApproach || 'tcc',
           trialStartDate: data.trialStartDate || null,
           isTrial: data.isTrial || false,
+          subscription: data.subscription || null,
           tccAiUsage: data.tccAiUsage || [],
           cpfCnpj: data.cpfCnpj || '',
           address: data.address || '',
@@ -889,7 +1246,12 @@ Como posso te ajudar hoje?`
           signatureText: data.signatureText || '',
           pixKey: data.pixKey || '',
           pixType: data.pixType || '',
-          pixName: data.pixName || ''
+          pixName: data.pixName || '',
+          country: resolvedCountry,
+          opp: data.opp || '',
+          nif: data.nif || '',
+          mbwayPhone: data.mbwayPhone || '',
+          iban: data.iban || ''
         });
         // Also update storage as backup/cache
         safeSetStorage('prof_name', data.name || '');
@@ -899,6 +1261,7 @@ Como posso te ajudar hoje?`
         safeSetStorage('prof_approach', data.clinicalApproach || 'tcc');
         safeSetStorage('prof_trial_start', data.trialStartDate || '');
         safeSetStorage('prof_is_trial', data.isTrial ? 'true' : 'false');
+        safeSetStorage('prof_subscription', JSON.stringify(data.subscription || null));
         safeSetStorage('prof_tcc_ai_usage', JSON.stringify(data.tccAiUsage || []));
         safeSetStorage('prof_cpf_cnpj', data.cpfCnpj || '');
         safeSetStorage('prof_address', data.address || '');
@@ -907,13 +1270,30 @@ Como posso te ajudar hoje?`
         safeSetStorage('prof_pix_key', data.pixKey || '');
         safeSetStorage('prof_pix_type', data.pixType || '');
         safeSetStorage('prof_pix_name', data.pixName || '');
+        safeSetStorage('prof_country', resolvedCountry);
+        if (resolvedCountry === 'BR') {
+          safeSetStorage('simplepsi_country', 'BR');
+          setCurrentCountry('BR');
+          if (typeof window !== 'undefined' && window.location.pathname.startsWith('/pt')) {
+            window.history.replaceState({}, '', '/');
+          }
+        } else {
+          safeSetStorage('simplepsi_country', 'PT');
+          setCurrentCountry('PT');
+        }
+        if (data.opp) safeSetStorage('prof_opp', data.opp);
+        if (data.nif) safeSetStorage('prof_nif', data.nif);
+        if (data.mbwayPhone) safeSetStorage('prof_mbway_phone', data.mbwayPhone);
+        if (data.iban) safeSetStorage('prof_iban', data.iban);
       }
     });
 
     // Authorized Email Real-time Listener (Automatically upgrades user to vitalício when payment occurs)
     const userEmail = user.email ? user.email.toLowerCase().trim() : '';
     const unsubAuthEmail = onSnapshot(doc(db, 'authorized_emails', userEmail), async (snapshot) => {
-      if (snapshot.exists() && snapshot.data().active !== false) {
+      const isAuth = snapshot.exists() && snapshot.data().active !== false;
+      setIsAuthorizedEmail(isAuth);
+      if (isAuth) {
         try {
           const profileRef = doc(db, 'profiles', user.uid);
           const profileSnap = await getDoc(profileRef);
@@ -1001,11 +1381,14 @@ Como posso te ajudar hoje?`
                 contractSignedText: p.contractSignedText || '',
                 contractManualOverride: p.contractManualOverride || false,
                 contractManualNotes: p.contractManualNotes || '',
+                pixKey: profileSettings.pixKey || '',
+                pixType: profileSettings.pixType || '',
+                pixName: profileSettings.pixName || profileSettings.name || '',
                 updatedAt: new Date().toISOString()
               });
               console.log(`Auto-created missing portal doc for patient ${p.name}`);
             } else {
-              // 1. Sincronizar campos do paciente para o portal (caso estejam no paciente mas não no portal)
+              // 1. Sincronizar campos do paciente e do psicólogo para o portal
               const portalUpdates: any = {};
               if (!portalData.cpf && cleanCpf) portalUpdates.cpf = cleanCpf;
               if (!portalData.birthDate && p.birthDate) portalUpdates.birthDate = p.birthDate;
@@ -1014,6 +1397,9 @@ Como posso te ajudar hoje?`
               if (!portalData.address && p.address) portalUpdates.address = p.address;
               if (!portalData.phone && p.phone) portalUpdates.phone = p.phone;
               if (!portalData.email && p.email) portalUpdates.email = p.email;
+              if (profileSettings.pixKey && portalData.pixKey !== profileSettings.pixKey) portalUpdates.pixKey = profileSettings.pixKey;
+              if (profileSettings.pixType && portalData.pixType !== profileSettings.pixType) portalUpdates.pixType = profileSettings.pixType;
+              if (profileSettings.pixName && portalData.pixName !== profileSettings.pixName) portalUpdates.pixName = profileSettings.pixName;
 
               if (Object.keys(portalUpdates).length > 0) {
                 portalUpdates.updatedAt = new Date().toISOString();
@@ -1105,7 +1491,7 @@ Como posso te ajudar hoje?`
       const isTourCompleted = safeGetStorage('simplepsi_tour_completed') === 'true';
       if (isTourCompleted) return;
 
-      const isProfileEmpty = !profileSettings?.name && !profileSettings?.crp;
+      const isProfileEmpty = !profileSettings?.name && !profileSettings?.crp && !profileSettings?.opp;
       if (isProfileEmpty) {
         const timer = setTimeout(() => {
           setRunTour(true);
@@ -1142,78 +1528,155 @@ Como posso te ajudar hoje?`
   }, [patients, searchQuery]);
 
   // Product Tour steps configuration
-  const tourSteps: Step[] = useMemo(() => [
-    {
-      target: 'body',
-      placement: 'center',
-      title: 'Boas-vindas ao SimplePsi!',
-      content: (
-        <div className="space-y-3">
-          <p>Olá! Ficamos muito felizes em ter você aqui. O SimplePsi foi desenhado para tornar a gestão do seu consultório de psicologia simples, rápida e inteligente.</p>
-          <p className="font-bold text-primary">Vamos fazer um tour rápido de 1 minuto para você conhecer os principais recursos?</p>
-        </div>
-      )
-    },
-    {
-      target: '#profile-settings-button',
-      placement: 'bottom',
-      title: 'Configurações do Perfil e CRP 🪪',
-      content: (
-        <div className="space-y-2">
-          <p>O primeiro passo é clicar aqui para preencher o seu <strong className="font-bold text-text-main">Nome</strong> e <strong className="font-bold text-text-main">CRP</strong>.</p>
-          <p className="text-xs text-text-muted">Isso é fundamental, pois esses dados serão usados para assinar digitalmente e gerar automaticamente os prontuários e laudos em PDF dos seus pacientes!</p>
-        </div>
-      )
-    },
-    {
-      target: '#nav-pacientes',
-      placement: 'right',
-      title: 'Seus Pacientes 👥',
-      content: (
-        <div className="space-y-2">
-          <p>Na aba <strong className="font-bold text-text-main">Pacientes</strong>, você faz a gestão completa de quem você atende.</p>
-          <p className="text-xs text-text-muted">Aqui você cadastra novos pacientes, gerencia dados de contato, visualiza o histórico de sessões e mantém as fichas clínicas sempre organizadas.</p>
-        </div>
-      )
-    },
-    {
-      target: '#nav-prontuarios',
-      placement: 'right',
-      title: '✨ IA & Prontuários Inteligentes',
-      content: (
-        <div className="space-y-2">
-          <p>Chega de gastar horas digitando relatos após as sessões! Nesta aba, nossa <strong className="font-bold text-text-main">Inteligência Artificial</strong> gera prontuários estruturados.</p>
-          <p className="text-xs text-text-muted">Basta colar ou ditar a transcrição bruta da sessão. A IA resume, substitui nomes de terceiros por iniciais (garantindo sigilo) e envia o relato final direto para a pasta <strong className="font-bold text-text-main">Biblioteca</strong> do paciente.</p>
-        </div>
-      )
-    },
-    {
-      target: '#nav-financeiro',
-      placement: 'right',
-      title: 'Controle Financeiro 💰',
-      content: (
-        <div className="space-y-2">
-          <p>Monitore a saúde do seu consultório sem espresso.</p>
-          <p className="text-xs text-text-muted">Acompanhe sessões pagas, pendentes de cobrança, faturamento mensal e fluxo de caixa de forma visual, simplificada e automatizada.</p>
-        </div>
-      )
-    },
-    {
-      target: 'body',
-      placement: 'center',
-      title: '📲 SimplePsi no seu Celular!',
-      content: (
-        <div className="space-y-3">
-          <p className="text-sm">Sabia que você pode salvar o SimplePsi na tela inicial do seu celular para acessar como se fosse um app nativo?</p>
-          <div className="bg-primary/5 p-3 rounded-xl border border-primary/10 text-[11px] space-y-2 text-left">
-            <p>🍏 <strong className="font-bold text-text-main">No iPhone (iOS)</strong>: Abra o site no <strong className="font-bold text-text-main">Safari</strong>, clique no ícone de <strong className="font-bold text-text-main">Compartilhar</strong> (quadrado com seta para cima) e selecione <strong className="font-bold text-text-main">Adicionar à Tela de Início</strong>.</p>
-            <p>🤖 <strong className="font-bold text-text-main">No Android</strong>: Abra no <strong className="font-bold text-text-main">Chrome</strong>, clique nos <strong className="font-bold text-text-main">três pontinhos</strong> no canto superior direito e escolha <strong className="font-bold text-text-main">Adicionar à Tela inicial</strong> ou <strong className="font-bold text-text-main">Instalar aplicativo</strong>.</p>
-          </div>
-          <p className="text-xs font-bold text-accent">Muito mais prático para o seu dia a dia!</p>
-        </div>
-      )
+  const tourSteps: Step[] = useMemo(() => {
+    if (isPT) {
+      return [
+        {
+          target: 'body',
+          placement: 'center',
+          title: 'Boas-vindas ao SimplePsi! 🇵🇹',
+          content: (
+            <div className="space-y-3">
+              <p>Seja muito bem-vindo(a)! O SimplePsi foi desenvolvido para tornar a gestão do seu consultório de psicologia simples, rápida e inteligente.</p>
+              <p className="font-bold text-primary">Deseja realizar uma breve visita guiada de 1 minuto para conhecer as principais funcionalidades?</p>
+            </div>
+          )
+        },
+        {
+          target: '#profile-settings-button',
+          placement: 'bottom',
+          title: 'Definições do Perfil e Cédula OPP 🪪',
+          content: (
+            <div className="space-y-2">
+              <p>O primeiro passo é clicar aqui para preencher o seu <strong className="font-bold text-text-main">Nome</strong> e a sua <strong className="font-bold text-text-main">Cédula Profissional OPP</strong>.</p>
+              <p className="text-xs text-text-muted">Estes dados são essenciais para assinar digitalmente e emitir automaticamente os processos clínicos, declarações e relatórios em PDF dos seus utentes de acordo com as normas da OPP e RGPD!</p>
+            </div>
+          )
+        },
+        {
+          target: '#nav-pacientes',
+          placement: 'right',
+          title: 'Os seus Utentes 👥',
+          content: (
+            <div className="space-y-2">
+              <p>No separador <strong className="font-bold text-text-main">Utentes</strong>, realiza a gestão integral de quem acompanha em consulta.</p>
+              <p className="text-xs text-text-muted">Aqui pode registar novos utentes, gerir contactos, consultar o histórico de sessões e manter os processos clínicos sempre organizados.</p>
+            </div>
+          )
+        },
+        {
+          target: '#nav-prontuarios',
+          placement: 'right',
+          title: '✨ IA & Processos Clínicos Inteligentes',
+          content: (
+            <div className="space-y-2">
+              <p>Deixe de despender horas a redigir notas após cada consulta! Neste separador, a nossa <strong className="font-bold text-text-main">Inteligência Artificial Clínica</strong> estrutura os registos automaticamente.</p>
+              <p className="text-xs text-text-muted">Basta ditar ou colar a transcrição bruta da sessão. A IA resume, anonimiza nomes de terceiros (garantindo sigilo rigoroso) e arquiva a evolução diretamente na pasta de <strong className="font-bold text-text-main">Documentos</strong> do utente.</p>
+            </div>
+          )
+        },
+        {
+          target: '#nav-financeiro',
+          placement: 'right',
+          title: 'Gestão Financeira & Faturação 💰',
+          content: (
+            <div className="space-y-2">
+              <p>Controle os rendimentos do seu consultório sem preocupações.</p>
+              <p className="text-xs text-text-muted">Acompanhe consultas liquidadas, pagamentos pendentes, faturação mensal e métodos de recebimento (MB WAY / Transferência) de forma intuitiva.</p>
+            </div>
+          )
+        },
+        {
+          target: 'body',
+          placement: 'center',
+          title: '📲 SimplePsi no seu Telemóvel!',
+          content: (
+            <div className="space-y-3">
+              <p className="text-sm">Sabia que pode guardar o SimplePsi no ecrã principal do seu telemóvel para aceder diretamente como uma aplicação nativa?</p>
+              <div className="bg-primary/5 p-3 rounded-xl border border-primary/10 text-[11px] space-y-2 text-left">
+                <p>🍏 <strong className="font-bold text-text-main">No iPhone (iOS)</strong>: Aceda através do <strong className="font-bold text-text-main">Safari</strong>, prima o ícone de <strong className="font-bold text-text-main">Partilhar</strong> (quadrado com seta a apontar para cima) e selecione <strong className="font-bold text-text-main">Adicionar ao Ecrã Principal</strong>.</p>
+                <p>🤖 <strong className="font-bold text-text-main">No Android</strong>: Aceda no <strong className="font-bold text-text-main">Chrome</strong>, prima os <strong className="font-bold text-text-main">três pontos</strong> no canto superior direito e escolha <strong className="font-bold text-text-main">Instalar aplicação</strong> ou <strong className="font-bold text-text-main">Adicionar ao ecrã inicial</strong>.</p>
+              </div>
+              <p className="text-xs font-bold text-accent">Muito mais comodidade e agilidade para o seu quotidiano clínico!</p>
+            </div>
+          )
+        }
+      ];
     }
-  ], []);
+
+    return [
+      {
+        target: 'body',
+        placement: 'center',
+        title: 'Boas-vindas ao SimplePsi!',
+        content: (
+          <div className="space-y-3">
+            <p>Olá! Ficamos muito felizes em ter você aqui. O SimplePsi foi desenhado para tornar a gestão do seu consultório de psicologia simples, rápida e inteligente.</p>
+            <p className="font-bold text-primary">Vamos fazer um tour rápido de 1 minuto para você conhecer os principais recursos?</p>
+          </div>
+        )
+      },
+      {
+        target: '#profile-settings-button',
+        placement: 'bottom',
+        title: 'Configurações do Perfil e CRP 🪪',
+        content: (
+          <div className="space-y-2">
+            <p>O primeiro passo é clicar aqui para preencher o seu <strong className="font-bold text-text-main">Nome</strong> e <strong className="font-bold text-text-main">CRP</strong>.</p>
+            <p className="text-xs text-text-muted">Isso é fundamental, pois esses dados serão usados para assinar digitalmente e gerar automaticamente os prontuários e laudos em PDF dos seus pacientes!</p>
+          </div>
+        )
+      },
+      {
+        target: '#nav-pacientes',
+        placement: 'right',
+        title: 'Seus Pacientes 👥',
+        content: (
+          <div className="space-y-2">
+            <p>Na aba <strong className="font-bold text-text-main">Pacientes</strong>, você faz a gestão completa de quem você atende.</p>
+            <p className="text-xs text-text-muted">Aqui você cadastra novos pacientes, gerencia dados de contato, visualiza o histórico de sessões e mantém as fichas clínicas sempre organizadas.</p>
+          </div>
+        )
+      },
+      {
+        target: '#nav-prontuarios',
+        placement: 'right',
+        title: '✨ IA & Prontuários Inteligentes',
+        content: (
+          <div className="space-y-2">
+            <p>Chega de gastar horas digitando relatos após as sessões! Nesta aba, nossa <strong className="font-bold text-text-main">Inteligência Artificial</strong> gera prontuários estruturados.</p>
+            <p className="text-xs text-text-muted">Basta colar ou ditar a transcrição bruta da sessão. A IA resume, substitui nomes de terceiros por iniciais (garantindo sigilo) e envia o relato final direto para a pasta <strong className="font-bold text-text-main">Biblioteca</strong> do paciente.</p>
+          </div>
+        )
+      },
+      {
+        target: '#nav-financeiro',
+        placement: 'right',
+        title: 'Controle Financeiro 💰',
+        content: (
+          <div className="space-y-2">
+            <p>Monitore a saúde do seu consultório sem estresse.</p>
+            <p className="text-xs text-text-muted">Acompanhe sessões pagas, pendentes de cobrança, faturamento mensal e fluxo de caixa de forma visual, simplificada e automatizada.</p>
+          </div>
+        )
+      },
+      {
+        target: 'body',
+        placement: 'center',
+        title: '📲 SimplePsi no seu Celular!',
+        content: (
+          <div className="space-y-3">
+            <p className="text-sm">Sabia que você pode salvar o SimplePsi na tela inicial do seu celular para acessar como se fosse um app nativo?</p>
+            <div className="bg-primary/5 p-3 rounded-xl border border-primary/10 text-[11px] space-y-2 text-left">
+              <p>🍏 <strong className="font-bold text-text-main">No iPhone (iOS)</strong>: Abra o site no <strong className="font-bold text-text-main">Safari</strong>, clique no ícone de <strong className="font-bold text-text-main">Compartilhar</strong> (quadrado com seta para cima) e selecione <strong className="font-bold text-text-main">Adicionar à Tela de Início</strong>.</p>
+              <p>🤖 <strong className="font-bold text-text-main">No Android</strong>: Abra no <strong className="font-bold text-text-main">Chrome</strong>, clique nos <strong className="font-bold text-text-main">três pontinhos</strong> no canto superior direito e escolha <strong className="font-bold text-text-main">Adicionar à Tela inicial</strong> ou <strong className="font-bold text-text-main">Instalar aplicativo</strong>.</p>
+            </div>
+            <p className="text-xs font-bold text-accent">Muito mais prático para o seu dia a dia!</p>
+          </div>
+        )
+      }
+    ];
+  }, [isPT]);
 
   // Callback to handle tour transitions and auto-opening mobile menu
   const handleJoyrideCallback = (data: EventData) => {
@@ -1241,6 +1704,18 @@ Como posso te ajudar hoje?`
 
   const handleAddPatient = async (data: any) => {
     if (!user) return;
+    if (isPatientLimitReached) {
+      openUpgradeModalWithReason(
+        isPT
+          ? (effectivePlan === 'consultorio' 
+              ? 'Atingiu o limite de 15 utentes do plano Consultório. Atualize para o plano Ilimitado!' 
+              : 'Atingiu o limite de 5 utentes do plano Start (Gratuito). Atualize para registar novos utentes!')
+          : (effectivePlan === 'consultorio' 
+              ? 'Você atingiu o limite de 15 pacientes do plano Consultório. Faça o upgrade para o plano Ilimitado!' 
+              : 'Você atingiu o limite de 5 pacientes do plano Start (Gratuito). Faça o upgrade para cadastrar novos pacientes!')
+      );
+      return;
+    }
     try {
       // 1. Adicionar Paciente
       const patientData: any = {
@@ -1251,6 +1726,7 @@ Como posso te ajudar hoje?`
         birthDate: data.birthDate || '',
         document: data.document || '',
         cpf: data.document || '',
+        nif: data.document || '',
         occupation: data.occupation || '',
         profession: data.occupation || '',
         address: data.address || '',
@@ -1260,7 +1736,7 @@ Como posso te ajudar hoje?`
         sessionTime: data.nextSessionTime || '',
         sessions: data.isNewPatient ? 0 : (data.sessions || 0),
         status: 'Ativo',
-        lastSession: data.sessionDay ? `Toda ${data.sessionDay}` : 'Sem sessões',
+        lastSession: formatPatientFrequency(data),
         photo: '',
         amount: parseFloat(data.amount) || 0,
         recurrence: data.recurrence || 'Semanal',
@@ -1293,6 +1769,7 @@ Como posso te ajudar hoje?`
         patientId: newPatientId,
         ownerId: user.uid,
         cpf: cleanCpf,
+        nif: cleanCpf,
         patientUid: null,
         tutorialCompleted: false,
         name: data.name.toUpperCase(),
@@ -1434,7 +1911,7 @@ Como posso te ajudar hoje?`
         sessionTime: sessionTime || lead.scheduledTime || '14:00',
         sessions: 0,
         status: 'Ativo',
-        lastSession: sessionDayName ? `Toda ${sessionDayName}` : 'Sem sessões',
+        lastSession: formatPatientFrequency({ recurrence: 'Semanal', sessionDay: sessionDayName, sessionTime: sessionTime }),
         photo: '',
         amount: lead.amount || 180,
         recurrence: 'Semanal',
@@ -2020,6 +2497,9 @@ Como posso te ajudar hoje?`
       const patientName = p ? p.name : (sessionData.triageName || "Paciente");
       const meetingLink = p?.meetingLink || "";
       const { start, end } = formatLocalIsoString(sessionData.date, sessionData.time, sessionData.duration || '50min');
+      const userTimeZone = profileSettings?.country === 'PT'
+        ? 'Europe/Lisbon'
+        : (Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Sao_Paulo");
 
       const body = {
         summary: `Consulta - ${patientName}`,
@@ -2028,11 +2508,11 @@ Como posso te ajudar hoje?`
         location: meetingLink || '',
         start: {
           dateTime: start,
-          timeZone: "America/Sao_Paulo"
+          timeZone: userTimeZone
         },
         end: {
           dateTime: end,
-          timeZone: "America/Sao_Paulo"
+          timeZone: userTimeZone
         }
       };
 
@@ -2081,6 +2561,9 @@ Como posso te ajudar hoje?`
       const patientName = p ? p.name : (sessionData.triageName || "Paciente");
       const meetingLink = p?.meetingLink || "";
       const { start, end } = formatLocalIsoString(sessionData.date, sessionData.time, sessionData.duration || '50min');
+      const userTimeZone = profileSettings?.country === 'PT'
+        ? 'Europe/Lisbon'
+        : (Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Sao_Paulo");
 
       const body = {
         summary: `Consulta - ${patientName}`,
@@ -2089,11 +2572,11 @@ Como posso te ajudar hoje?`
         location: meetingLink || '',
         start: {
           dateTime: start,
-          timeZone: "America/Sao_Paulo"
+          timeZone: userTimeZone
         },
         end: {
           dateTime: end,
-          timeZone: "America/Sao_Paulo"
+          timeZone: userTimeZone
         }
       };
 
@@ -2843,19 +3326,19 @@ Como posso te ajudar hoje?`
 
     const items = [
       { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { id: 'pacientes', label: 'Pacientes', icon: Users },
+      { id: 'pacientes', label: profileSettings?.country === 'PT' ? 'Utentes' : 'Pacientes', icon: Users },
       { id: 'agenda', label: 'Agenda', icon: CalendarIcon },
-      { id: 'prontuarios', label: 'Prontuários', icon: FileText },
+      { id: 'prontuarios', label: profileSettings?.country === 'PT' ? 'Processos Clínicos' : 'Prontuários', icon: FileText },
       { id: 'financeiro', label: 'Financeiro', icon: DollarSign },
-      { id: 'area-paciente', label: 'Área do Paciente', icon: UserCircle },
+      { id: 'area-paciente', label: profileSettings?.country === 'PT' ? 'Portal do Utente' : 'Área do Paciente', icon: UserCircle },
+      { id: 'whatsapp-lembretes', label: 'Lembretes WhatsApp', icon: MessageSquare },
       { id: 'import-transcript', label: 'Importar Transcrição', icon: FileDown },
     ];
     if (user?.email && user.email.toLowerCase().trim() === 'wellcoutinho99@gmail.com') {
-      items.push({ id: 'whatsapp-lembretes', label: 'Lembretes WhatsApp', icon: MessageSquare });
       items.push({ id: 'admin', label: 'Painel Admin', icon: ShieldCheck });
     }
     return items;
-  }, [user, currentClinic, clinicRole, clinicMembers]);
+  }, [user, currentClinic, clinicRole, clinicMembers, profileSettings?.country]);
 
   const isPrivacyRoute = window.location.pathname.startsWith('/privacidade') || window.location.search.includes('goto=privacidade');
 
@@ -2878,6 +3361,20 @@ Como posso te ajudar hoje?`
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
           <p className="text-sm font-bold uppercase tracking-widest animate-pulse">Carregando SimplePsi...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isRedirectingToStripe) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-[#FAF9F6] text-[#2E3C2B]">
+        <div className="flex flex-col items-center gap-4 text-center max-w-sm px-6">
+          <div className="w-12 h-12 border-4 border-[#5F7D5C] border-t-transparent rounded-full animate-spin" />
+          <h2 className="text-xl font-serif font-black text-[#2E3C2B]">Redirecionando para a Stripe...</h2>
+          <p className="text-xs text-[#2E3C2B]/70 leading-relaxed">
+            Estamos conectando você ao checkout seguro para concluir sua assinatura. Um instante!
+          </p>
         </div>
       </div>
     );
@@ -2917,7 +3414,47 @@ Como posso te ajudar hoje?`
   if (!user && !currentClinicMember) {
     return (
       <>
-        <LandingPage onLogin={handleGoogleLogin} />
+        {/* Notificação amigável de redirecionamento para PT quando utilizador de Portugal acede à raiz */}
+        {ptRedirectNotice && (
+          <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[9999] max-w-md w-[92%] bg-[#2E3C2B] text-white p-4 rounded-2xl shadow-2xl border border-white/20 flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-4">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">🇵🇹</span>
+              <div className="text-left text-xs">
+                <p className="font-bold text-white">Versão de Portugal Detetada</p>
+                <p className="text-white/75 text-[11px]">A redirecionar para a versão Portugal (simplepsi.com/pt)...</p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                localStorage.setItem('simplepsi_country', 'BR');
+                setCurrentCountry('BR');
+                setPtRedirectNotice(false);
+              }}
+              className="px-2.5 py-1 text-[10px] font-bold bg-white/10 hover:bg-white/20 rounded-lg text-white/80 transition-all cursor-pointer whitespace-nowrap"
+            >
+              Ficar no Brasil
+            </button>
+          </div>
+        )}
+
+        <LandingPage 
+          onLogin={handleOpenAuthModal} 
+          initialCountry={currentCountry}
+          onCountryChange={(newCountry) => {
+            setCurrentCountry(newCountry);
+            localStorage.setItem('simplepsi_country', newCountry);
+          }}
+        />
+        
+        <AuthModal 
+          isOpen={isAuthModalOpen} 
+          onClose={() => {
+            setIsAuthModalOpen(false);
+            setAuthModalSelectedPlan(null);
+          }}
+          selectedPlan={authModalSelectedPlan}
+          country={currentCountry}
+        />
         
         {/* Auth Error Premium Modal */}
         {authError && (
@@ -2963,12 +3500,16 @@ Como posso te ajudar hoje?`
     );
   }
 
-  if (isTrialExpired) {
+  if (isTrialExpired && effectivePlan === 'free' && (patients || []).length > 5) {
     return (
       <PaywallScreen 
+        userId={user.uid}
         email={user.email || ''} 
-        checkoutUrl="https://pay.hotmart.com/P105903618L" 
+        patientCount={(patients || []).length}
         onSignOut={() => auth.signOut()} 
+        onContinueFree={() => {
+          setProfileSettings(prev => ({ ...prev, isTrial: false }));
+        }}
       />
     );
   }
@@ -3062,29 +3603,30 @@ Como posso te ajudar hoje?`
         </nav>
 
           <div className="p-4 mt-auto border-t border-white/5 space-y-3">
-            {!currentClinic && profileSettings.isTrial && (
-              <div className="bg-primary/10 border border-primary/20 rounded-xl p-3 space-y-2 text-left animate-in fade-in slide-in-from-bottom-2 duration-300">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-primary">
-                  <Sparkles size={13} className="animate-pulse shrink-0 text-primary" />
-                  <span>Teste Grátis Ativo</span>
+            {!currentClinic && effectivePlan !== 'lifetime' && (
+              <button 
+                onClick={() => openUpgradeModalWithReason()}
+                className="w-full flex items-center justify-between px-3 py-2 text-xs font-bold text-text-muted hover:text-primary hover:bg-primary/5 rounded-xl transition-all border border-transparent hover:border-primary/10 group cursor-pointer"
+              >
+                <div className="flex items-center gap-2.5">
+                  <CreditCard size={15} className="text-text-muted group-hover:text-primary transition-colors" />
+                  <span>Gerenciar Plano</span>
                 </div>
-                <p className="text-[10px] text-text-muted leading-tight">
-                  Restam <strong className="text-text-main font-bold">{Math.max(0, trialRemainingDays)} {Math.max(0, trialRemainingDays) === 1 ? 'dia' : 'dias'}</strong> de uso vitalício grátis.
-                </p>
-                <a
-                  href="https://pay.hotmart.com/P105903618L"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full py-1.5 bg-primary hover:bg-primary/95 text-white text-[9px] font-bold uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-1 shadow-sm select-none"
-                >
-                  Adquirir Licença Vitalícia
-                </a>
-              </div>
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/20">
+                  {profileSettings.isTrial && trialRemainingDays >= 0
+                    ? `Trial (${Math.max(0, trialRemainingDays)}d)`
+                    : effectivePlan === 'ilimitado' 
+                    ? 'Ilimitado' 
+                    : effectivePlan === 'consultorio' 
+                    ? 'Consultório' 
+                    : 'Start'}
+                </span>
+              </button>
             )}
 
             <button 
               onClick={() => setIsSupportOpen(true)}
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-text-muted hover:text-primary hover:bg-primary/5 rounded-xl transition-all border border-transparent hover:border-primary/10 group"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-text-muted hover:text-primary hover:bg-primary/5 rounded-xl transition-all border border-transparent hover:border-primary/10 group cursor-pointer"
             >
               <HelpCircle size={15} className="text-text-muted group-hover:text-primary transition-colors" />
               <span>Suporte & Sugestões</span>
@@ -3308,6 +3850,19 @@ Como posso te ajudar hoje?`
               </button>
             )}
 
+            {/* Botão de Acesso Rápido: Radar de Conteúdo (PRO) */}
+            <button
+              onClick={handleOpenRadar}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-500/10 via-primary/10 to-pink-500/10 hover:from-purple-500/20 hover:to-pink-500/20 border border-purple-500/25 hover:border-purple-500/40 text-text-main text-xs font-bold transition-all shadow-sm group cursor-pointer"
+              title="Radar de Conteúdo para Redes Sociais (Instagram & LinkedIn)"
+            >
+              <Sparkles size={14} className="text-purple-400 group-hover:rotate-12 transition-transform shrink-0" />
+              <span className="hidden sm:inline">Radar de Conteúdo</span>
+              <span className="text-[9px] bg-gradient-to-r from-purple-500 to-pink-500 text-white font-black px-1.5 py-0.2 rounded-full uppercase tracking-wider shrink-0">
+                PRO
+              </span>
+            </button>
+
             {/* Botão Modo Privacidade (Instagram) */}
             <button
               onClick={togglePrivacyMode}
@@ -3345,6 +3900,28 @@ Como posso te ajudar hoje?`
 
         {/* Content Area */}
         <div className="p-4 lg:p-8 max-w-7xl mx-auto">
+          {checkoutSuccessPlan && (
+            <div className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-green-700 text-white shadow-xl flex items-center justify-between gap-4 animate-in fade-in slide-in-from-top duration-300">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+                  <Sparkles size={20} className="text-white fill-white" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold">Assinatura Ativada com Sucesso!</h4>
+                  <p className="text-xs text-white/90 leading-relaxed">
+                    Seu plano <strong>{checkoutSuccessPlan === 'ilimitado' ? 'Ilimitado Pro' : 'Consultório'}</strong> está 100% ativo! Todos os recursos e automações foram liberados na sua conta.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCheckoutSuccessPlan(null)}
+                className="text-white/80 hover:text-white p-2 rounded-xl hover:bg-white/10 transition-colors shrink-0 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+          )}
+
           <AnimatePresence mode="wait">
             {((activeTab === 'crm-recepcao') || (activeTab === 'dashboard' && currentClinic && clinicRole === 'receptionist')) && currentClinic && (
               <ClinicReceptionCrmView 
@@ -3418,6 +3995,8 @@ Como posso te ajudar hoje?`
                   safeSetStorage('simplepsi_migration_banner_dismissed', 'true');
                 }}
                 onOpenMigrationModal={() => setShowMigrationModal(true)}
+                effectivePlan={effectivePlan}
+                onOpenUpgradeModal={openUpgradeModalWithReason}
               />
             )}
 
@@ -3435,9 +4014,24 @@ Como posso te ajudar hoje?`
             {activeTab === 'pacientes' && !selectedPatient && (
               <PatientsListView 
                 key="patients-list" 
+                isPT={isPT}
                 filteredPatients={filteredPatients} 
                 onSelect={setSelectedPatient} 
-                onAddClick={() => setIsAddingPatient(true)}
+                onAddClick={() => {
+                  if (isPatientLimitReached) {
+                    openUpgradeModalWithReason(
+                      isPT
+                        ? (effectivePlan === 'consultorio' 
+                            ? 'Atingiu o limite de 15 utentes do plano Consultório. Atualize para o plano Ilimitado!' 
+                            : 'Atingiu o limite de 5 utentes do plano Start (Gratuito). Atualize para registar novos utentes!')
+                        : (effectivePlan === 'consultorio' 
+                            ? 'Você atingiu o limite de 15 pacientes do plano Consultório. Faça o upgrade para o plano Ilimitado!' 
+                            : 'Você atingiu o limite de 5 pacientes do plano Start (Gratuito). Faça o upgrade para cadastrar novos pacientes!')
+                    );
+                  } else {
+                    setIsAddingPatient(true);
+                  }
+                }}
                 onDeletePatient={handleDeletePatient}
                 onUpdatePatient={handleUpdatePatient}
                 onGoToAgenda={() => setActiveTab('agenda')}
@@ -3447,6 +4041,9 @@ Como posso te ajudar hoje?`
                 clinicMembers={clinicMembers}
                 clinicRole={clinicRole}
                 currentClinicMember={currentClinicMember}
+                effectivePlan={effectivePlan}
+                maxPatientsAllowed={maxPatientsAllowed}
+                onOpenUpgradeModal={openUpgradeModalWithReason}
               />
             )}
             {activeTab === 'pacientes' && selectedPatient && (
@@ -3469,6 +4066,7 @@ Como posso te ajudar hoje?`
                 currentClinic={currentClinic}
                 currentClinicMember={currentClinicMember}
                 clinicMembers={clinicMembers}
+                checkAndConsumeDailyAiUsage={checkAndConsumeDailyAiUsage}
               />
             )}
             
@@ -3500,6 +4098,7 @@ Como posso te ajudar hoje?`
                 currentClinic={currentClinic}
                 currentClinicMember={currentClinicMember}
                 clinicMembers={clinicMembers}
+                checkAndConsumeDailyAiUsage={checkAndConsumeDailyAiUsage}
               />
             )}
 
@@ -3576,15 +4175,23 @@ Como posso te ajudar hoje?`
                 isScheduleAutonomyDisabled={Boolean(currentClinic && clinicRole === 'psychologist' && currentClinic.settings?.allowPsychologistManageAgenda === false)}
                 onOpenWhatsAppReminders={() => setActiveTab('whatsapp-lembretes')}
                 isWhatsAppAdmin={Boolean(user?.email && user.email.toLowerCase().trim() === 'wellcoutinho99@gmail.com')}
+                isPT={isPT}
               />
             )}
 
-            {activeTab === 'whatsapp-lembretes' && user?.email && user.email.toLowerCase().trim() === 'wellcoutinho99@gmail.com' && (
+            {activeTab === 'whatsapp-lembretes' && (
               <WhatsAppRemindersPanel
                 key="whatsapp-lembretes"
                 user={user}
                 sessions={displayedPersonalSessions}
                 patients={patients}
+                profileSettings={profileSettings}
+                effectivePlan={effectivePlan}
+                onOpenUpgradeModal={() => openUpgradeModalWithReason(
+                  profileSettings?.country === 'PT'
+                    ? 'Efetue upgrade para o Plano Ilimitado Pro para desbloquear lembretes automáticos no dia da consulta (D-0) com ligação do Google Meet!'
+                    : 'Faça upgrade para o Plano Ilimitado Pro para desbloquear lembretes automáticos no dia da sessão (D-0) com link do Google Meet!'
+                )}
               />
             )}
             
@@ -3658,7 +4265,7 @@ Como posso te ajudar hoje?`
                       
                       await updateDoc(doc(db, 'patients', p.id), {
                         sessions: (parseInt(p.sessions as any) || 0) + 1,
-                        lastSession: `Toda ${p.sessionDay || ''}`,
+                        lastSession: date.split('-').reverse().join('/'),
                         "clinicalData.evoluções": updatedEvolucoes,
                         updatedAt: new Date().toISOString()
                       });
@@ -3707,6 +4314,7 @@ Como posso te ajudar hoje?`
         <AnimatePresence>
           {isAddingPatient && (
             <AddPatientModal 
+              isPT={isPT}
               initialName={triageInitialName}
               initialDay={triageInitialDay}
               initialTime={triageInitialTime}
@@ -3743,10 +4351,39 @@ Como posso te ajudar hoje?`
               onSave={async (data: any) => {
                 if (user) {
                   try {
+                    const isWellington = user.email?.toLowerCase().trim() === 'wellcoutinho99@gmail.com' || user.email?.toLowerCase().trim() === 'juniorcoutinho58@gmail.com';
+                    const targetCountry = isWellington ? 'BR' : (data.country || 'BR');
                     await setDoc(doc(db, 'profiles', user.uid), {
                       ...data,
+                      country: targetCountry,
                       updatedAt: serverTimestamp()
                     });
+                    safeSetStorage('prof_country', targetCountry);
+                    if (targetCountry === 'BR') {
+                      safeSetStorage('simplepsi_country', 'BR');
+                      setCurrentCountry('BR');
+                    }
+
+                    // Propagar dados de Pix imediatamente para os portais dos pacientes
+                    try {
+                      const qUserPortals = query(collection(db, 'patient_portal'), where('ownerId', '==', user.uid));
+                      const userPortalsSnap = await getDocs(qUserPortals);
+                      if (!userPortalsSnap.empty) {
+                        const portalBatch = writeBatch(db);
+                        userPortalsSnap.forEach(pDoc => {
+                          portalBatch.update(pDoc.ref, {
+                            pixKey: data.pixKey || '',
+                            pixType: data.pixType || '',
+                            pixName: data.pixName || data.name || '',
+                            updatedAt: new Date().toISOString()
+                          });
+                        });
+                        await portalBatch.commit();
+                      }
+                    } catch (portalSyncErr) {
+                      console.warn("Aviso ao sincronizar Pix nos portais:", portalSyncErr);
+                    }
+
                     // setProfileSettings will be updated by the onSnapshot listener
                     setIsSettingsOpen(false);
                   } catch (err) {
@@ -3783,6 +4420,31 @@ Como posso te ajudar hoje?`
             setHasAcceptedExtensionTerms(true);
             safeSetStorage("simplepsi_meet_extension_consent", "true");
           }}
+        />
+
+        {/* Modal de Upgrade de Plano e Assinatura Stripe */}
+        <UpgradeModal
+          isOpen={showUpgradeModal}
+          onClose={() => {
+            setShowUpgradeModal(false);
+            setUpgradeReason(undefined);
+          }}
+          userId={user?.uid}
+          userEmail={user?.email || ''}
+          currentPlan={effectivePlan}
+          isTrial={profileSettings?.isTrial && trialRemainingDays >= 0}
+          trialDaysRemaining={Math.max(0, trialRemainingDays)}
+          hasStripeCustomer={Boolean(profileSettings?.subscription?.stripeCustomerId)}
+          limitReason={upgradeReason}
+          country={profileSettings?.country || currentCountry}
+        />
+
+        {/* Modal de Ideias de Conteúdo para Redes Sociais (Radar Clínico Pro) */}
+        <ContentIdeasModal
+          isOpen={isContentIdeasModalOpen}
+          onClose={() => setIsContentIdeasModalOpen(false)}
+          patients={patients}
+          user={user}
         />
 
         {/* Modal de Gestão da Equipe da Clínica (B2B) */}
@@ -3997,7 +4659,9 @@ function DashboardView({
   onDismissMigrationBanner,
   onOpenMigrationModal,
   isPrivacyMode = false,
-  onTogglePrivacyMode
+  onTogglePrivacyMode,
+  effectivePlan = 'free',
+  onOpenUpgradeModal
 }: { 
   user: User | null,
   onPatientSelect: (id: string) => void, 
@@ -4020,14 +4684,15 @@ function DashboardView({
   onDismissMigrationBanner?: () => void,
   onOpenMigrationModal?: () => void,
   isPrivacyMode?: boolean,
-  onTogglePrivacyMode?: () => void
+  onTogglePrivacyMode?: () => void,
+  effectivePlan?: string,
+  onOpenUpgradeModal?: (reason?: string) => void
 }) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedDayPayments, setSelectedDayPayments] = useState<any[]>([]);
   const [selectedDayLabel, setSelectedDayLabel] = useState<string>('');
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const [isContentIdeasModalOpen, setIsContentIdeasModalOpen] = useState(false);
 
   useEffect(() => {
     // Registra que as novidades já foram exibidas no dashboard para nunca mais reaparecerem em sessões futuras
@@ -4889,36 +5554,23 @@ function DashboardView({
           </div>
         )}
       </section>
-
-      {/* Acesso exclusivo Wellington: Laboratório de Conteúdo & Dores Clínicas */}
-      {user?.email?.toLowerCase().trim() === 'wellcoutinho99@gmail.com' && (
-        <div className="flex items-center justify-end pt-3 pb-8">
-          <button
-            type="button"
-            onClick={() => setIsContentIdeasModalOpen(true)}
-            className="group inline-flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-surface-muted/50 hover:bg-surface-muted border border-border-ui/40 hover:border-emerald-500/40 transition-all cursor-pointer shadow-sm text-xs"
-            title="Laboratório de Conteúdo & Dores Clínicas (Privado Wellington)"
-          >
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-            <span className="text-[11px] font-medium text-text-muted/70 group-hover:text-emerald-400 transition-colors">
-              Radar de Conteúdo
-            </span>
-          </button>
-        </div>
-      )}
-
-      {/* Modal de Ideias de Conteúdo para Redes Sociais */}
-      <ContentIdeasModal
-        isOpen={isContentIdeasModalOpen}
-        onClose={() => setIsContentIdeasModalOpen(false)}
-        patients={patients}
-        user={user}
-      />
     </motion.div>
   );
+}
+
+function getNextDateForWeekday(targetDayName: string, allowToday = false): string {
+  const days = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+  const targetDayIndex = days.indexOf(targetDayName);
+  if (targetDayIndex === -1) return new Date().toISOString().split('T')[0];
+  const today = new Date();
+  const currentDayIndex = today.getDay();
+  let diff = targetDayIndex - currentDayIndex;
+  if (diff < 0 || (diff === 0 && !allowToday)) {
+    diff += 7;
+  }
+  const targetDate = new Date(today);
+  targetDate.setDate(today.getDate() + diff);
+  return targetDate.toISOString().split('T')[0];
 }
 
 function AddPatientModal({ 
@@ -4930,7 +5582,8 @@ function AddPatientModal({
   currentClinic,
   clinicMembers = [],
   clinicRole,
-  currentClinicMember
+  currentClinicMember,
+  isPT: isPTProp
 }: { 
   onClose: () => void, 
   onSave: (data: any) => void, 
@@ -4940,8 +5593,15 @@ function AddPatientModal({
   currentClinic?: Clinic | null,
   clinicMembers?: ClinicMember[],
   clinicRole?: ClinicUserRole | null,
-  currentClinicMember?: ClinicMember | null
+  currentClinicMember?: ClinicMember | null,
+  isPT?: boolean
 }) {
+  const isPT = isPTProp ?? (typeof window !== 'undefined' && (
+    localStorage.getItem('simplepsi_country') === 'PT' ||
+    localStorage.getItem('prof_country') === 'PT' ||
+    window.location.pathname.startsWith('/pt')
+  ));
+
   const defaultPsy = clinicRole === 'psychologist' && currentClinicMember 
     ? (currentClinicMember.email || currentClinicMember.id) 
     : (clinicMembers.find(m => m.role === 'psychologist')?.email || '');
@@ -4952,7 +5612,7 @@ function AddPatientModal({
     currentClinic.settings?.allowPsychologistSetPrice === false
   );
 
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState(() => ({
     name: initialName,
     gender: '',
     birthDate: '',
@@ -4967,13 +5627,13 @@ function AddPatientModal({
     sessions: '' as any,
     sessionDay: initialDay || 'Segunda-feira',
     nextSessionTime: initialTime,
-    amount: '180',
+    amount: isPT ? '50' : '180',
     recurrence: 'Semanal',
     modality: 'Online',
     meetingLink: '',
-    firstSessionDate: new Date().toISOString().split('T')[0],
+    firstSessionDate: getNextDateForWeekday(initialDay || 'Segunda-feira'),
     psychologistId: defaultPsy
-  });
+  }));
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -4994,7 +5654,9 @@ function AddPatientModal({
         className="glass-card w-full max-w-4xl md:rounded-[32px] overflow-hidden shadow-2xl md:my-8 h-full md:max-h-[90vh] flex flex-col"
       >
         <div className="p-4 md:p-8 flex items-center justify-between border-b border-white/5 shrink-0">
-          <h3 className="text-xl md:text-2xl font-bold text-text-main">Novo Paciente</h3>
+          <h3 className="text-xl md:text-2xl font-bold text-text-main">
+            {isPT ? 'Novo Utente' : 'Novo Paciente'}
+          </h3>
           <button onClick={onClose} className="text-text-muted hover:text-text-main p-2">
             <ChevronRight size={24} className="rotate-180" />
           </button>
@@ -5030,8 +5692,10 @@ function AddPatientModal({
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Gênero/Pronome</label>
-                      <input placeholder="Ex: Feminino, Ela/Dela" value={formData.gender} onChange={(e) => setFormData({...formData, gender: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                        {isPT ? 'Género / Pronome' : 'Gênero/Pronome'}
+                      </label>
+                      <input placeholder={isPT ? "Ex: Feminino, Ela" : "Ex: Feminino, Ela/Dela"} value={formData.gender} onChange={(e) => setFormData({...formData, gender: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Data de Nasc.</label>
@@ -5040,18 +5704,22 @@ function AddPatientModal({
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Telefone</label>
-                      <input placeholder="(00) 00000-0000" value={formData.phone} onChange={(e) => setFormData({...formData, phone: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                        {isPT ? 'Telemóvel / Telefone' : 'Telefone'}
+                      </label>
+                      <input placeholder={isPT ? "912 345 678 ou +351..." : "(00) 00000-0000"} value={formData.phone} onChange={(e) => setFormData({...formData, phone: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">CPF ou RG</label>
-                      <input placeholder="Apenas números" value={formData.document} onChange={(e) => setFormData({...formData, document: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                        {isPT ? 'NIF ou Cartão de Cidadão' : 'CPF ou RG'}
+                      </label>
+                      <input placeholder={isPT ? "Ex: 123456789" : "Apenas números"} value={formData.document} onChange={(e) => setFormData({...formData, document: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Profissão</label>
-                      <input placeholder="Ocupação/Profissão" value={formData.occupation} onChange={(e) => setFormData({...formData, occupation: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
+                      <input placeholder={isPT ? "Profissão / Ocupação" : "Ocupação/Profissão"} value={formData.occupation} onChange={(e) => setFormData({...formData, occupation: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">E-mail</label>
@@ -5059,39 +5727,51 @@ function AddPatientModal({
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Endereço</label>
-                    <input placeholder="Rua, Número, Bairro, Cidade - UF" value={formData.address} onChange={(e) => setFormData({...formData, address: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                      {isPT ? 'Morada' : 'Endereço'}
+                    </label>
+                    <input placeholder={isPT ? "Rua, Número, Código Postal, Localidade" : "Rua, Número, Bairro, Cidade - UF"} value={formData.address} onChange={(e) => setFormData({...formData, address: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Medicação Contínua? (Se sim, qual?)</label>
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                      {isPT ? 'Medicação Regular? (Se sim, qual?)' : 'Medicação Contínua? (Se sim, qual?)'}
+                    </label>
                     <input placeholder="Não toma / Ex: Sertralina 50mg" value={formData.medication} onChange={(e) => setFormData({...formData, medication: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Contato de Emergência</label>
-                    <input placeholder="Nome e Telefone (Grau de parentesco)" value={formData.emergencyContact} onChange={(e) => setFormData({...formData, emergencyContact: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                      {isPT ? 'Contacto de Emergência' : 'Contato de Emergência'}
+                    </label>
+                    <input placeholder={isPT ? "Nome e Telemóvel (Grau de parentesco)" : "Nome e Telefone (Grau de parentesco)"} value={formData.emergencyContact} onChange={(e) => setFormData({...formData, emergencyContact: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
                   </div>
                 </div>
               </div>
 
               {/* Session & Finance Info */}
               <div className="space-y-5">
-                <p className="font-bold text-xs text-primary uppercase tracking-widest pl-1">Agendamento Padrão & Financeiro</p>
+                <p className="font-bold text-xs text-primary uppercase tracking-widest pl-1">
+                  {isPT ? 'Agendamento Habitual & Financeiro' : 'Agendamento Padrão & Financeiro'}
+                </p>
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Situação do Paciente</label>
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                      {isPT ? 'Estado do Utente' : 'Situação do Paciente'}
+                    </label>
                     <select 
                       value={formData.isNewPatient ? 'new' : 'old'} 
                       onChange={(e) => setFormData({...formData, isNewPatient: e.target.value === 'new', sessions: ''})} 
                       className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary appearance-none"
                     >
-                      <option value="new">Novo Paciente (0 sessões)</option>
-                      <option value="old">Paciente Antigo (Já em atendimento)</option>
+                      <option value="new">{isPT ? 'Novo Utente (0 consultas)' : 'Novo Paciente (0 sessões)'}</option>
+                      <option value="old">{isPT ? 'Utente Já Acompanhado (Consultas anteriores)' : 'Paciente Antigo (Já em atendimento)'}</option>
                     </select>
                   </div>
                   
                   {!formData.isNewPatient && (
                     <div className="space-y-2">
-                        <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Sessões realizadas antes do cadastro no sistema</label>
+                        <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                          {isPT ? 'Consultas realizadas antes do registo no sistema' : 'Sessões realizadas antes do cadastro no sistema'}
+                        </label>
                         <input type="number" min="0" placeholder="Ex: 10" value={formData.sessions} onChange={(e) => setFormData({...formData, sessions: e.target.value === '' ? '' : parseInt(e.target.value) || 0})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
                     </div>
                   )}
@@ -5101,7 +5781,15 @@ function AddPatientModal({
                       <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Dia da Semana</label>
                       <select 
                         value={formData.sessionDay} 
-                        onChange={(e) => setFormData({...formData, sessionDay: e.target.value})} 
+                        onChange={(e) => {
+                          const newDay = e.target.value;
+                          const nextDate = newDay ? getNextDateForWeekday(newDay) : formData.firstSessionDate;
+                          setFormData({
+                            ...formData, 
+                            sessionDay: newDay,
+                            firstSessionDate: nextDate
+                          });
+                        }} 
                         className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary appearance-none"
                       >
                         <option value="">Nenhum/Avulso</option>
@@ -5115,7 +5803,9 @@ function AddPatientModal({
                       </select>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Hora Padrão</label>
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                        {isPT ? 'Hora Habitual' : 'Hora Padrão'}
+                      </label>
                       <input type="time" value={formData.nextSessionTime} onChange={(e) => setFormData({...formData, nextSessionTime: e.target.value})} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" />
                     </div>
                   </div>
@@ -5132,7 +5822,9 @@ function AddPatientModal({
                       </select>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Recorrência</label>
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                        {isPT ? 'Periodicidade' : 'Recorrência'}
+                      </label>
                       <select 
                         value={formData.recurrence} 
                         onChange={(e) => setFormData({...formData, recurrence: e.target.value})} 
@@ -5141,13 +5833,15 @@ function AddPatientModal({
                         <option value="Semanal">Semanal</option>
                         <option value="Quinzenal">Quinzenal</option>
                         <option value="Mensal">Mensal</option>
-                        <option value="Nenhuma">Nenhuma (Avaliação/Avulso)</option>
+                        <option value="Nenhuma">{isPT ? 'Nenhuma (Consulta Pontual/Avaliação)' : 'Nenhuma (Avaliação/Avulso)'}</option>
                       </select>
                     </div>
                   </div>
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Valor da Sessão/Plano (R$)</label>
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                        {isPT ? 'Valor da Consulta (€)' : 'Valor da Sessão/Plano (R$)'}
+                      </label>
                       {isPriceLocked && (
                         <span className="text-[9px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 flex items-center gap-1">
                           <Lock size={10} /> Definido pela Clínica
@@ -5156,7 +5850,7 @@ function AddPatientModal({
                     </div>
                     <input 
                       type="number" 
-                      placeholder="Ex: 180" 
+                      placeholder={isPT ? "Ex: 50" : "Ex: 180"} 
                       disabled={isPriceLocked}
                       value={formData.amount} 
                       onChange={(e) => setFormData({...formData, amount: e.target.value})} 
@@ -5165,7 +5859,9 @@ function AddPatientModal({
                   </div>
 
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Link de Atendimento (ex: Google Meet, Zoom)</label>
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+                      {isPT ? 'Hiperligação da Consulta (ex: Google Meet, Zoom)' : 'Link de Atendimento (ex: Google Meet, Zoom)'}
+                    </label>
                     <input 
                       type="url" 
                       placeholder="https://meet.google.com/xyz-abc-123" 
@@ -5178,7 +5874,7 @@ function AddPatientModal({
                   {formData.recurrence !== 'Nenhuma' && (
                     <div className="space-y-2 animate-in fade-in slide-in-from-top-2 duration-300">
                       <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
-                        Data de Início / Próxima Sessão
+                        {isPT ? 'Data de Início / Próxima Consulta' : 'Data de Início / Próxima Sessão'}
                       </label>
                       <input 
                         type="date" 
@@ -5196,7 +5892,9 @@ function AddPatientModal({
                         className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
                       />
                       <p className="text-[10px] text-primary font-bold uppercase tracking-tighter opacity-70 ml-1">
-                        A recorrência {formData.recurrence.toLowerCase()} será calculada a partir desta data.
+                        {isPT 
+                          ? `A periodicidade ${formData.recurrence.toLowerCase()} será calculada a partir desta data.` 
+                          : `A recorrência ${formData.recurrence.toLowerCase()} será calculada a partir desta data.`}
                       </p>
                     </div>
                   )}
@@ -5208,7 +5906,9 @@ function AddPatientModal({
         
         <div className="p-6 border-t border-border-ui flex gap-3 shrink-0 bg-background/50">
           <button type="button" onClick={onClose} className="flex-1 px-6 py-4 rounded-2xl bg-surface-muted border border-border-ui text-text-main font-bold hover:bg-border-ui transition-colors">Cancelar</button>
-          <button type="submit" form="add-patient-form" className="flex-[2] px-6 py-4 rounded-2xl bg-primary text-white font-bold hover:opacity-90 shadow-lg shadow-primary/20 transition-all text-sm uppercase tracking-wider">Salvar Registro</button>
+          <button type="submit" form="add-patient-form" className="flex-[2] px-6 py-4 rounded-2xl bg-primary text-white font-bold hover:opacity-90 shadow-lg shadow-primary/20 transition-all text-sm uppercase tracking-wider">
+            {isPT ? 'Guardar Registo' : 'Salvar Registro'}
+          </button>
         </div>
       </motion.div>
     </motion.div>
@@ -5216,6 +5916,12 @@ function AddPatientModal({
 }
 
 function ProntuariosListView({ patients, onSelect }: { patients: any[], onSelect: (id: string) => void }) {
+  const isPT = typeof window !== 'undefined' && (
+    localStorage.getItem('simplepsi_country') === 'PT' ||
+    localStorage.getItem('prof_country') === 'PT' ||
+    window.location.pathname.startsWith('/pt')
+  );
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
@@ -5223,8 +5929,12 @@ function ProntuariosListView({ patients, onSelect }: { patients: any[], onSelect
       className="space-y-8"
     >
       <div>
-        <h2 className="text-3xl font-bold tracking-tight text-text-main">Arquivo de Prontuários</h2>
-        <p className="text-text-muted mt-2">Selecione um paciente para visualizar o histórico clínico completo.</p>
+        <h2 className="text-3xl font-bold tracking-tight text-text-main">
+          {isPT ? 'Arquivo de Processos Clínicos' : 'Arquivo de Prontuários'}
+        </h2>
+        <p className="text-text-muted mt-2">
+          {isPT ? 'Selecione um utente para visualizar o processo clínico completo.' : 'Selecione um paciente para visualizar o histórico clínico completo.'}
+        </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -5241,15 +5951,15 @@ function ProntuariosListView({ patients, onSelect }: { patients: any[], onSelect
               <div>
                 <h4 className="font-bold text-text-main uppercase text-sm tracking-tight">{patient.name}</h4>
                 <p className="text-xs text-text-muted">
-                  {Math.max(parseInt(patient.sessions) || 0, patient.clinicalData?.evoluções?.length || 0)} sessões realizadas
+                  {Math.max(parseInt(patient.sessions) || 0, patient.clinicalData?.evoluções?.length || 0)} {isPT ? 'consultas realizadas' : 'sessões realizadas'}
                 </p>
               </div>
             </div>
             
             <div className="space-y-3">
               <div className="flex items-center justify-between text-[10px] text-text-muted uppercase font-bold tracking-widest">
-                <span>Registros Clínicos</span>
-                <span className="text-primary">{patient.clinicalData?.evoluções?.length || 0} relatos</span>
+                <span>{isPT ? 'Registos Clínicos' : 'Registros Clínicos'}</span>
+                <span className="text-primary">{patient.clinicalData?.evoluções?.length || 0} {isPT ? 'notas' : 'relatos'}</span>
               </div>
               <div className="w-full bg-surface-muted h-1.5 rounded-full overflow-hidden">
                 <div 
@@ -5260,7 +5970,9 @@ function ProntuariosListView({ patients, onSelect }: { patients: any[], onSelect
             </div>
 
             <div className="mt-8 pt-6 border-t border-border-ui flex items-center justify-between group-hover:text-primary transition-colors">
-              <span className="text-xs font-bold uppercase tracking-widest">Acessar Prontuário</span>
+              <span className="text-xs font-bold uppercase tracking-widest">
+                {isPT ? 'Aceder ao Processo Clínico' : 'Acessar Prontuário'}
+              </span>
               <ChevronRight size={18} />
             </div>
           </div>
@@ -5305,7 +6017,11 @@ function PatientsListView({
   currentClinic,
   clinicMembers = [],
   clinicRole,
-  currentClinicMember
+  currentClinicMember,
+  effectivePlan = 'free',
+  maxPatientsAllowed = 5,
+  onOpenUpgradeModal,
+  isPT: isPTProp
 }: { 
   onSelect: (id: string) => void, 
   filteredPatients: any[], 
@@ -5318,8 +6034,18 @@ function PatientsListView({
   currentClinic?: Clinic | null,
   clinicMembers?: ClinicMember[],
   clinicRole?: ClinicUserRole | null,
-  currentClinicMember?: ClinicMember | null
+  currentClinicMember?: ClinicMember | null,
+  effectivePlan?: string,
+  maxPatientsAllowed?: number,
+  onOpenUpgradeModal?: (reason?: string) => void,
+  isPT?: boolean
 }) {
+  const isPT = isPTProp ?? (typeof window !== 'undefined' && (
+    localStorage.getItem('simplepsi_country') === 'PT' ||
+    localStorage.getItem('prof_country') === 'PT' ||
+    window.location.pathname.startsWith('/pt')
+  ));
+
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'ativos' | 'inativos'>('ativos');
   const [sortBy, setSortBy] = useState<'alfabetica' | 'recentes' | 'atividade'>('alfabetica');
@@ -5380,8 +6106,8 @@ function PatientsListView({
     >
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold">Pacientes</h2>
-          <p className="text-text-muted text-sm">Gerencie sua lista de pacientes e históricos.</p>
+          <h2 className="text-2xl font-bold">{isPT ? 'Utentes' : 'Pacientes'}</h2>
+          <p className="text-text-muted text-sm">{isPT ? 'Gerencie a sua lista de utentes e históricos clínicos.' : 'Gerencie sua lista de pacientes e históricos.'}</p>
           <div className="flex flex-wrap items-center gap-3 mt-4">
             <div className="flex gap-2">
               <button 
@@ -5391,7 +6117,7 @@ function PatientsListView({
                   activeTab === 'ativos' ? "bg-primary text-white shadow-lg shadow-primary/20" : "bg-surface-muted text-text-muted hover:text-text-main"
                 )}
               >
-                Ativos
+                {isPT ? 'Ativos' : 'Ativos'}
               </button>
               <button 
                 onClick={() => setActiveTab('inativos')}
@@ -5400,7 +6126,7 @@ function PatientsListView({
                   activeTab === 'inativos' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "bg-surface-muted text-text-muted hover:text-text-main"
                 )}
               >
-                Inativos
+                {isPT ? 'Inativos' : 'Inativos'}
               </button>
             </div>
 
@@ -5415,8 +6141,8 @@ function PatientsListView({
               >
                 <span>
                   {sortBy === 'alfabetica' && 'Alfabética'}
-                  {sortBy === 'recentes' && 'Mais Recentes'}
-                  {sortBy === 'atividade' && 'Última Atividade'}
+                  {sortBy === 'recentes' && (isPT ? 'Mais Recentes' : 'Mais Recentes')}
+                  {sortBy === 'atividade' && (isPT ? 'Última Atividade' : 'Última Atividade')}
                 </span>
                 <ChevronDown size={11} className={cn("transition-transform duration-200 text-text-muted", isSortDropdownOpen && "rotate-180")} />
               </button>
@@ -5473,7 +6199,7 @@ function PatientsListView({
                   onChange={(e) => setSelectedPsyFilter(e.target.value)}
                   className="bg-transparent text-[10px] font-bold text-text-main outline-none cursor-pointer"
                 >
-                  <option value="all" className="bg-card text-text-main">Todos da Clínica</option>
+                  <option value="all" className="bg-card text-text-main">{isPT ? 'Todos da Clínica' : 'Todos da Clínica'}</option>
                   {clinicMembers.filter(m => m.role === 'psychologist').map(p => (
                     <option key={p.id} value={p.email} className="bg-card text-text-main">
                       {p.name || p.email}
@@ -5490,19 +6216,19 @@ function PatientsListView({
               type="button"
               onClick={onOpenMigrationModal}
               className="w-full sm:w-auto bg-primary/15 hover:bg-primary/25 text-primary border border-primary/30 px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-sm cursor-pointer active:scale-[0.98]"
-              title="Importar prontuários de outros sistemas"
+              title={isPT ? "Importar processos clínicos de outros sistemas" : "Importar prontuários de outros sistemas"}
             >
               <Sparkles size={16} className="text-primary animate-pulse" />
-              Migrar de Outro Sistema
+              {isPT ? 'Migrar de Outro Sistema' : 'Migrar de Outro Sistema'}
             </button>
           )}
           {isScheduleAutonomyDisabled ? (
             <div 
               className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-surface-muted text-text-muted border border-border-ui text-xs font-semibold flex items-center justify-center gap-2 select-none"
-              title="A clínica definiu que o cadastro e agendamento de pacientes é gerenciado pela recepção"
+              title={isPT ? "A clínica definiu que o registo e agendamento de utentes é gerido pela receção" : "A clínica definiu que o cadastro e agendamento de pacientes é gerenciado pela recepção"}
             >
               <Lock size={14} className="text-amber-500" />
-              <span>Cadastros via Recepção</span>
+              <span>{isPT ? 'Registos via Receção' : 'Cadastros via Recepção'}</span>
             </div>
           ) : (
             <button 
@@ -5510,11 +6236,42 @@ function PatientsListView({
               className="w-full sm:w-auto bg-primary hover:bg-primary-dark text-white px-6 py-2.5 rounded-xl font-medium flex items-center justify-center gap-2 transition-all shadow-lg shadow-primary/20 cursor-pointer"
             >
               <Plus size={20} />
-              Novo Paciente
+              {isPT ? 'Novo Utente' : 'Novo Paciente'}
             </button>
           )}
         </div>
       </div>
+
+      {maxPatientsAllowed !== Infinity && (filteredPatients || []).length >= Math.max(1, maxPatientsAllowed - 1) && (
+        <div className="bg-primary/10 border border-primary/20 rounded-2xl p-3 px-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs mb-4 animate-in fade-in slide-in-from-top-1 duration-200">
+          <div className="flex items-center gap-2 text-text-main">
+            <Sparkles size={14} className="text-primary shrink-0" />
+            <span>
+              {isPT ? (
+                <>A sua clínica cresceu? Já registou <strong>{(filteredPatients || []).length} de {maxPatientsAllowed} utentes</strong> do plano {effectivePlan === 'consultorio' ? 'Consultório' : 'Start'}.</>
+              ) : (
+                <>Sua clínica cresceu? Você já cadastrou <strong>{(filteredPatients || []).length} de {maxPatientsAllowed} pacientes</strong> do plano {effectivePlan === 'consultorio' ? 'Consultório' : 'Start'}.</>
+              )}
+            </span>
+          </div>
+          <button
+            onClick={() => onOpenUpgradeModal?.(
+              isPT ? (
+                effectivePlan === 'consultorio'
+                  ? 'Atualize para o plano Ilimitado e atenda utentes sem limites!'
+                  : 'Atualize para o plano Consultório ou Ilimitado e atenda mais utentes com robô no WhatsApp!'
+              ) : (
+                effectivePlan === 'consultorio'
+                  ? 'Faça o upgrade para o plano Ilimitado e atenda pacientes sem limites!'
+                  : 'Faça o upgrade para o plano Consultório ou Ilimitado e atenda mais pacientes com robô no WhatsApp!'
+              )
+            )}
+            className="px-3 py-1 bg-primary text-white rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-primary-dark transition-all shrink-0 cursor-pointer"
+          >
+            Subir de Plano
+          </button>
+        </div>
+      )}
 
       <div className="glass-card rounded-3xl overflow-visible">
         {/* Desktop Table */}
@@ -5523,8 +6280,8 @@ function PatientsListView({
             <thead className="bg-surface-muted text-xs text-text-muted font-bold uppercase tracking-widest">
               <tr>
                 <th className="px-6 py-4">Nome</th>
-                <th className="px-6 py-4">Status</th>
-                <th className="px-6 py-4">Última Sessão</th>
+                <th className="px-6 py-4">{isPT ? 'Estado' : 'Status'}</th>
+                <th className="px-6 py-4">{isPT ? 'Periodicidade & Agenda' : 'Frequência & Agenda'}</th>
                 <th className="px-8 py-4 text-center">Ações</th>
               </tr>
             </thead>
@@ -5562,7 +6319,23 @@ function PatientsListView({
                        {patient.status || 'Ativo'}
                      </span>
                   </td>
-                  <td className="px-6 py-5 text-sm text-text-muted">{patient.lastSession}</td>
+                  <td className="px-6 py-5">
+                    {(() => {
+                      const freq = formatPatientFrequency(patient);
+                      const lastDate = getPatientLastSessionInfo(patient);
+                      return (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-xs font-semibold text-text-main flex items-center gap-1.5">
+                            <Clock size={12} className="text-primary shrink-0" />
+                            {freq}
+                          </span>
+                          <span className="text-[10.5px] text-text-muted">
+                            {lastDate ? `Última consulta: ${lastDate}` : 'Nenhuma consulta realizada'}
+                          </span>
+                        </div>
+                      );
+                    })()}
+                  </td>
                   <td className="px-6 py-5" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-center gap-4">
                       <button 
@@ -5581,7 +6354,7 @@ function PatientsListView({
                           onSelect(patient.id);
                         }}
                         className="p-1 rounded-lg hover:bg-primary/10 hover:text-primary text-text-muted transition-all"
-                        title="Ver Prontuário"
+                        title={isPT ? "Ver Processo Clínico" : "Ver Prontuário"}
                       >
                         <FileText size={18} />
                       </button>
@@ -5622,14 +6395,14 @@ function PatientsListView({
                                 className="w-full text-left px-4 py-2 text-xs text-text-main hover:bg-surface-muted transition-colors flex items-center gap-2"
                                >
                                   {patient.status === 'Inativo' ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-                                  {patient.status === 'Inativo' ? 'Reativar Paciente' : 'Inativar Paciente'}
+                                  {patient.status === 'Inativo' ? (isPT ? 'Reativar Utente' : 'Reativar Paciente') : (isPT ? 'Inativar Utente' : 'Inativar Paciente')}
                                </button>
                                <button 
                                 onClick={() => onDeletePatient(patient.id)}
                                 className="w-full text-left px-4 py-2 text-xs text-red-500 hover:bg-red-500/10 transition-colors flex items-center gap-2"
                                >
                                   <Trash2 size={14} />
-                                  Excluir Definitivamente
+                                  {isPT ? 'Eliminar Definitivamente' : 'Excluir Definitivamente'}
                                </button>
                             </motion.div>
                           )}
@@ -5640,7 +6413,9 @@ function PatientsListView({
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={4} className="px-6 py-12 text-center text-text-muted">Nenhum paciente encontrado.</td>
+                  <td colSpan={4} className="px-6 py-12 text-center text-text-muted">
+                    {isPT ? 'Nenhum utente encontrado.' : 'Nenhum paciente encontrado.'}
+                  </td>
                 </tr>
               )}
             </tbody>
@@ -5681,11 +6456,25 @@ function PatientsListView({
                 </span>
               </div>
               
-              <div className="grid grid-cols-1 gap-4 text-xs">
-                <div className="space-y-1">
-                  <p className="text-[9px] text-text-muted uppercase font-bold tracking-widest">Última</p>
-                  <p className="text-text-main truncate">{patient.lastSession}</p>
-                </div>
+              <div className="grid grid-cols-1 gap-2 text-xs">
+                {(() => {
+                  const freq = formatPatientFrequency(patient);
+                  const lastDate = getPatientLastSessionInfo(patient);
+                  return (
+                    <div className="space-y-1">
+                      <p className="text-[9px] text-text-muted uppercase font-bold tracking-widest">
+                        {isPT ? 'Periodicidade' : 'Frequência'}
+                      </p>
+                      <p className="text-xs font-semibold text-text-main flex items-center gap-1.5 truncate">
+                        <Clock size={12} className="text-primary shrink-0" />
+                        {freq}
+                      </p>
+                      <p className="text-[10px] text-text-muted">
+                        {lastDate ? `Última consulta: ${lastDate}` : 'Sem consultas realizadas'}
+                      </p>
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="flex gap-2 pt-2 border-t border-border-ui" onClick={(e) => e.stopPropagation()}>
@@ -5699,7 +6488,7 @@ function PatientsListView({
                   onClick={() => onSelect(patient.id)}
                   className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary/10 text-primary transition-all text-[10px] font-bold uppercase tracking-widest"
                 >
-                  <FileText size={14} /> Prontuário
+                  <FileText size={14} /> {isPT ? 'Processo Clínico' : 'Prontuário'}
                 </button>
                 {patient.phone && getWhatsAppLink(patient.phone) && (
                   <a 
@@ -5723,7 +6512,9 @@ function PatientsListView({
               </div>
             </div>
           )) : (
-            <div className="px-6 py-12 text-center text-text-muted">Nenhum paciente encontrado.</div>
+            <div className="px-6 py-12 text-center text-text-muted">
+              {isPT ? 'Nenhum utente encontrado.' : 'Nenhum paciente encontrado.'}
+            </div>
           )}
         </div>
       </div>
@@ -5808,7 +6599,8 @@ function PatientDetailsView({
   clinicRole,
   currentClinic,
   currentClinicMember,
-  clinicMembers = []
+  clinicMembers = [],
+  checkAndConsumeDailyAiUsage = () => true
 }: { 
   patientId: string, 
   onBack: () => void, 
@@ -5827,12 +6619,19 @@ function PatientDetailsView({
   clinicRole?: ClinicUserRole | null,
   currentClinic?: Clinic | null,
   currentClinicMember?: ClinicMember | null,
-  clinicMembers?: ClinicMember[]
+  clinicMembers?: ClinicMember[],
+  checkAndConsumeDailyAiUsage?: () => boolean
 }) {
   const patient = patients.find(p => p.id === patientId);
   const user = auth.currentUser;
   
-  // Regra de Sigilo Ético (CFP / LGPD):
+  const isPT = profileSettings?.country === 'PT' || (typeof window !== 'undefined' && (
+    localStorage.getItem('simplepsi_country') === 'PT' ||
+    localStorage.getItem('prof_country') === 'PT' ||
+    window.location.pathname.startsWith('/pt')
+  ));
+
+  // Regra de Sigilo Ético (CFP / LGPD ou OPP / RGPD):
   // Recepcionista, Gestor/Admin e Supervisor não têm acesso aos prontuários clínicos privados, apenas perfil e reembolso.
   const isRestrictedRole = Boolean(currentClinic && clinicRole && clinicRole !== 'psychologist');
 
@@ -5949,6 +6748,8 @@ function PatientDetailsView({
       const doc = new jsPDF();
       let startY = 20;
 
+      const isPT = profileSettings?.country === 'PT';
+
       // Header logo
       if (profileSettings?.logo) {
         try {
@@ -5960,7 +6761,7 @@ function PatientDetailsView({
       }
 
       // Psychologist details on the top right
-      if (profileSettings?.name || profileSettings?.crp) {
+      if (profileSettings?.name || profileSettings?.opp || profileSettings?.crp) {
         doc.setFontSize(9);
         doc.setFont("helvetica", "normal");
         const rightX = 196;
@@ -5969,13 +6770,25 @@ function PatientDetailsView({
           doc.text(`Psicólogo(a): ${profileSettings.name}`, rightX, lineY, { align: 'right' });
           lineY += 5;
         }
-        if (profileSettings.crp) {
-          doc.text(`CRP: ${profileSettings.crp}`, rightX, lineY, { align: 'right' });
-          lineY += 5;
-        }
-        if (profileSettings.cpfCnpj) {
-          doc.text(`CPF/CNPJ: ${profileSettings.cpfCnpj}`, rightX, lineY, { align: 'right' });
-          lineY += 5;
+        if (isPT) {
+          const oppNum = profileSettings.opp || profileSettings.crp;
+          if (oppNum) {
+            doc.text(`Cédula OPP: ${oppNum}`, rightX, lineY, { align: 'right' });
+            lineY += 5;
+          }
+          if (profileSettings.nif) {
+            doc.text(`NIF: ${profileSettings.nif}`, rightX, lineY, { align: 'right' });
+            lineY += 5;
+          }
+        } else {
+          if (profileSettings.crp) {
+            doc.text(`CRP: ${profileSettings.crp}`, rightX, lineY, { align: 'right' });
+            lineY += 5;
+          }
+          if (profileSettings.cpfCnpj) {
+            doc.text(`CPF/CNPJ: ${profileSettings.cpfCnpj}`, rightX, lineY, { align: 'right' });
+            lineY += 5;
+          }
         }
         if (profileSettings.phone) {
           doc.text(`Tel: ${profileSettings.phone}`, rightX, lineY, { align: 'right' });
@@ -5986,7 +6799,7 @@ function PatientDetailsView({
       // Title
       doc.setFontSize(16);
       doc.setFont("helvetica", "bold");
-      doc.text("RELATÓRIO DE COMPARECIMENTO (REEMBOLSO)", 14, startY);
+      doc.text(isPT ? "DECLARAÇÃO DE COMPARÊNCIA (SEGURO / ADSE)" : "RELATÓRIO DE COMPARECIMENTO (REEMBOLSO)", 14, startY);
 
       // Section 1: Therapist Info
       doc.setFontSize(11);
@@ -5998,8 +6811,8 @@ function PatientDetailsView({
         theme: 'grid',
         body: [
           ['Nome do Profissional', profileSettings?.name || ''],
-          ['Conselho de Classe', `CRP - Registro: ${profileSettings?.crp || ''}`],
-          ['CPF/CNPJ', profileSettings?.cpfCnpj || ''],
+          ['Conselho de Classe', isPT ? `Ordem dos Psicólogos Portugueses (OPP) - Cédula nº ${profileSettings?.opp || profileSettings?.crp || ''}` : `CRP - Registro: ${profileSettings?.crp || ''}`],
+          [isPT ? 'NIF' : 'CPF/CNPJ', (isPT ? profileSettings?.nif : profileSettings?.cpfCnpj) || profileSettings?.cpfCnpj || ''],
           ['Telefone / Contato', profileSettings?.phone || ''],
           ['Endereço do Consultório', profileSettings?.address || '']
         ],
@@ -6013,16 +6826,18 @@ function PatientDetailsView({
 
       // Section 2: Patient Info
       doc.setFont("helvetica", "bold");
-      doc.text("IDENTIFICAÇÃO DO PACIENTE", 14, finalY1 + 15);
+      doc.text(isPT ? "IDENTIFICAÇÃO DO UTENTE" : "IDENTIFICAÇÃO DO PACIENTE", 14, finalY1 + 15);
       
       autoTable(doc, {
         startY: finalY1 + 20,
         theme: 'grid',
         body: [
-          ['Nome do Paciente', patient.name || ''],
-          ['CPF do Paciente', patient.cpf || ''],
-          ['Data de Nascimento', patient.birthDate || ''],
-          ['Responsável (se menor)', '']
+          [isPT ? 'Nome do Utente' : 'Nome do Paciente', patient.name || ''],
+          [isPT ? 'NIF do Utente' : 'CPF do Paciente', patient.nif || patient.cpf || patient.document || ''],
+          [isPT ? 'Telefone / Contacto' : 'Telefone', patient.phone || patient.telefone || ''],
+          ['E-mail', patient.email || ''],
+          ['Data de Nascimento', patient.birthDate ? (formatBirthDate(patient.birthDate) === 'Não informada' ? patient.birthDate : formatBirthDate(patient.birthDate)) : ''],
+          ['Responsável (se menor)', patient.responsible || patient.guardian || '']
         ],
         columnStyles: {
           0: { cellWidth: 50, fontStyle: 'bold' },
@@ -6034,11 +6849,13 @@ function PatientDetailsView({
 
       // Section 3: Declaration statement
       doc.setFont("helvetica", "bold");
-      doc.text("DECLARAÇÃO DE SESSÕES REALIZADAS", 14, finalY2 + 15);
+      doc.text(isPT ? "DECLARAÇÃO DE CONSULTAS REALIZADAS" : "DECLARAÇÃO DE SESSÕES REALIZADAS", 14, finalY2 + 15);
 
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
-      const declText = `Declaramos para os devidos fins de reembolso de plano de saúde que o(a) paciente acima identificado(a) realizou sessões de psicoterapia clínica individual, sob nossa responsabilidade profissional, nas datas e modalidades especificadas na tabela abaixo:`;
+      const declText = isPT
+        ? `Declaramos para os devidos fins de comparticipação de despesas de saúde (ADSE, subsistemas ou companhias de seguros) que o(a) utente acima identificado(a) realizou consultas de psicologia clínica individual, sob nossa responsabilidade profissional, nas datas e modalidades especificadas na tabela abaixo:`
+        : `Declaramos para os devidos fins de reembolso de plano de saúde que o(a) paciente acima identificado(a) realizou sessões de psicoterapia clínica individual, sob nossa responsabilidade profissional, nas datas e modalidades especificadas na tabela abaixo:`;
       const splitDecl = doc.splitTextToSize(declText, 180);
       doc.text(splitDecl, 14, finalY2 + 22);
 
@@ -6057,7 +6874,7 @@ function PatientDetailsView({
           s.time,
           s.type,
           loc,
-          formatCurrency(s.amount || 0)
+          formatCurrency(s.amount || 0, isPT ? 'EUR' : 'BRL')
         ];
       });
 
@@ -6080,30 +6897,44 @@ function PatientDetailsView({
       const finalY3 = (doc as any).lastAutoTable.finalY || finalYDeclaration + 50;
 
       // Section 5: Signature block
+      let sigY = finalY3;
+      if (sigY + 50 > 280) {
+        doc.addPage();
+        sigY = 20;
+      }
+
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9);
-      doc.text(`Relatório gerado em: ${new Date().toLocaleDateString('pt-BR')}`, 14, finalY3 + 15);
+      doc.text(`Documento emitido em: ${new Date().toLocaleDateString(isPT ? 'pt-PT' : 'pt-BR')}`, 14, sigY + 15);
 
       // Draw signature line
       doc.setDrawColor(180, 180, 180);
-      doc.line(120, finalY3 + 35, 190, finalY3 + 35);
+      doc.line(120, sigY + 35, 190, sigY + 35);
       
       const signatureName = profileSettings?.signatureText || profileSettings?.name || 'Psicólogo(a)';
       doc.setFont("helvetica", "bold");
-      doc.text(signatureName, 155, finalY3 + 40, { align: "center" });
+      doc.text(signatureName, 155, sigY + 40, { align: "center" });
       doc.setFont("helvetica", "normal");
-      doc.text(`CRP: ${profileSettings?.crp || ''}`, 155, finalY3 + 45, { align: "center" });
+      const signatureReg = isPT
+        ? (profileSettings?.opp ? `Cédula OPP nº ${profileSettings.opp}` : (profileSettings?.crp ? `Cédula OPP nº ${profileSettings.crp}` : 'Cédula OPP'))
+        : `CRP: ${profileSettings?.crp || ''}`;
+      doc.text(signatureReg, 155, sigY + 45, { align: "center" });
 
       // Save PDF to library
       const pdfBlob = doc.output('blob');
-      const fileName = `Relatorio_Reembolso_${patient.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+      const fileName = isPT
+        ? `Declaracao_Seguro_ADSE_${patient.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`
+        : `Relatorio_Reembolso_${patient.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
       const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
       
       onUpload(file, 'anexo').then(() => {
-        alert("Relatório de Reembolso gerado e salvo na Biblioteca de Documentos com sucesso!");
+        alert(isPT
+          ? "Declaração para Seguros & ADSE gerada e guardada na Biblioteca de Documentos com sucesso!"
+          : "Relatório de Reembolso gerado e salvo na Biblioteca de Documentos com sucesso!"
+        );
       }).catch(err => {
         console.error("Erro ao salvar relatório na biblioteca:", err);
-        alert("Relatório gerado com sucesso, mas ocorreu um erro ao salvá-lo na Biblioteca de Documentos.");
+        alert("Documento gerado com sucesso, mas ocorreu um erro ao guardá-lo na Biblioteca de Documentos.");
       });
 
       // Save to local computer downloads
@@ -6121,8 +6952,22 @@ function PatientDetailsView({
   const [evolutionSessionNumber, setEvolutionSessionNumber] = useState(patient.clinicalData?.evoluções?.length ? patient.clinicalData.evoluções.length + 1 : 1);
   const [transcriptionText, setTranscriptionText] = useState("");
   const [isGeneratingEvolution, setIsGeneratingEvolution] = useState(false);
-  const [aiDetailLevel, setAiDetailLevel] = useState<'proportional' | 'detailed' | 'summarized'>('proportional');
-  const [aiTextFormat, setAiTextFormat] = useState<'paragraphs' | 'topics'>('paragraphs');
+  const [recordedAudioBlob, setRecordedAudioBlob] = useState<Blob | null>(null);
+  const [audioBlobUrl, setAudioBlobUrl] = useState<string | null>(null);
+  const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
+  const [isMeetBannerDismissed, setIsMeetBannerDismissed] = useState<boolean>(() => {
+    return localStorage.getItem('simplepsi_dismiss_evolution_meet_banner') === 'true';
+  });
+  const [isDraggingAudio, setIsDraggingAudio] = useState(false);
+  const audioFileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    return () => {
+      if (audioBlobUrl) {
+        URL.revokeObjectURL(audioBlobUrl);
+      }
+    };
+  }, [audioBlobUrl]);
   
   const [editingEvolutionId, setEditingEvolutionId] = useState<number | null>(null);
   const [editingEvolutionNote, setEditingEvolutionNote] = useState("");
@@ -6330,22 +7175,15 @@ function PatientDetailsView({
 
     const isMaster = user?.email?.toLowerCase() === 'wellcoutinho99@gmail.com';
     if (!isMaster) {
-      if (profileSettings?.isTrial) {
-        const tccCount = profileSettings.aiTccCount || 0;
-        if (tccCount >= 1) {
-          alert("✨ Ops! Você já utilizou a sua geração de Conceitualização de teste.\n\nAssine um de nossos planos para ter acesso ilimitado à inteligência artificial em todos os seus prontuários!");
+      if (!checkAndConsumeDailyAiUsage()) return;
+      const lastAiTccAt = patient?.clinicalData?.lastAiTccAt;
+      if (lastAiTccAt) {
+        const lastDate = new Date(lastAiTccAt);
+        const diffDays = (Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24);
+        if (diffDays < 7) {
+          const daysLeft = Math.ceil(7 - diffDays);
+          alert(`⏰ Limite de uso: Você já gerou a Conceitualização IA para este paciente nesta semana.\n\nPor favor, aguarde ${daysLeft} dia(s) para gerar uma nova, ou edite manualmente.`);
           return;
-        }
-      } else {
-        const lastAiTccAt = patient?.clinicalData?.lastAiTccAt;
-        if (lastAiTccAt) {
-          const lastDate = new Date(lastAiTccAt);
-          const diffDays = (Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24);
-          if (diffDays < 7) {
-            const daysLeft = Math.ceil(7 - diffDays);
-            alert(`⏰ Limite de uso: Você já gerou a Conceitualização IA para este paciente nesta semana.\n\nPor favor, aguarde ${daysLeft} dia(s) para gerar uma nova, ou edite manualmente.`);
-            return;
-          }
         }
       }
     }
@@ -6470,22 +7308,15 @@ function PatientDetailsView({
     const user = auth.currentUser;
     const isMaster = user?.email?.toLowerCase() === 'wellcoutinho99@gmail.com';
     if (!isMaster) {
-      if (profileSettings?.isTrial) {
-        const count = profileSettings[`ai${approachKey}Count`] || 0;
-        if (count >= 1) {
-          alert(`✨ Ops! Você já utilizou a sua geração de teste para esta abordagem.\n\nAssine um de nossos planos para ter acesso ilimitado à inteligência artificial!`);
+      if (!checkAndConsumeDailyAiUsage()) return;
+      const lastAiAt = patient?.clinicalData?.[`lastAi${approachKey}At`];
+      if (lastAiAt) {
+        const lastDate = new Date(lastAiAt);
+        const diffDays = (Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24);
+        if (diffDays < 7) {
+          const daysLeft = Math.ceil(7 - diffDays);
+          alert(`⏰ Limite de uso: Você já gerou a formulação IA para este paciente nesta semana.\n\nPor favor, aguarde ${daysLeft} dia(s) para gerar uma nova, ou edite manualmente.`);
           return;
-        }
-      } else {
-        const lastAiAt = patient?.clinicalData?.[`lastAi${approachKey}At`];
-        if (lastAiAt) {
-          const lastDate = new Date(lastAiAt);
-          const diffDays = (Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24);
-          if (diffDays < 7) {
-            const daysLeft = Math.ceil(7 - diffDays);
-            alert(`⏰ Limite de uso: Você já gerou a formulação IA para este paciente nesta semana.\n\nPor favor, aguarde ${daysLeft} dia(s) para gerar uma nova, ou edite manualmente.`);
-            return;
-          }
         }
       }
     }
@@ -6643,22 +7474,15 @@ function PatientDetailsView({
 
     const isMaster = user?.email?.toLowerCase() === 'wellcoutinho99@gmail.com';
     if (!isMaster) {
-      if (profileSettings?.isTrial) {
-        const planCount = profileSettings.aiPlanCount || 0;
-        if (planCount >= 2) {
-          alert("✨ Ops! Você já utilizou suas 2 gerações de Plano de Tratamento de teste.\n\nAssine um de nossos planos para ter acesso ilimitado à inteligência artificial em todos os seus prontuários!");
+      if (!checkAndConsumeDailyAiUsage()) return;
+      const lastAiPlanAt = patient?.clinicalData?.lastAiPlanAt;
+      if (lastAiPlanAt) {
+        const lastDate = new Date(lastAiPlanAt);
+        const diffDays = (Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24);
+        if (diffDays < 7) {
+          const daysLeft = Math.ceil(7 - diffDays);
+          alert(`⏰ Limite de uso: Você já gerou um Plano de Tratamento IA para este paciente nesta semana.\n\nPor favor, aguarde ${daysLeft} dia(s) para gerar um novo, ou adicione metas manualmente.`);
           return;
-        }
-      } else {
-        const lastAiPlanAt = patient?.clinicalData?.lastAiPlanAt;
-        if (lastAiPlanAt) {
-          const lastDate = new Date(lastAiPlanAt);
-          const diffDays = (Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24);
-          if (diffDays < 7) {
-            const daysLeft = Math.ceil(7 - diffDays);
-            alert(`⏰ Limite de uso: Você já gerou um Plano de Tratamento IA para este paciente nesta semana.\n\nPor favor, aguarde ${daysLeft} dia(s) para gerar um novo, ou adicione metas manualmente.`);
-            return;
-          }
         }
       }
     }
@@ -6895,7 +7719,9 @@ function PatientDetailsView({
     if (patient) {
       setEditForm({
         ...patient,
-        cpf: patient.cpf || patient.document || '',
+        cpf: patient.cpf || patient.nif || patient.document || '',
+        nif: patient.nif || patient.cpf || patient.document || '',
+        document: patient.document || patient.nif || patient.cpf || '',
         birthDate: patient.birthDate || '',
         profession: patient.profession || patient.occupation || '',
         gender: patient.gender || '',
@@ -6921,7 +7747,13 @@ function PatientDetailsView({
   if (!patient || !editForm) return null;
 
   const handleSaveProfile = () => {
-    onUpdatePatient(editForm);
+    const updated = {
+      ...editForm,
+      document: editForm.nif || editForm.cpf || editForm.document || '',
+      cpf: editForm.cpf || editForm.nif || editForm.document || '',
+      nif: editForm.nif || editForm.cpf || editForm.document || '',
+    };
+    onUpdatePatient(updated);
     setIsEditing(false);
   };
 
@@ -6977,6 +7809,12 @@ function PatientDetailsView({
 
       recorder.onstop = async () => {
         const finalBlob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        setRecordedAudioBlob(finalBlob);
+        if (audioBlobUrl) {
+          URL.revokeObjectURL(audioBlobUrl);
+        }
+        const url = URL.createObjectURL(finalBlob);
+        setAudioBlobUrl(url);
         await transcribeAudio(finalBlob);
       };
 
@@ -7066,7 +7904,14 @@ function PatientDetailsView({
       return;
     }
 
+    setRecordedAudioBlob(blob);
+    if (!audioBlobUrl) {
+      const url = URL.createObjectURL(blob);
+      setAudioBlobUrl(url);
+    }
+    setTranscriptionError(null);
     setIsTranscribing(true);
+
     try {
       const reader = new FileReader();
       reader.readAsDataURL(blob);
@@ -7077,10 +7922,10 @@ function PatientDetailsView({
           const mimeType = blob.type || 'audio/webm';
 
           const ai = new GoogleGenAI({ apiKey });
-          const prompt = "Transcreva o áudio acima na íntegra, com máxima precisão. Escreva exatamente o que foi falado (em português), palavra por palavra, de forma corrida. Não adicione resumos, comentários, introduções ou explicações. Apenas retorne a transcrição bruta pura.";
+          const prompt = "Transcreva o áudio clínico acima na íntegra, com máxima precisão. Escreva exatamente o que foi falado (em português), palavra por palavra, de forma corrida, sem omitir relatos e com pontuação clara. Não adicione resumos, comentários, introduções ou explicações. Apenas retorne o texto transcrito.";
 
           const response = await generateContentWithFallback(ai, {
-            model: "gemini-2.5-flash",
+            model: "gemini-3.8-flash",
             contents: [
               {
                 inlineData: {
@@ -7092,23 +7937,67 @@ function PatientDetailsView({
             ]
           });
 
-          if (response.text) {
-            setTranscriptionText(prev => prev ? prev + " " + response.text : response.text);
+          if (response?.text) {
+            setTranscriptionText(prev => prev ? prev.trim() + "\n\n" + response.text.trim() : response.text.trim());
+            setTranscriptionError(null);
           } else {
-            alert("Não foi possível transcrever nada do áudio fornecido.");
+            setTranscriptionError("A IA não identificou falas claras no áudio. Você pode ouvir ou baixar o áudio salvo abaixo.");
           }
         } catch (err: any) {
           console.error("Erro ao transcrever com Gemini:", err);
-          alert("Erro ao transcrever o áudio. Tente novamente.");
+          setTranscriptionError(err?.message || "Erro durante a transcrição do áudio com a IA.");
         } finally {
           setIsTranscribing(false);
         }
       };
+      reader.onerror = () => {
+        setTranscriptionError("Falha na leitura local do arquivo de áudio.");
+        setIsTranscribing(false);
+      };
     } catch (err: any) {
       console.error("Erro ao processar blob do gravador:", err);
-      alert("Erro ao processar o arquivo de áudio.");
+      setTranscriptionError("Erro ao processar o arquivo de áudio.");
       setIsTranscribing(false);
     }
+  };
+
+  const handleAudioFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const validExtensions = /\.(mp3|m4a|wav|ogg|webm|aac|flac)$/i;
+    if (!file.type.startsWith('audio/') && !file.name.match(validExtensions)) {
+      alert("Por favor, selecione um arquivo de áudio válido (.mp3, .m4a, .wav, .ogg, .webm, .aac).");
+      return;
+    }
+    if (audioBlobUrl) {
+      URL.revokeObjectURL(audioBlobUrl);
+    }
+    const url = URL.createObjectURL(file);
+    setAudioBlobUrl(url);
+    setRecordedAudioBlob(file);
+    transcribeAudio(file);
+    if (audioFileInputRef.current) {
+      audioFileInputRef.current.value = "";
+    }
+  };
+
+  const handleAudioDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingAudio(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    const validExtensions = /\.(mp3|m4a|wav|ogg|webm|aac|flac)$/i;
+    if (!file.type.startsWith('audio/') && !file.name.match(validExtensions)) {
+      alert("Por favor, solte um arquivo de áudio válido (.mp3, .m4a, .wav, .ogg, .webm, .aac).");
+      return;
+    }
+    if (audioBlobUrl) {
+      URL.revokeObjectURL(audioBlobUrl);
+    }
+    const url = URL.createObjectURL(file);
+    setAudioBlobUrl(url);
+    setRecordedAudioBlob(file);
+    transcribeAudio(file);
   };
 
   const handleAddEvolution = async () => {
@@ -7136,6 +8025,12 @@ function PatientDetailsView({
 
       setNewEvolutionNote("");
       setTranscriptionText("");
+      setRecordedAudioBlob(null);
+      if (audioBlobUrl) {
+        URL.revokeObjectURL(audioBlobUrl);
+      }
+      setAudioBlobUrl(null);
+      setTranscriptionError(null);
       setEvolutionSessionNumber(prev => prev + 1);
       setIsAddingEvolution(false);
     } finally {
@@ -7149,6 +8044,7 @@ function PatientDetailsView({
       return;
     }
     if (!transcriptionText.trim()) return;
+    if (!checkAndConsumeDailyAiUsage()) return;
     
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
@@ -7161,54 +8057,59 @@ function PatientDetailsView({
       const approachKey = profileSettings.clinicalApproach || 'tcc';
       const approachInfo = CLINICAL_APPROACHES[approachKey] || CLINICAL_APPROACHES.tcc;
 
+      const isPT = profileSettings.country === 'PT';
+      const regulatoryGuidelines = isPT
+        ? 'CÓDIGO DEONTOLÓGICO DA ORDEM DOS PSICÓLOGOS PORTUGUESES (OPP) E RGPD'
+        : 'RESOLUÇÕES CFP Nº 001/2009 E 004/2020';
+      const personTerm = isPT ? 'utente' : 'paciente';
+      const docTerm = isPT ? 'processo clínico' : 'prontuário';
+
       const ai = new GoogleGenAI({ apiKey });
-      const prompt = `Atue como um psicólogo clínico experiente cuja abordagem teórica principal de atendimento é a ${approachInfo.name}.
-      Transforme a seguinte transcrição bruta de um áudio em um relato de sessão clínica completo, rico e estruturado de forma profissional, com um tom pessoal (estilo relato de caso) adequado à sua linha teórica de atendimento.
-      
-      DIRETRIZES DA SUA ABORDAGEM CLÍNICA (${approachInfo.name}):
-      ${approachInfo.rules}
-      
-      CONTEÚDO CLÍNICO ESSENCIAL A SER MAPEADO E EXTRAÍDO:
-      Analise detalhadamente a transcrição para extrair e descrever com profundidade os aspectos clínicos chaves da sessão:
-      - Para TCC e abordagens cognitivas: Identifique e registre ativamente pensamentos automáticos, crenças centrais/nucleares (sobre si, os outros e o mundo), regras intermediárias, pressupostos condicionais (regras do tipo "se... então..."), distorções cognitivas, comportamentos de segurança, estratégias de enfrentamento e planos de ação.
-      - Para Psicanálise e abordagens psicodinâmicas: Identifique dinâmicas inconscientes, mecanismos de defesa do ego, padrões repetitivos de relacionamento e resistências.
-      - Para Humanista/Gestalt/ACT: Identifique o nível de awareness, contato com a experiência no aqui-e-agora, barreiras no self, sentimentos imediatos, valores e ações comprometidas.
-      - Para todas as abordagens: Detalhe os temas principais discutidos, o estado emocional/humor do paciente, as intervenções realizadas pelo terapeuta e as respostas do paciente.
-      
-      REGRA DE ESTILO E FLUXO: Escreva de forma extremamente natural, humana, equilibrada e fluida. Utilize os conceitos teóricos de maneira clinicamente útil e integrada à narrativa do paciente. O texto deve soar como as anotações ricas, completas e profundas de um terapeuta humano real em seu cotidiano clínico.
-      
-      REGRA DE FORMATO DE TEXTO:
-      ${aiTextFormat === 'topics' 
-        ? 'O relato DEVE ser totalmente estruturado em TÓPICOS E BULLET POINTS claros, legíveis e completos, organizados por temas ou momentos da sessão.' 
-        : 'O relato DEVE ser organizado em TEXTO CORRIDO E PARÁGRAFOS bem articulados, fluidos e integrados (sem listas simples ou tópicos, a menos que seja para um plano de ação).'}
-      
-      REGRA DE NÍVEL DE DETALHAMENTO:
-      ${aiDetailLevel === 'proportional' 
-        ? 'Proporcional: O relato deve refletir a complexidade clínica da sessão de forma proporcional, mas sem omitir detalhes importantes. Mesmo se a transcrição for curta ou contiver falas fragmentadas, conecte os pontos de forma inteligente para redigir um relato coerente, completo e substancial.' 
-        : aiDetailLevel === 'detailed'
-        ? 'Muito Detalhado: Escreva um relato extremamente detalhado, profundo e minucioso. Explore detalhadamente a dinâmica dos sintomas, as crenças, regras e pressupostos subjacentes identificados, as intervenções do terapeuta e as respostas do paciente, expandindo a análise clínica ao máximo.'
-        : 'Super Resumido: Escreva um relato super conciso, direto ao ponto e focado apenas nos principais tópicos e insights. Evite rodeios e sintetize as informações com máxima objetividade.'}
-      
-      REGRA IMPORTANTÍSSIMA 1: NUNCA invente fatos externos não ditos na sessão, mas faça inferências clínicas legítimas sobre o funcionamento cognitivo e emocional do paciente a partir do material transcrito.
-      
-      REGRA IMPORTANTÍSSIMA 2: Substitua TODOS os nomes próprios de pessoas (pacientes, parceiros, parentes, etc) mencionados na transcrição APENAS pela letra inicial do nome seguida de ponto (exemplo: Gabi -> G., Alana -> A., Carol -> C.). 
-      
-      Mantenha o fluxo de narrativa em primeira pessoa do terapeuta (ex: "A paciente relatou...", "Questionei se...", "Trabalhei com ela..."). Não adicione saudações, devolva apenas o texto final do relato.
-      
-      Transcrição bruta a ser convertida:
-      "${transcriptionText}"
-      `;
+      const prompt = `Você é um psicólogo clínico experiente cuja abordagem teórica principal é a ${approachInfo.name}.
+Sua tarefa é redigir um RELATO DE EVOLUÇÃO CLÍNICA aprofundado, técnico, fluido e completo a partir das anotações/transcrição da sessão de atendimento psicológico.
+
+DIRETRIZES DA SUA ABORDAGEM CLÍNICA (${approachInfo.name}):
+${approachInfo.rules}
+
+ESTRUTURA OBRIGATÓRIA DA EVOLUÇÃO CLÍNICA (${regulatoryGuidelines}):
+Estruture o texto de forma profissional, rica em detalhes clínicos, dividindo-o estritamente nas seguintes 4 seções com seus respectivos títulos em caixa alta e negrito:
+
+1. DEMANDA E TEMAS CENTRAIS DA SESSÃO
+Descreva de forma rica e aprofundada os assuntos trazidos pelo ${personTerm}, o contexto de vida relatado, os eventos recentes e as principais queixas ou conflitos apresentados no encontro.
+
+2. COMPREENSÃO CLÍNICA E DINÂMICA PSICOEMOCIONAL
+Analise detalhadamente o funcionamento do ${personTerm} sob a perspectiva da ${approachInfo.name}. Descreva o estado afetivo/humor, padrões cognitivos/comportamentais, dinâmicas inconscientes ou vivências emocionais identificadas, crenças, defesas ou esquemas em operação.
+
+3. MANEJO CLÍNICO E INTERVENÇÕES DO TERAPEUTA
+Descreva em primeira pessoa da condução do terapeuta (ex.: "Acolhi a angústia inicial...", "Conduzi intervenção...", "Apliquei a técnica de...", "Questionei socraticamente...") todas as intervenções realizadas, as reflexões provocadas e como o ${personTerm} respondeu a cada manejo.
+
+4. ENCAMINHAMENTOS E PLANO DE AÇÃO
+Registre os combinados intersessões, tarefas terapêuticas (se aplicável à abordagem) e os focos de continuidade prioritários para o próximo encontro clínico.
+
+DIRETRIZES ÉTICAS E DE ESTILO IMPRESCINDÍVEIS:
+- ANONIMIZAÇÃO TOTAL: Substitua qualquer nome próprio mencionado na transcrição (${personTerm}, familiares, terceiros) pela letra inicial seguida de ponto (exemplo: Mariana -> M., Rafael -> R., Carlos -> C.).
+- TOM CLÍNICO IMPECÁVEL: Escreva como um psicólogo clínico de alto nível, com vocabulário técnico preciso${isPT ? ' em Português de Portugal com rigor deontológico da OPP' : ''}, texto corrido bem articulado em cada seção, sem frases genéricas ou robóticas.
+- FIDELIDADE: Baseie-se estritamente no conteúdo trazido na transcrição e faça inferências clínicas legítimas baseadas na teoria. Não invente fatos externos não ditos.
+- Sem introduções ou saudações. Devolva apenas o texto da evolução pronto para o ${docTerm}.
+
+TRANSCRIÇÃO / ANOTAÇÕES BRUTAS DA SESSÃO:
+"${transcriptionText}"
+`;
+
       const response = await generateContentWithFallback(ai, {
-        model: "gemini-2.5-flash",
+        model: "gemini-3.8-flash",
         contents: prompt,
       });
-      setNewEvolutionNote(response.text);
+
+      if (response?.text) {
+        setNewEvolutionNote(response.text);
+      }
     } catch (err: any) {
       console.error(err);
       if (err.message?.includes('API key')) {
         alert("Chave da API inválida ou não configurada corretamente.");
       } else {
-        alert("Erro ao gerar relato com IA. Verifique o console.");
+        alert("Erro ao gerar relato com IA. Tente novamente.");
       }
     } finally {
       setIsGeneratingEvolution(false);
@@ -7255,12 +8156,16 @@ function PatientDetailsView({
 
     setGeneratingPdfId(evo.id);
     try {
+      const isPT = profileSettings.country === 'PT';
+      const personTerm = isPT ? 'utente' : 'paciente';
+      const docTerm = isPT ? 'processo clínico formal (conforme Código Deontológico da OPP)' : 'prontuário formal';
+
       const ai = new GoogleGenAI({ apiKey });
-      const prompt = `Atue como um psicólogo clínico da abordagem ${approachInfo.name} extraindo informações de um relato de evolução para um prontuário formal.
+      const prompt = `Atue como um psicólogo clínico da abordagem ${approachInfo.name} extraindo informações de um relato de evolução para um ${docTerm}.
 Leia o seguinte relato de sessão e extraia as informações dividindo-as nestes 4 tópicos:
-1. ${approachInfo.pdfTopics[0]} (Breve resumo do que o paciente trouxe para a sessão).
+1. ${approachInfo.pdfTopics[0]} (Breve resumo do que o ${personTerm} trouxe para a sessão).
 2. ${approachInfo.pdfTopics[1]} (Intervenções e técnicas específicas utilizadas na sessão).
-3. ${approachInfo.pdfTopics[2]} (Como o paciente reagiu e qual o progresso observado).
+3. ${approachInfo.pdfTopics[2]} (Como o ${personTerm} reagiu e qual o progresso observado).
 4. ${approachInfo.pdfTopics[3]} (Acordos ou orientações inter-sessões).
 
 Seja muito sucinto, formal, ético e direto de acordo com as diretrizes da sua abordagem. Não adicione saudações, asteriscos ou introduções, retorne APENAS um objeto JSON válido com as seguintes chaves exatas (tudo minúsculo, sem acentos): "demanda", "intervencoes", "evolucao", "tarefa".
@@ -7291,14 +8196,17 @@ Relato:
         }
       }
 
-      if (profileSettings?.name || profileSettings?.crp) {
+      if (profileSettings?.name || profileSettings?.opp || profileSettings?.crp) {
         doc.setFontSize(10);
         doc.setFont("helvetica", "normal");
         const rightX = 196; // 210mm (A4) - 14mm de margem
         if (profileSettings.name) {
           doc.text(`Psicólogo(a): ${profileSettings.name}`, rightX, 15, { align: 'right' });
         }
-        if (profileSettings.crp) {
+        if (isPT) {
+          const oppNum = profileSettings.opp || profileSettings.crp;
+          if (oppNum) doc.text(`Cédula OPP: ${oppNum}`, rightX, 20, { align: 'right' });
+        } else if (profileSettings.crp) {
           doc.text(`CRP: ${profileSettings.crp}`, rightX, 20, { align: 'right' });
         }
       }
@@ -7306,12 +8214,12 @@ Relato:
       // Título
       doc.setFontSize(16);
       doc.setFont("helvetica", "bold");
-      doc.text("Prontuário Psicológico", 14, startY);
+      doc.text(isPT ? "Processo Clínico Psicológico" : "Prontuário Psicológico", 14, startY);
 
-      // 1. Identificação do Paciente
+      // 1. Identificação do Utente / Paciente
       doc.setFontSize(12);
       doc.setFont("helvetica", "bold");
-      doc.text("1. Identificação do Paciente", 14, startY + 15);
+      doc.text(isPT ? "1. Identificação do Utente" : "1. Identificação do Paciente", 14, startY + 15);
       
       autoTable(doc, {
         startY: startY + 20,
@@ -7320,7 +8228,7 @@ Relato:
         body: [
           ['Nome Completo', patient.name || ''],
           ['Data de Nascimento', patient.birthDate || ''],
-          ['CPF/RG', patient.cpf || patient.document || ''],
+          [isPT ? 'NIF' : 'CPF/RG', patient.nif || patient.cpf || patient.document || ''],
           ['Contatos (Telefone/E-mail)', `${patient.phone || ''} / ${patient.email || ''}`],
           ['Responsável Legal (se menor)', '']
         ],
@@ -7373,16 +8281,23 @@ Relato:
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
       const profName = profileSettings.name || "Profissional não cadastrado";
-      const profCRP = profileSettings.crp ? `CRP ${profileSettings.crp}` : "CRP não cadastrado";
-      doc.text(`${profName}\nPsicólogo Clínico | ${profCRP}`, 140, finalY3 + 30, { align: "center" });
+      const profReg = isPT
+        ? (profileSettings.opp ? `Cédula OPP nº ${profileSettings.opp}` : (profileSettings.crp ? `Cédula OPP nº ${profileSettings.crp}` : 'Cédula OPP'))
+        : (profileSettings.crp ? `CRP ${profileSettings.crp}` : "CRP não cadastrado");
+      doc.text(`${profName}\nPsicólogo(a) Clínico(a) | ${profReg}`, 140, finalY3 + 30, { align: "center" });
 
       const pdfBlob = doc.output('blob');
       const safeDate = (evo.date || 'data').replace(/[\/\\]/g, '-');
-      const fileName = `Prontuario_Sessao_${evo.sessionNumber || evo.id}_${safeDate}.pdf`;
+      const fileName = isPT
+        ? `Processo_Clinico_Sessao_${evo.sessionNumber || evo.id}_${safeDate}.pdf`
+        : `Prontuario_Sessao_${evo.sessionNumber || evo.id}_${safeDate}.pdf`;
       const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
       
       await onUpload(file, 'prontuario');
-      alert("Prontuário gerado e salvo na Biblioteca de Documentos com sucesso!");
+      alert(isPT
+        ? "Processo clínico gerado e guardado na Biblioteca de Documentos com sucesso!"
+        : "Prontuário gerado e salvo na Biblioteca de Documentos com sucesso!"
+      );
 
     } catch (err: any) {
       console.error(err);
@@ -7434,11 +8349,15 @@ Relato:
         setGeneratingAllPdfsProgress(`Gerando ${i + 1} de ${sortedEvolutions.length}...`);
 
         try {
-          const prompt = `Atue como um psicólogo clínico da abordagem ${approachInfo.name} extraindo informações de um relato de evolução para um prontuário formal.
+          const isPT = profileSettings.country === 'PT';
+          const personTerm = isPT ? 'utente' : 'paciente';
+          const docTerm = isPT ? 'processo clínico formal (conforme Código Deontológico da OPP)' : 'prontuário formal';
+
+          const prompt = `Atue como um psicólogo clínico da abordagem ${approachInfo.name} extraindo informações de um relato de evolução para um ${docTerm}.
 Leia o seguinte relato de sessão e extraia as informações dividindo-as nestes 4 tópicos:
-1. ${approachInfo.pdfTopics[0]} (Breve resumo do que o paciente trouxe para a sessão).
+1. ${approachInfo.pdfTopics[0]} (Breve resumo do que o ${personTerm} trouxe para a sessão).
 2. ${approachInfo.pdfTopics[1]} (Intervenções e técnicas específicas utilizadas na sessão).
-3. ${approachInfo.pdfTopics[2]} (Como o paciente reagiu e qual o progresso observado).
+3. ${approachInfo.pdfTopics[2]} (Como o ${personTerm} reagiu e qual o progresso observado).
 4. ${approachInfo.pdfTopics[3]} (Acordos ou orientações inter-sessões).
 
 Seja muito sucinto, formal, ético e direto de acordo com as diretrizes da sua abordagem. Não adicione saudações, asteriscos ou introduções, retorne APENAS um objeto JSON válido com as seguintes chaves exatas (tudo minúsculo, sem acentos): "demanda", "intervencoes", "evolucao", "tarefa".
@@ -7468,25 +8387,28 @@ Relato:
             }
           }
 
-          if (profileSettings?.name || profileSettings?.crp) {
+          if (profileSettings?.name || profileSettings?.opp || profileSettings?.crp) {
             doc.setFontSize(10);
             doc.setFont("helvetica", "normal");
             const rightX = 196;
             if (profileSettings.name) {
               doc.text(`Psicólogo(a): ${profileSettings.name}`, rightX, 15, { align: 'right' });
             }
-            if (profileSettings.crp) {
+            if (isPT) {
+              const oppNum = profileSettings.opp || profileSettings.crp;
+              if (oppNum) doc.text(`Cédula OPP: ${oppNum}`, rightX, 20, { align: 'right' });
+            } else if (profileSettings.crp) {
               doc.text(`CRP: ${profileSettings.crp}`, rightX, 20, { align: 'right' });
             }
           }
 
           doc.setFontSize(16);
           doc.setFont("helvetica", "bold");
-          doc.text("Prontuário Psicológico", 14, startY);
+          doc.text(isPT ? "Processo Clínico Psicológico" : "Prontuário Psicológico", 14, startY);
 
           doc.setFontSize(12);
           doc.setFont("helvetica", "bold");
-          doc.text("1. Identificação do Paciente", 14, startY + 15);
+          doc.text(isPT ? "1. Identificação do Utente" : "1. Identificação do Paciente", 14, startY + 15);
           
           autoTable(doc, {
             startY: startY + 20,
@@ -7495,7 +8417,7 @@ Relato:
             body: [
               ['Nome Completo', patient.name || ''],
               ['Data de Nascimento', patient.birthDate || ''],
-              ['CPF/RG', patient.cpf || patient.document || ''],
+              [isPT ? 'NIF' : 'CPF/RG', patient.nif || patient.cpf || patient.document || ''],
               ['Contatos (Telefone/E-mail)', `${patient.phone || ''} / ${patient.email || ''}`],
               ['Responsável Legal (se menor)', '']
             ],
@@ -7545,12 +8467,16 @@ Relato:
           doc.setFontSize(10);
           doc.setFont("helvetica", "normal");
           const profName = profileSettings.name || "Profissional não cadastrado";
-          const profCRP = profileSettings.crp ? `CRP ${profileSettings.crp}` : "CRP não cadastrado";
-          doc.text(`${profName}\nPsicólogo Clínico | ${profCRP}`, 140, finalY3 + 30, { align: "center" });
+          const profReg = isPT
+            ? (profileSettings.opp ? `Cédula OPP nº ${profileSettings.opp}` : (profileSettings.crp ? `Cédula OPP nº ${profileSettings.crp}` : 'Cédula OPP'))
+            : (profileSettings.crp ? `CRP ${profileSettings.crp}` : "CRP não cadastrado");
+          doc.text(`${profName}\nPsicólogo(a) Clínico(a) | ${profReg}`, 140, finalY3 + 30, { align: "center" });
 
           const pdfBlob = doc.output('blob');
           const safeDate = (evo.date || 'data').replace(/[\/\\]/g, '-');
-          const fileName = `Prontuario_Sessao_${evo.sessionNumber || evo.id}_${safeDate}.pdf`;
+          const fileName = isPT
+            ? `Processo_Clinico_Sessao_${evo.sessionNumber || evo.id}_${safeDate}.pdf`
+            : `Prontuario_Sessao_${evo.sessionNumber || evo.id}_${safeDate}.pdf`;
           const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
           
           await onUpload(file, 'prontuario');
@@ -7564,7 +8490,10 @@ Relato:
         }
       }
 
-      alert("Todos os prontuários individuais foram gerados e salvos na Biblioteca de Documentos com sucesso!");
+      alert(profileSettings.country === 'PT'
+        ? "Todos os processos clínicos individuais foram gerados e guardados na Biblioteca de Documentos com sucesso!"
+        : "Todos os prontuários individuais foram gerados e salvos na Biblioteca de Documentos com sucesso!"
+      );
 
     } catch (err: any) {
       console.error(err);
@@ -7594,24 +8523,28 @@ Relato:
         }
       }
 
-      if (profileSettings?.name || profileSettings?.crp) {
+      const isPT = profileSettings.country === 'PT';
+      if (profileSettings?.name || profileSettings?.opp || profileSettings?.crp) {
         doc.setFontSize(10);
         doc.setFont("helvetica", "normal");
         const rightX = 196;
         if (profileSettings.name) {
           doc.text(`Psicólogo(a): ${profileSettings.name}`, rightX, 15, { align: 'right' });
         }
-        if (profileSettings.crp) {
+        if (isPT) {
+          const oppNum = profileSettings.opp || profileSettings.crp;
+          if (oppNum) doc.text(`Cédula OPP: ${oppNum}`, rightX, 20, { align: 'right' });
+        } else if (profileSettings.crp) {
           doc.text(`CRP: ${profileSettings.crp}`, rightX, 20, { align: 'right' });
         }
       }
 
       doc.setFontSize(16);
       doc.setFont("helvetica", "bold");
-      doc.text("Prontuário Psicológico Completo", 14, startY);
+      doc.text(isPT ? "Processo Clínico Psicológico Completo" : "Prontuário Psicológico Completo", 14, startY);
 
       doc.setFontSize(12);
-      doc.text("1. Identificação do Paciente", 14, startY + 15);
+      doc.text(isPT ? "1. Identificação do Utente" : "1. Identificação do Paciente", 14, startY + 15);
       
       autoTable(doc, {
         startY: startY + 20,
@@ -7620,7 +8553,7 @@ Relato:
         body: [
           ['Nome Completo', patient.name || ''],
           ['Data de Nascimento', patient.birthDate || ''],
-          ['CPF/RG', patient.cpf || patient.document || ''],
+          [isPT ? 'NIF' : 'CPF/RG', patient.nif || patient.cpf || patient.document || ''],
           ['Contatos (Telefone/E-mail)', `${patient.phone || ''} / ${patient.email || ''}`],
         ],
         columnStyles: {
@@ -7657,11 +8590,16 @@ Relato:
       });
 
       const pdfBlob = doc.output('blob');
-      const fileName = `Prontuario_Completo_${patient.name.replace(/\s+/g, '_')}.pdf`;
+      const fileName = isPT
+        ? `Processo_Clinico_Completo_${patient.name.replace(/\s+/g, '_')}.pdf`
+        : `Prontuario_Completo_${patient.name.replace(/\s+/g, '_')}.pdf`;
       const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
       
       onUpload(file, 'prontuario');
-      alert("Prontuário completo gerado e salvo na Biblioteca de Documentos com sucesso!");
+      alert(isPT
+        ? "Processo clínico completo gerado e guardado na Biblioteca de Documentos com sucesso!"
+        : "Prontuário completo gerado e salvo na Biblioteca de Documentos com sucesso!"
+      );
 
     } catch (err: any) {
       console.error(err);
@@ -7805,11 +8743,11 @@ Relato:
             </span>
             {patient.sessionDay ? (
               <span className="text-xs text-text-muted flex items-center gap-1">
-                <CalendarIcon size={14} /> Sessão Padrão: Toda {patient.sessionDay} {patient.sessionTime ? `às ${patient.sessionTime}` : ''}
+                <CalendarIcon size={14} /> {isPT ? 'Consulta Habitual:' : 'Sessão Padrão:'} {isPT ? `Todas as ${patient.sessionDay}s` : `Toda ${patient.sessionDay}`} {patient.sessionTime ? `às ${patient.sessionTime}` : ''}
               </span>
             ) : (
               <span className="text-xs text-text-muted flex items-center gap-1">
-                <CalendarIcon size={14} /> Agendamento Flexível
+                <CalendarIcon size={14} /> {isPT ? 'Agendamento Flexível' : 'Agendamento Flexível'}
               </span>
             )}
           </div>
@@ -7824,36 +8762,40 @@ Relato:
               <div className="p-3 mb-2 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-500 text-[11px] leading-relaxed flex items-start gap-2">
                 <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5" />
                 <span>
-                  <strong>Sigilo Profissional (CFP/LGPD):</strong> Prontuários e anotações clínicas são confidenciais e de acesso exclusivo do psicólogo assistente.
+                  {isPT ? (
+                    <><strong>Sigilo Profissional (OPP/RGPD):</strong> Os processos clínicos e as notas são confidenciais e de acesso exclusivo do(a) psicólogo(a) assistente.</>
+                  ) : (
+                    <><strong>Sigilo Profissional (CFP/LGPD):</strong> Prontuários e anotações clínicas são confidenciais e de acesso exclusivo do psicólogo assistente.</>
+                  )}
                 </span>
               </div>
             )}
             {(isRestrictedRole ? [
-              { id: 'perfil', label: 'Dados do Paciente (Perfil)', icon: Users },
-              { id: 'reembolso', label: 'Recibos & Reembolso', icon: Receipt },
+              { id: 'perfil', label: isPT ? 'Dados do Utente (Perfil)' : 'Dados do Paciente (Perfil)', icon: Users },
+              { id: 'reembolso', label: isPT ? 'Declarações & Seguros' : 'Recibos & Reembolso', icon: Receipt },
             ] : [
-              { id: 'perfil', label: 'Perfil', icon: Users },
-              { id: 'prontuario', label: 'Evoluções', icon: FileText, badge: 'NOVO' },
+              { id: 'perfil', label: isPT ? 'Perfil' : 'Perfil', icon: Users },
+              { id: 'prontuario', label: isPT ? 'Evoluções Clínicas' : 'Evoluções', icon: FileText, badge: 'NOVO' },
               { 
                 id: 'anamnese', 
-                label: profileSettings?.clinicalApproach === 'tcc' ? 'Conceitualização TCC' : 
+                label: profileSettings?.clinicalApproach === 'tcc' ? (isPT ? 'Concetualização TCC' : 'Conceitualização TCC') : 
                        profileSettings?.clinicalApproach === 'psicanalise' ? 'Estruturação Analítica' :
                        profileSettings?.clinicalApproach === 'gestalt' ? 'Mapa Gestáltico' :
                        profileSettings?.clinicalApproach === 'act' ? 'Matriz ACT' :
                        profileSettings?.clinicalApproach === 'humanista' ? 'Análise Existencial / ACP' :
-                       'Anamnese', 
+                       (isPT ? 'Anamnese Clínica' : 'Anamnese'), 
                 icon: FileText 
               },
-              { id: 'biblioteca', label: 'Biblioteca / Prontuários', icon: FolderOpen },
+              { id: 'biblioteca', label: isPT ? 'Biblioteca / Processos Clínicos' : 'Biblioteca / Prontuários', icon: FolderOpen },
               { 
                 id: 'tratamento', 
                 label: ['psicanalise', 'junguiana', 'gestalt', 'humanista'].includes(profileSettings?.clinicalApproach)
                   ? 'Organização do Caso' 
-                  : 'Plano de Tratamento', 
+                  : (isPT ? 'Plano de Intervenção' : 'Plano de Tratamento'), 
                 icon: CheckCircle2 
               },
-              { id: 'smartnotes', label: 'Resumo', icon: BarChart3 },
-              { id: 'reembolso', label: 'Reembolso', icon: Receipt },
+              { id: 'smartnotes', label: isPT ? 'Resumo Clínico' : 'Resumo', icon: BarChart3 },
+              { id: 'reembolso', label: isPT ? 'Declarações & Seguros' : 'Reembolso', icon: Receipt },
             ]).map(item => (
              <button
                 key={item.id}
@@ -7890,15 +8832,19 @@ Relato:
                     <div className="w-16 h-16 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-500 flex items-center justify-center mx-auto">
                       <ShieldCheck size={32} />
                     </div>
-                    <h3 className="text-lg font-bold text-text-main">Acesso Clínico Restrito</h3>
+                    <h3 className="text-lg font-bold text-text-main">
+                      {isPT ? 'Acesso Clínico Reservado' : 'Acesso Clínico Restrito'}
+                    </h3>
                     <p className="text-xs text-text-muted leading-relaxed">
-                      Em estrita conformidade com o Código de Ética Profissional do Psicólogo (Resolução CFP nº 01/2009) e a LGPD, o acesso a prontuários, evoluções clínicas, anamneses e anotações confidenciais é de acesso exclusivo do(a) psicólogo(a) responsável pelo paciente.
+                      {isPT 
+                        ? 'Em estrita conformidade com o Código Deontológico da Ordem dos Psicólogos Portugueses (OPP) e o RGPD, o acesso a processos clínicos, notas de evolução, anamneses e relatórios confidenciais é de acesso exclusivo do(a) psicólogo(a) responsável pelo utente.' 
+                        : 'Em estrita conformidade com o Código de Ética Profissional do Psicólogo (Resolução CFP nº 01/2009) e a LGPD, o acesso a prontuários, evoluções clínicas, anamneses e anotações confidenciais é de acesso exclusivo do(a) psicólogo(a) responsável pelo paciente.'}
                     </p>
                     <button
                       onClick={() => setActiveSubTab('perfil')}
                       className="px-5 py-2.5 rounded-xl bg-primary text-text-main font-bold text-xs hover:opacity-90 transition-all shadow-md shadow-primary/20"
                     >
-                      Voltar aos Dados do Paciente
+                      {isPT ? 'Voltar aos Dados do Utente' : 'Voltar aos Dados do Paciente'}
                     </button>
                   </motion.div>
                 )}
@@ -7959,7 +8905,7 @@ Relato:
                                 "text-[10px] sm:text-xs px-2 py-0.5 sm:px-3 sm:py-1 rounded-full border font-bold uppercase tracking-widest",
                                 patient.status === 'Inativo' ? "bg-orange-500/10 text-orange-500 border-orange-500/10" : "bg-green-500/10 text-green-500 border-green-500/10"
                               )}>
-                                Paciente {patient.status || 'Ativo'}
+                                {(isPT ? 'Utente ' : 'Paciente ') + (patient.status || 'Ativo')}
                               </span>
                             )}
                           </div>
@@ -7973,33 +8919,33 @@ Relato:
                           isEditing ? "bg-primary text-white" : "bg-surface-muted text-text-main border border-border-ui hover:bg-border-ui"
                         )}
                       >
-                        {isEditing ? 'Salvar Alterações' : 'Editar Perfil'}
+                        {isEditing ? (isPT ? 'Guardar Alterações' : 'Salvar Alterações') : (isPT ? 'Editar Perfil' : 'Editar Perfil')}
                       </button>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                       <div className="space-y-4">
-                        <h4 className="text-xs font-bold text-primary uppercase tracking-widest">Informações Pessoais</h4>
+                        <h4 className="text-xs font-bold text-primary uppercase tracking-widest">{isPT ? 'Informações Pessoais' : 'Informações Pessoais'}</h4>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           
-                          {/* CPF */}
+                          {/* CPF / NIF */}
                           <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
-                            <span className="text-xs text-text-muted">CPF</span>
+                            <span className="text-xs text-text-muted">{isPT ? 'NIF' : 'CPF'}</span>
                             {isEditing ? (
                               <input 
-                                placeholder="000.000.000-00"
+                                placeholder={isPT ? 'Ex: 123456789' : '000.000.000-00'}
                                 value={editForm.cpf} 
                                 onChange={(e) => setEditForm({...editForm, cpf: e.target.value})}
                                 className="text-xs font-bold text-text-main bg-transparent outline-none w-full"
                               />
                             ) : (
-                              <span className="text-xs font-bold text-text-main">{patient.cpf || patient.document || 'Não informado'}</span>
+                              <span className="text-xs font-bold text-text-main">{patient.nif || patient.cpf || patient.document || (isPT ? 'Não informado' : 'Não informado')}</span>
                             )}
                           </div>
 
                           {/* Data de Nasc */}
                           <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
-                            <span className="text-xs text-text-muted">Data de Nasc.</span>
+                            <span className="text-xs text-text-muted">{isPT ? 'Data de Nasc.' : 'Data de Nasc.'}</span>
                             {isEditing ? (
                               <input 
                                 type="date"
@@ -8016,10 +8962,10 @@ Relato:
 
                           {/* Gênero/Pronome */}
                           <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
-                            <span className="text-xs text-text-muted">Gênero/Pronome</span>
+                            <span className="text-xs text-text-muted">{isPT ? 'Género / Pronome' : 'Gênero/Pronome'}</span>
                             {isEditing ? (
                               <input 
-                                placeholder="Ex: Feminino, Ela/Dela"
+                                placeholder={isPT ? 'Ex: Feminino, Ela/Dela' : 'Ex: Feminino, Ela/Dela'}
                                 value={editForm.gender} 
                                 onChange={(e) => setEditForm({...editForm, gender: e.target.value})}
                                 className="text-xs font-bold text-text-main bg-transparent outline-none w-full"
@@ -8031,7 +8977,7 @@ Relato:
 
                           {/* Profissão */}
                           <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
-                            <span className="text-xs text-text-muted">Profissão</span>
+                            <span className="text-xs text-text-muted">{isPT ? 'Profissão' : 'Profissão'}</span>
                             {isEditing ? (
                               <input 
                                 placeholder="Ex: Designer Gráfico"
@@ -8044,12 +8990,12 @@ Relato:
                             )}
                           </div>
 
-                          {/* Telefone */}
+                          {/* Telefone / Telemóvel */}
                           <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
-                            <span className="text-xs text-text-muted">Telefone</span>
+                            <span className="text-xs text-text-muted">{isPT ? 'Telemóvel / Telefone' : 'Telefone'}</span>
                             {isEditing ? (
                               <input 
-                                placeholder="(00) 00000-0000"
+                                placeholder={isPT ? '912 345 678 ou +351...' : '(00) 00000-0000'}
                                 value={editForm.phone} 
                                 onChange={(e) => setEditForm({...editForm, phone: e.target.value})}
                                 className="text-xs font-bold text-text-main bg-transparent outline-none w-full"
@@ -8074,12 +9020,12 @@ Relato:
                             )}
                           </div>
 
-                          {/* Endereço */}
+                          {/* Endereço / Morada */}
                           <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui sm:col-span-2">
-                            <span className="text-xs text-text-muted">Endereço</span>
+                            <span className="text-xs text-text-muted">{isPT ? 'Morada' : 'Endereço'}</span>
                             {isEditing ? (
                               <input 
-                                placeholder="Rua, Número, Bairro, Cidade - UF"
+                                placeholder={isPT ? 'Rua, Número, Código Postal, Localidade' : 'Rua, Número, Bairro, Cidade - UF'}
                                 value={editForm.address} 
                                 onChange={(e) => setEditForm({...editForm, address: e.target.value})}
                                 className="text-xs font-bold text-text-main bg-transparent outline-none w-full"
@@ -8092,12 +9038,12 @@ Relato:
                         </div>
                       </div>
                       <div className="space-y-4">
-                        <h4 className="text-xs font-bold text-primary uppercase tracking-widest">Contatos de Emergência</h4>
+                        <h4 className="text-xs font-bold text-primary uppercase tracking-widest">{isPT ? 'Contactos de Emergência' : 'Contatos de Emergência'}</h4>
                         <div className="p-4 rounded-2xl bg-surface-muted border border-border-ui space-y-3">
                           {isEditing ? (
                             <>
                               <div className="space-y-1">
-                                <label className="text-[10px] text-text-muted uppercase">Nome do Contato</label>
+                                <label className="text-[10px] text-text-muted uppercase">{isPT ? 'Nome do Contacto' : 'Nome do Contato'}</label>
                                 <input 
                                   value={editForm.emergencyName} 
                                   onChange={(e) => setEditForm({...editForm, emergencyName: e.target.value})}
@@ -8105,7 +9051,7 @@ Relato:
                                 />
                               </div>
                               <div className="space-y-1">
-                                <label className="text-[10px] text-text-muted uppercase">Parentesco</label>
+                                <label className="text-[10px] text-text-muted uppercase">{isPT ? 'Parentesco / Relação' : 'Parentesco'}</label>
                                 <input 
                                   value={editForm.emergencyRelation} 
                                   onChange={(e) => setEditForm({...editForm, emergencyRelation: e.target.value})}
@@ -8113,7 +9059,7 @@ Relato:
                                 />
                               </div>
                               <div className="space-y-1">
-                                <label className="text-[10px] text-text-muted uppercase">Telefone</label>
+                                <label className="text-[10px] text-text-muted uppercase">{isPT ? 'Telemóvel / Telefone' : 'Telefone'}</label>
                                 <input 
                                   value={editForm.emergencyPhone} 
                                   onChange={(e) => setEditForm({...editForm, emergencyPhone: e.target.value})}
@@ -8124,9 +9070,9 @@ Relato:
                           ) : (
                             <>
                               <p className="text-sm font-bold text-text-main uppercase">
-                                {patient.emergencyName || 'Nenhum contato'} {patient.emergencyRelation && `(${patient.emergencyRelation})`}
+                                {patient.emergencyName || (isPT ? 'Nenhum contacto' : 'Nenhum contato')} {patient.emergencyRelation && `(${patient.emergencyRelation})`}
                               </p>
-                              <p className="text-xs text-text-muted mt-1">{patient.emergencyPhone || 'Telefone não informado'}</p>
+                              <p className="text-xs text-text-muted mt-1">{patient.emergencyPhone || (isPT ? 'Contacto não informado' : 'Telefone não informado')}</p>
                             </>
                           )}
                         </div>
@@ -8134,7 +9080,7 @@ Relato:
                     </div>
 
                     <div className="pt-8 border-t border-border-ui space-y-4">
-                      <h4 className="text-xs font-bold text-primary uppercase tracking-widest">Agendamento Padrão</h4>
+                      <h4 className="text-xs font-bold text-primary uppercase tracking-widest">{isPT ? 'Agendamento Habitual' : 'Agendamento Padrão'}</h4>
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                         <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
                           <span className="text-xs text-text-muted">Dia da Semana</span>
@@ -8186,7 +9132,7 @@ Relato:
                           )}
                         </div>
                         <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
-                          <span className="text-xs text-text-muted">Recorrência</span>
+                          <span className="text-xs text-text-muted">{isPT ? 'Periodicidade' : 'Recorrência'}</span>
                           {isEditing ? (
                             <select 
                               value={editForm.recurrence || ''} 
@@ -8205,7 +9151,7 @@ Relato:
 
                         {editForm && editForm.recurrence && editForm.recurrence !== 'Nenhuma' && (
                           <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui col-span-2 lg:col-span-2">
-                            <span className="text-xs text-text-muted">Data de Início da Recorrência</span>
+                            <span className="text-xs text-text-muted">{isPT ? 'Data de Início da Periodicidade' : 'Data de Início da Recorrência'}</span>
                             {isEditing ? (
                               <div className="space-y-1">
                                 <input 
@@ -8223,7 +9169,7 @@ Relato:
                                   className="text-xs font-bold text-text-main bg-transparent outline-none cursor-pointer w-full focus:border-primary"
                                 />
                                 <p className="text-[10px] text-primary font-bold uppercase tracking-tighter opacity-70">
-                                  Define o dia da semana e o ciclo de {editForm.recurrence.toLowerCase()}.
+                                  {isPT ? `Define o dia da semana e o ciclo ${editForm.recurrence.toLowerCase()}.` : `Define o dia da semana e o ciclo de ${editForm.recurrence.toLowerCase()}.`}
                                 </p>
                               </div>
                             ) : (
@@ -8247,7 +9193,7 @@ Relato:
                         )}
 
                         <div className="col-span-2 lg:col-span-4 flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
-                          <span className="text-xs text-text-muted">Link de Atendimento (ex: Google Meet, Zoom)</span>
+                          <span className="text-xs text-text-muted">{isPT ? 'Hiperligação da Consulta (ex: Google Meet, Zoom)' : 'Link de Atendimento (ex: Google Meet, Zoom)'}</span>
                           {isEditing ? (
                             <input 
                               type="url"
@@ -8277,7 +9223,7 @@ Relato:
                                 {patient.meetingLink}
                               </a>
                             ) : (
-                              <span className="text-xs font-bold text-text-muted italic">Nenhum cadastrado</span>
+                              <span className="text-xs font-bold text-text-muted italic">{isPT ? 'Nenhuma registada' : 'Nenhum cadastrado'}</span>
                             )
                           )}
                         </div>
@@ -8285,12 +9231,12 @@ Relato:
                     </div>
 
                     <div className="pt-8 border-t border-border-ui space-y-4">
-                      <h4 className="text-xs font-bold text-primary uppercase tracking-widest">Informações Financeiras e de Pagamento</h4>
+                      <h4 className="text-xs font-bold text-primary uppercase tracking-widest">{isPT ? 'Informações Financeiras e Faturação' : 'Informações Financeiras e de Pagamento'}</h4>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         
-                        {/* Valor da Sessão */}
+                        {/* Valor da Sessão / Consulta */}
                         <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui">
-                          <span className="text-xs text-text-muted">Valor da Sessão (R$)</span>
+                          <span className="text-xs text-text-muted">{isPT ? 'Valor da Consulta (€)' : 'Valor da Sessão (R$)'}</span>
                           {isEditing ? (
                             <input 
                               type="number"
@@ -8299,7 +9245,7 @@ Relato:
                               className="text-xs font-bold text-text-main bg-transparent outline-none w-full"
                             />
                           ) : (
-                            <span className="text-xs font-bold text-text-main">{patient.amount ? `R$ ${patient.amount}` : 'Não informado'}</span>
+                            <span className="text-xs font-bold text-text-main">{patient.amount ? (isPT ? `€ ${patient.amount}` : `R$ ${patient.amount}`) : 'Não informado'}</span>
                           )}
                         </div>
 
@@ -8315,11 +9261,11 @@ Relato:
                               <option value="Mensal">Mensal</option>
                               <option value="Quinzenal">Quinzenal</option>
                               <option value="Semanal">Semanal</option>
-                              <option value="Por Sessão">Por Sessão (Avulso)</option>
+                              <option value="Por Sessão">{isPT ? 'Por Consulta (Avulso)' : 'Por Sessão (Avulso)'}</option>
                             </select>
                           ) : (
                             <span className="text-xs font-bold text-text-main">
-                              {patient.paymentPeriodicity || 'Por Sessão'}
+                              {patient.paymentPeriodicity === 'Por Sessão' ? (isPT ? 'Por Consulta' : 'Por Sessão') : (patient.paymentPeriodicity || (isPT ? 'Por Consulta' : 'Por Sessão'))}
                             </span>
                           )}
                         </div>
@@ -8330,7 +9276,7 @@ Relato:
                         {/* Se MENSAL */}
                         {(isEditing ? editForm.paymentPeriodicity : patient.paymentPeriodicity) === 'Mensal' && (
                           <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui sm:col-span-2">
-                            <span className="text-xs text-text-muted">Dia do Vencimento do Mês (1 a 31)</span>
+                            <span className="text-xs text-text-muted">{isPT ? 'Dia do Vencimento do Mês (1 a 31)' : 'Dia do Vencimento do Mês (1 a 31)'}</span>
                             {isEditing ? (
                               <select 
                                 value={editForm.paymentDay1 || 5} 
@@ -8398,7 +9344,7 @@ Relato:
                             {isEditing ? (
                               <select 
                                 value={editForm.paymentWeekday || 'Segunda-feira'} 
-                                onChange={(e) => setEditForm({...editForm, paymentWeekday: e.target.value})}
+                                onChange={(e) => setEditForm({...editForm, paymentWeekday: e.target.value})} 
                                 className="text-xs font-bold text-text-main bg-transparent outline-none cursor-pointer w-full"
                               >
                                 <option value="Segunda-feira">Segunda-feira</option>
@@ -8419,16 +9365,16 @@ Relato:
 
                         {/* Notas de Pagamento */}
                         <div className="flex flex-col gap-1 p-3 rounded-xl bg-surface-muted/50 border border-border-ui sm:col-span-2">
-                          <span className="text-xs text-text-muted font-bold uppercase tracking-wider">Notas e Observações de Pagamento</span>
+                          <span className="text-xs text-text-muted font-bold uppercase tracking-wider">{isPT ? 'Notas e Observações de Faturação' : 'Notas e Observações de Pagamento'}</span>
                           {isEditing ? (
                             <textarea 
-                              placeholder="Adicione observações sobre a cobrança (Ex: Paga por Pix todo dia 5)"
+                              placeholder={isPT ? 'Adicione observações sobre a faturação (Ex: Paga por MB WAY todo o dia 5)' : 'Adicione observações sobre a cobrança (Ex: Paga por Pix todo dia 5)'}
                               value={editForm.paymentNotes || ''} 
                               onChange={(e) => setEditForm({...editForm, paymentNotes: e.target.value})}
                               className="text-xs font-bold text-text-main bg-transparent outline-none w-full min-h-[60px] resize-none"
                             />
                           ) : (
-                            <p className="text-xs font-bold text-text-main whitespace-pre-wrap">{patient.paymentNotes || 'Nenhuma observação interna.'}</p>
+                            <p className="text-xs font-bold text-text-main whitespace-pre-wrap">{patient.paymentNotes || (isPT ? 'Nenhuma observação interna.' : 'Nenhuma observação interna.')}</p>
                           )}
                         </div>
 
@@ -8441,7 +9387,7 @@ Relato:
                       <div className="flex items-center justify-between">
                         <h4 className="text-lg font-bold text-text-main flex items-center gap-2">
                           <FileText size={18} className="text-primary" />
-                          Resumo das Sessões
+                          {isPT ? 'Resumo das Consultas' : 'Resumo das Sessões'}
                         </h4>
                         <button 
                           onClick={handleGenerateAI}
@@ -8454,7 +9400,7 @@ Relato:
                           {isGeneratingAI ? (
                             <>
                               <div className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                              Analisando...
+                              {isPT ? 'A analisar...' : 'Analisando...'}
                             </>
                           ) : (
                             <>✨ Gerar Evolução IA</>
@@ -8490,7 +9436,7 @@ Relato:
                         <div className="flex items-center justify-between">
                           <div>
                             <h4 className="text-sm font-bold text-red-500 uppercase tracking-widest">Zona de Perigo</h4>
-                            <p className="text-[10px] text-text-muted mt-1">Ao apagar este paciente, todos os seus dados e históricos serão removidos permanentemente.</p>
+                            <p className="text-[10px] text-text-muted mt-1">{isPT ? 'Ao eliminar este utente, todos os seus dados e históricos serão removidos permanentemente.' : 'Ao apagar este paciente, todos os seus dados e históricos serão removidos permanentemente.'}</p>
                           </div>
                           <button 
                             onClick={() => {
@@ -8499,7 +9445,7 @@ Relato:
                             }}
                             className="px-6 py-2 rounded-xl bg-red-500 text-white text-[10px] font-bold uppercase hover:bg-red-600 transition-all shadow-lg shadow-red-500/20"
                           >
-                            Apagar Paciente
+                            {isPT ? 'Eliminar Utente' : 'Apagar Paciente'}
                           </button>
                         </div>
                       </div>
@@ -8538,7 +9484,7 @@ Relato:
                               ) : (
                                 <>
                                   <FileDown size={16} />
-                                  <span>Gerar Todos os Prontuários</span>
+                                  <span>{isPT ? 'Gerar Todos os Processos Clínicos' : 'Gerar Todos os Prontuários'}</span>
                                 </>
                               )}
                             </button>
@@ -8547,7 +9493,7 @@ Relato:
                             onClick={() => setIsAddingEvolution(true)}
                             className="bg-primary text-white px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium hover:opacity-90 shadow-sm transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
                           >
-                            <Plus size={16} /> Nova Evolução
+                            <Plus size={16} /> {isPT ? 'Nova Evolução' : 'Nova Evolução'}
                           </button>
                         </div>
                       )}
@@ -8560,12 +9506,12 @@ Relato:
                         className="glass-card p-6 rounded-3xl border border-primary/20 space-y-6"
                       >
                         <div className="flex items-center justify-between">
-                          <h4 className="text-xs font-bold text-primary uppercase tracking-widest">Registrar Nova Sessão</h4>
+                          <h4 className="text-xs font-bold text-primary uppercase tracking-widest">{isPT ? 'Registar Nova Consulta' : 'Registrar Nova Sessão'}</h4>
                         </div>
                         
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                           <div className="space-y-2">
-                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Número da Sessão</label>
+                            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">{isPT ? 'Número da Consulta' : 'Número da Sessão'}</label>
                             <input type="number" min="1" value={evolutionSessionNumber} onChange={(e) => setEvolutionSessionNumber(parseInt(e.target.value))} className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-2 text-sm text-text-main outline-none focus:border-primary" />
                           </div>
                           <div className="space-y-2">
@@ -8583,12 +9529,38 @@ Relato:
                               <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Transcrição do Áudio</label>
                             </div>
 
-                            {/* Elegant Audio Recorder Interface */}
-                            <div className="glass-card p-4 rounded-2xl border border-white/5 bg-white/5 relative overflow-hidden transition-all duration-300">
+                            {/* Hidden file input for audio upload */}
+                            <input
+                              type="file"
+                              ref={audioFileInputRef}
+                              onChange={handleAudioFileUpload}
+                              accept="audio/*,.mp3,.m4a,.wav,.ogg,.webm,.aac,.flac"
+                              className="hidden"
+                            />
+
+                            {/* Audio Recorder & Upload Safe Hub */}
+                            <div 
+                              onDragOver={(e) => { e.preventDefault(); setIsDraggingAudio(true); }}
+                              onDragLeave={() => setIsDraggingAudio(false)}
+                              onDrop={handleAudioDrop}
+                              className={cn(
+                                "glass-card p-4 rounded-2xl border transition-all duration-300 relative overflow-hidden",
+                                isDraggingAudio 
+                                  ? "border-primary bg-primary/10 shadow-lg shadow-primary/10" 
+                                  : "border-border-ui bg-card"
+                              )}
+                            >
                               {isTranscribing ? (
-                                <div className="flex flex-col items-center justify-center py-4 space-y-3 animate-pulse">
-                                  <Loader2 size={24} className="text-primary animate-spin" />
-                                  <p className="text-xs font-bold text-primary uppercase tracking-widest text-center">Transcrevendo áudio com Inteligência Artificial...</p>
+                                <div className="flex flex-col items-center justify-center py-5 space-y-3">
+                                  <Loader2 size={26} className="text-primary animate-spin" />
+                                  <div className="text-center">
+                                    <p className="text-xs font-bold text-primary uppercase tracking-widest">
+                                      Transcrevendo áudio com Inteligência Artificial...
+                                    </p>
+                                    <p className="text-[11px] text-text-muted mt-1">
+                                      Processando falas com alta precisão e segurança. Seu áudio já está protegido.
+                                    </p>
+                                  </div>
                                 </div>
                               ) : isRecording ? (
                                 <div className="flex flex-col sm:flex-row items-center justify-between gap-4 py-2 w-full">
@@ -8628,6 +9600,7 @@ Relato:
                                     <div className="flex items-center gap-2">
                                       {isPaused ? (
                                         <button
+                                          type="button"
                                           onClick={resumeAudioRecording}
                                           className="p-2.5 bg-green-500/20 hover:bg-green-500/30 text-green-500 rounded-xl transition-all border border-green-500/20"
                                           title="Retomar Gravação"
@@ -8636,6 +9609,7 @@ Relato:
                                         </button>
                                       ) : (
                                         <button
+                                          type="button"
                                           onClick={pauseAudioRecording}
                                           className="p-2.5 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-500 rounded-xl transition-all border border-yellow-500/20"
                                           title="Pausar Gravação"
@@ -8645,15 +9619,17 @@ Relato:
                                       )}
 
                                       <button
+                                        type="button"
                                         onClick={stopAudioRecording}
                                         className="p-2.5 bg-primary text-white rounded-xl transition-all hover:bg-primary-hover shadow-lg shadow-primary/20 flex items-center justify-center gap-1.5 px-4 font-bold text-xs uppercase tracking-widest"
-                                        title="Parar e Transcrever"
+                                        title="Parar e Salvar/Transcrever"
                                       >
                                         <Square size={12} className="fill-white" />
                                         Concluir
                                       </button>
 
                                       <button
+                                        type="button"
                                         onClick={cancelAudioRecording}
                                         className="p-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-500 rounded-xl transition-all border border-red-500/10"
                                         title="Descartar Áudio"
@@ -8663,141 +9639,203 @@ Relato:
                                     </div>
                                   </div>
                                 </div>
-                              ) : (
-                                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 py-1">
-                                  <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
-                                      <Mic size={20} />
+                              ) : recordedAudioBlob ? (
+                                <div className="space-y-3 py-1">
+                                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2">
+                                      <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                                      <span className="text-xs font-bold text-text-main">
+                                        Gravação Salva com Sucesso
+                                      </span>
                                     </div>
-                                    <div>
-                                      <p className="text-xs font-bold text-text-main uppercase tracking-tight">Gravador de Relatos</p>
-                                      <p className="text-[10px] text-text-muted">Grave o áudio da sessão e o SimplePsi transcreve automaticamente.</p>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      {audioBlobUrl && (
+                                        <a
+                                          href={audioBlobUrl}
+                                          download={`relato-sessao-${evolutionSessionNumber}-${(patient.name || 'paciente').replace(/\s+/g, '_')}.webm`}
+                                          className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 shadow-sm"
+                                          title="Baixar uma cópia do arquivo de áudio no seu computador"
+                                        >
+                                          <Download size={13} />
+                                          Baixar Áudio (.webm)
+                                        </a>
+                                      )}
+                                      <button
+                                        type="button"
+                                        disabled={isTranscribing}
+                                        onClick={() => recordedAudioBlob && transcribeAudio(recordedAudioBlob)}
+                                        className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 disabled:opacity-50"
+                                        title="Processar transcrição novamente com IA"
+                                      >
+                                        <RefreshCw size={13} className={isTranscribing ? "animate-spin" : ""} />
+                                        Transcrever Novamente
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (confirm("Deseja descartar este áudio para gravar outro?")) {
+                                            setRecordedAudioBlob(null);
+                                            if (audioBlobUrl) URL.revokeObjectURL(audioBlobUrl);
+                                            setAudioBlobUrl(null);
+                                            setTranscriptionError(null);
+                                          }
+                                        }}
+                                        className="p-1.5 text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all"
+                                        title="Descartar áudio e gravar outro"
+                                      >
+                                        <Trash2 size={15} />
+                                      </button>
                                     </div>
                                   </div>
 
-                                  <button
-                                    onClick={startAudioRecording}
-                                    className="w-full sm:w-auto bg-primary text-white px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest hover:opacity-90 hover:scale-[1.02] transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/15"
-                                  >
-                                    <Mic size={16} />
-                                    Gravar Áudio
-                                  </button>
+                                  {audioBlobUrl && (
+                                    <audio controls src={audioBlobUrl} className="w-full h-9 rounded-xl outline-none" />
+                                  )}
+
+                                  {transcriptionError && (
+                                    <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-700 dark:text-amber-400 flex items-start gap-2.5">
+                                      <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-500" />
+                                      <div>
+                                        <p className="font-bold">Aviso na transcrição automática</p>
+                                        <p className="text-[11px] opacity-90 mt-0.5">{transcriptionError}</p>
+                                        <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 mt-1">
+                                          🛡️ Fique tranquilo: seu áudio está 100% seguro no player acima! Você pode ouvi-lo, baixá-lo ou tentar transcrever novamente.
+                                        </p>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 py-1">
+                                  <div className="flex items-center gap-3 text-left">
+                                    <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                                      <Mic size={20} />
+                                    </div>
+                                    <div>
+                                      <p className="text-xs font-bold text-text-main uppercase tracking-tight">{isPT ? 'Gravador de Consultas & Carregamento' : 'Gravador de Relatos & Upload'}</p>
+                                      <p className="text-[11px] text-text-muted">{isPT ? 'Grave pelo microfone ou arraste um ficheiro de áudio gravado no telemóvel.' : 'Grave pelo microfone ou arraste um arquivo de áudio gravado no celular.'}</p>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                                    <button
+                                      type="button"
+                                      onClick={() => audioFileInputRef.current?.click()}
+                                      className="flex-1 sm:flex-initial px-4 py-2.5 bg-surface-muted hover:bg-surface-muted/80 border border-border-ui text-text-main rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm"
+                                      title={isPT ? 'Carregar ficheiro de áudio gravado no telemóvel ou computador' : 'Fazer upload de arquivo de áudio gravado no celular ou computador'}
+                                    >
+                                      <Upload size={15} />
+                                      {isPT ? 'Carregar Áudio' : 'Subir Áudio'}
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={startAudioRecording}
+                                      className="flex-1 sm:flex-initial bg-primary text-white px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest hover:opacity-90 hover:scale-[1.02] transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/15"
+                                    >
+                                      <Mic size={16} />
+                                      {isPT ? 'Gravar Agora' : 'Gravar Agora'}
+                                    </button>
+                                  </div>
                                 </div>
                               )}
                             </div>
                             
-                            {/* Banner Extensão do Google Meet */}
-                            <div className="p-4 rounded-2xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all">
-                              <div className="flex items-center gap-3 text-left">
-                                <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
-                                  <Video size={20} />
-                                </div>
-                                <div>
-                                  <div className="flex items-center gap-2">
-                                    <h5 className="text-xs font-bold text-text-main">Atende pelo Google Meet?</h5>
-                                    {hasAcceptedExtensionTerms && (
-                                      <span className="text-[9px] bg-green-500/15 text-green-400 border border-green-500/25 px-2 py-0.5 rounded-full font-bold uppercase">
-                                        Ativa
-                                      </span>
-                                    )}
+                            {/* Banner Extensão do Google Meet (Opcional & Dispensável) */}
+                            {!isMeetBannerDismissed && !hasAcceptedExtensionTerms && (
+                              <div className="relative p-4 rounded-2xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsMeetBannerDismissed(true);
+                                    localStorage.setItem('simplepsi_dismiss_evolution_meet_banner', 'true');
+                                  }}
+                                  className="absolute top-2.5 right-2.5 p-1 text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/5 rounded-lg transition-all"
+                                  title="Dispensar este aviso"
+                                >
+                                  <X size={14} />
+                                </button>
+                                <div className="flex items-center gap-3 text-left pr-6 sm:pr-0">
+                                  <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
+                                    <Video size={20} />
                                   </div>
-                                  <p className="text-[10px] text-text-muted">
-                                    Instale nossa extensão oficial para transcrever e enviar a sessão em 1 clique.
-                                  </p>
-                                  <p className="text-[9.5px] text-primary/90 mt-0.5 font-medium">
-                                    ⭐ * Requer legendas ativadas em Português no Google Meet.
-                                  </p>
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <h5 className="text-xs font-bold text-text-main">{isPT ? 'Dá consultas pelo Google Meet?' : 'Atende pelo Google Meet?'}</h5>
+                                    </div>
+                                    <p className="text-[10px] text-text-muted">
+                                      {isPT ? 'Instale a nossa extensão oficial para transcrever e enviar a consulta num só clique.' : 'Instale nossa extensão oficial para transcrever e enviar a sessão em 1 clique.'}
+                                    </p>
+                                    <p className="text-[9.5px] text-primary/90 mt-0.5 font-medium">
+                                      ⭐ * Requer legendas ativadas em Português no Google Meet.
+                                    </p>
+                                  </div>
                                 </div>
+                                <button
+                                  type="button"
+                                  onClick={onOpenExtensionModal}
+                                  className="w-full sm:w-auto bg-primary text-white hover:opacity-90 px-4 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all shadow-md shadow-primary/10 flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+                                >
+                                  <Chrome size={14} />
+                                  Ativar Extensão
+                                </button>
                               </div>
-                              <button
-                                type="button"
-                                onClick={onOpenExtensionModal}
-                                className="w-full sm:w-auto bg-primary text-white hover:opacity-90 px-4 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all shadow-md shadow-primary/10 flex items-center justify-center gap-2 shrink-0 cursor-pointer"
-                              >
-                                <Chrome size={14} />
-                                {hasAcceptedExtensionTerms ? "Ver Extensão / Reinstalar" : "Ativar Extensão"}
-                              </button>
-                            </div>
+                            )}
 
                             <textarea 
                               id="transcription-textarea"
                               value={transcriptionText}
                               onChange={(e) => setTranscriptionText(e.target.value)}
-                              placeholder="Fale no gravador acima ou cole a transcrição bruta do áudio aqui..."
+                              placeholder={isPT ? 'Grave no microfone acima, carregue o ficheiro de áudio ou cole a transcrição da consulta aqui...' : 'Fale no gravador acima, faça upload do áudio ou cole a transcrição bruta da sessão aqui...'}
                               className="w-full bg-surface-muted border border-border-ui rounded-xl p-4 text-sm text-text-main outline-none focus:border-primary min-h-[120px] resize-none"
                             />
 
-                            <div className="p-4 rounded-2xl border border-white/5 bg-white/5 space-y-4">
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="space-y-2">
-                                  <label className="text-[9px] font-bold text-text-muted uppercase tracking-widest pl-1 block">Nível de Detalhe da IA</label>
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {[
-                                      { id: 'proportional', label: 'Proporcional', desc: 'Conforme áudio/texto' },
-                                      { id: 'detailed', label: 'Muito Detalhado', desc: 'Expandido e minucioso' },
-                                      { id: 'summarized', label: 'Super Resumido', desc: 'Direto e conciso' }
-                                    ].map(opt => (
-                                      <button
-                                        key={opt.id}
-                                        type="button"
-                                        onClick={() => setAiDetailLevel(opt.id as any)}
-                                        className={cn(
-                                          "flex-1 px-3 py-2 rounded-xl text-left border transition-all hover:scale-[1.01]",
-                                          aiDetailLevel === opt.id
-                                            ? "bg-primary text-white border-primary shadow-sm"
-                                            : "bg-surface-muted/50 text-text-muted border-border-ui hover:border-primary/20 hover:text-text-main"
-                                        )}
-                                      >
-                                        <p className="text-[10px] font-bold uppercase tracking-wider">{opt.label}</p>
-                                        <p className="text-[8px] opacity-75 mt-0.5 leading-tight">{opt.desc}</p>
-                                      </button>
-                                    ))}
-                                  </div>
+                            {/* Gerador de Evolução Clínica com IA - Padrão CFP / OPP */}
+                            <div className="p-4 rounded-2xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row items-center justify-between gap-4">
+                              <div className="flex items-center gap-3 text-left">
+                                <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                                  <Sparkles size={20} />
                                 </div>
-
-                                <div className="space-y-2">
-                                  <label className="text-[9px] font-bold text-text-muted uppercase tracking-widest pl-1 block">Formato do Relato</label>
-                                  <div className="flex gap-1.5">
-                                    {[
-                                      { id: 'paragraphs', label: 'Em Parágrafos', desc: 'Texto clínico corrido' },
-                                      { id: 'topics', label: 'Em Tópicos', desc: 'Tópicos & bullet points' }
-                                    ].map(opt => (
-                                      <button
-                                        key={opt.id}
-                                        type="button"
-                                        onClick={() => setAiTextFormat(opt.id as any)}
-                                        className={cn(
-                                          "flex-1 px-3 py-2 rounded-xl text-left border transition-all hover:scale-[1.01]",
-                                          aiTextFormat === opt.id
-                                            ? "bg-primary text-white border-primary shadow-sm"
-                                            : "bg-surface-muted/50 text-text-muted border-border-ui hover:border-primary/20 hover:text-text-main"
-                                        )}
-                                      >
-                                        <p className="text-[10px] font-bold uppercase tracking-wider">{opt.label}</p>
-                                        <p className="text-[8px] opacity-75 mt-0.5 leading-tight">{opt.desc}</p>
-                                      </button>
-                                    ))}
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <h5 className="text-xs font-bold text-text-main">{isPT ? 'Evolução Clínica com IA (Padrão OPP)' : 'Evolução Clínica com IA (Padrão CFP)'}</h5>
+                                    <span className="text-[9px] bg-primary/15 text-primary border border-primary/25 px-2 py-0.5 rounded-full font-bold">
+                                      {CLINICAL_APPROACHES[profileSettings.clinicalApproach || 'tcc']?.name || 'TCC'}
+                                    </span>
                                   </div>
+                                  <p className="text-[10px] text-text-muted mt-0.5">
+                                    Estruturação completa: Demanda, Compreensão Clínica, Manejo do Terapeuta e Encaminhamentos.
+                                  </p>
                                 </div>
                               </div>
-                            </div>
 
-                            <button 
-                              onClick={handleGenerateEvolution}
-                              disabled={isGeneratingEvolution || !transcriptionText.trim()}
-                              className="w-full bg-orange-500/10 text-orange-500 border border-orange-500/20 py-3 rounded-xl text-xs font-bold hover:bg-orange-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              <BarChart3 size={16} />
-                              {isGeneratingEvolution ? "Processando com IA..." : "✨ Gerar Relato com IA"}
-                            </button>
+                              <button 
+                                type="button"
+                                onClick={handleGenerateEvolution}
+                                disabled={isGeneratingEvolution || !transcriptionText.trim()}
+                                className="w-full sm:w-auto bg-primary hover:bg-primary-hover text-white px-5 py-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/20 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                              >
+                                {isGeneratingEvolution ? (
+                                  <>
+                                    <Loader2 size={16} className="animate-spin" />
+                                    <span>{isPT ? 'A estruturar com IA...' : 'Estruturando com IA...'}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Sparkles size={16} />
+                                    <span>Gerar Evolução Clínica</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
                          </div>
 
                         <div className="space-y-2">
-                           <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Relato Final da Sessão</label>
+                           <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">{isPT ? 'Registo Final da Consulta' : 'Relato Final da Sessão'}</label>
                            <textarea 
                              value={newEvolutionNote}
                              onChange={(e) => setNewEvolutionNote(e.target.value)}
-                             placeholder="O relato gerado pela IA aparecerá aqui. Você também pode digitar manualmente..."
+                             placeholder={isPT ? 'O registo gerado pela IA aparecerá aqui. Também pode digitar manualmente...' : 'O relato gerado pela IA aparecerá aqui. Você também pode digitar manualmente...'}
                              className="w-full bg-surface-muted border border-border-ui rounded-xl p-4 text-sm text-text-main outline-none focus:border-primary min-h-[150px] resize-none"
                            />
                         </div>
@@ -8814,7 +9852,7 @@ Relato:
                             disabled={!newEvolutionNote.trim() || isSavingEvolution}
                             className="bg-primary text-white px-6 py-2 rounded-xl text-xs font-bold hover:opacity-90 transition-all disabled:opacity-50"
                           >
-                            {isSavingEvolution ? 'Salvando...' : 'Salvar Evolução'}
+                            {isSavingEvolution ? (isPT ? 'A guardar...' : 'Salvando...') : (isPT ? 'Guardar Evolução' : 'Salvar Evolução')}
                           </button>
                         </div>
                       </motion.div>
@@ -8839,7 +9877,7 @@ Relato:
                               />
                               <div className="flex justify-end gap-3">
                                 <button onClick={() => setEditingEvolutionId(null)} className="px-4 py-2 text-xs font-bold text-text-muted hover:text-text-main">Cancelar</button>
-                                <button onClick={() => handleSaveEditEvolution(evo.id)} className="bg-primary text-white px-6 py-2 rounded-xl text-xs font-bold hover:opacity-90 transition-all">Salvar</button>
+                                <button onClick={() => handleSaveEditEvolution(evo.id)} className="bg-primary text-white px-6 py-2 rounded-xl text-xs font-bold hover:opacity-90 transition-all">{isPT ? 'Guardar' : 'Salvar'}</button>
                               </div>
                             </div>
                           ) : (
@@ -8849,14 +9887,14 @@ Relato:
                                     <span className={cn(
                                       "text-[10px] font-bold uppercase tracking-widest",
                                       idx === 0 ? "text-primary" : "text-text-muted"
-                                    )}>Sessão #{evo.sessionNumber || (clinicalData.evoluções.length - idx)}</span>
+                                    )}>{isPT ? 'Consulta #' : 'Sessão #'}{evo.sessionNumber || (clinicalData.evoluções.length - idx)}</span>
                                     <span className="text-[10px] font-bold text-text-muted/50 uppercase tracking-widest">• {evo.date} {evo.time && `às ${evo.time}`}</span>
                                   </div>
                                   <div className="relative">
                                     <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpenDropdownId(openDropdownId === evo.id ? null : evo.id); }} className="text-text-muted hover:text-text-main p-1"><MoreVertical size={14} /></button>
                                     {openDropdownId === evo.id && (
                                       <div className="absolute right-0 mt-2 w-48 glass-card rounded-xl border border-border-ui shadow-xl overflow-hidden z-20">
-                                        <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingEvolutionId(evo.id); setEditingEvolutionNote(evo.note); setOpenDropdownId(null); }} className="w-full text-left px-4 py-3 text-xs font-bold text-text-main hover:bg-surface-muted transition-colors flex items-center gap-2"><PenTool size={12}/> Editar</button>
+                                        <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingEvolutionId(evo.id); setEditingEvolutionNote(evo.note); setOpenDropdownId(null); }} className="w-full text-left px-4 py-3 text-xs font-bold text-text-main hover:bg-surface-muted transition-colors flex items-center gap-2"><PenTool size={12}/> {isPT ? 'Editar' : 'Editar'}</button>
                                         {currentClinic && (
                                           <button
                                             type="button"
@@ -8874,7 +9912,7 @@ Relato:
                                             <UserCheck size={12} /> Enviar para Supervisão
                                           </button>
                                         )}
-                                        <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteEvolution(evo.id); }} className="w-full text-left px-4 py-3 text-xs font-bold text-red-500 hover:bg-red-500/10 transition-colors flex items-center gap-2 border-t border-border-ui"><Trash2 size={12}/> Excluir</button>
+                                        <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteEvolution(evo.id); }} className="w-full text-left px-4 py-3 text-xs font-bold text-red-500 hover:bg-red-500/10 transition-colors flex items-center gap-2 border-t border-border-ui"><Trash2 size={12}/> {isPT ? 'Eliminar' : 'Excluir'}</button>
                                       </div>
                                     )}
                                   </div>
@@ -8909,12 +9947,12 @@ Relato:
                                    {generatingPdfId === evo.id ? (
                                      <>
                                       <div className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                                      Gerando...
+                                      {isPT ? 'A gerar...' : 'Gerando...'}
                                      </>
                                    ) : (
                                      <>
                                       <FileDown size={14} />
-                                      Gerar Prontuário (PDF)
+                                      {isPT ? 'Gerar Processo Clínico (PDF)' : 'Gerar Prontuário (PDF)'}
                                      </>
                                    )}
                                  </button>
@@ -8985,7 +10023,7 @@ Relato:
                         <div className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-400 flex items-start gap-2">
                           <AlertCircle size={16} className="mt-0.5 shrink-0" />
                           <p>
-                            <strong>Validação Ética Profissional:</strong> Os rascunhos e sugestões gerados por inteligência artificial são apenas orientações e hipóteses clínicas de suporte. O psicólogo é inteiramente responsável pela validação ética, técnica e clínica das informações registradas no prontuário.
+                            <strong>{isPT ? 'Validação Ética Profissional:' : 'Validação Ética Profissional:'}</strong> {isPT ? 'Os rascunhos e sugestões gerados por inteligência artificial são apenas orientações e hipóteses clínicas de suporte. O psicólogo é inteiramente responsável pela validação ética, técnica e clínica das informações registadas no processo clínico.' : 'Os rascunhos e sugestões gerados por inteligência artificial são apenas orientações e hipóteses clínicas de suporte. O psicólogo é inteiramente responsável pela validação ética, técnica e clínica das informações registradas no prontuário.'}
                           </p>
                         </div>
 
@@ -10092,7 +11130,7 @@ Relato:
                           onClick={() => { setUploadCategory('prontuario'); setTimeout(() => fileInputRef.current?.click(), 0); }}
                           className="flex-1 sm:flex-initial bg-primary/20 text-primary px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-primary hover:text-white transition-all border border-primary/20 uppercase"
                         >
-                           + Prontuário
+                           {isPT ? '+ Processo Clínico' : '+ Prontuário'}
                         </button>
                         <button 
                           onClick={() => { setUploadCategory('anexo'); setTimeout(() => fileInputRef.current?.click(), 0); }}
@@ -10108,7 +11146,7 @@ Relato:
                       <div className="space-y-6">
                         <div className="flex items-center gap-2 pb-2 border-b border-white/5">
                           <FileText size={16} className="text-primary" />
-                          <h4 className="text-xs font-bold text-text-main uppercase tracking-widest">Prontuários</h4>
+                          <h4 className="text-xs font-bold text-text-main uppercase tracking-widest">{isPT ? 'Processos Clínicos' : 'Prontuários'}</h4>
                         </div>
                         
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -10119,7 +11157,7 @@ Relato:
 
                           {documents.filter(d => d.category === 'prontuario').length === 0 && (
                             <div className="col-span-2 py-10 text-center text-[10px] text-text-muted uppercase tracking-widest border border-dashed border-border-ui rounded-2xl opacity-50">
-                              Nenhum prontuário registrado
+                              {isPT ? 'Nenhum processo clínico registado' : 'Nenhum prontuário registrado'}
                             </div>
                           )}
                         </div>
@@ -10161,8 +11199,8 @@ Relato:
                         <Receipt size={20} />
                       </div>
                       <div>
-                        <h3 className="text-lg sm:text-xl font-bold text-text-main">Auxiliar de Reembolso</h3>
-                        <p className="text-xs text-text-muted mt-1">Gere relatórios de comparecimento e copie textos de descrição para o recibo do plano de saúde.</p>
+                        <h3 className="text-lg sm:text-xl font-bold text-text-main">{isPT ? 'Auxiliar de Reembolso & Seguros' : 'Auxiliar de Reembolso'}</h3>
+                        <p className="text-xs text-text-muted mt-1">{isPT ? 'Gere declarações de comparência e copie textos de descrição para o recibo ou seguradora de saúde.' : 'Gere relatórios de comparecimento e copie textos de descrição para o recibo do plano de saúde.'}</p>
                       </div>
                     </div>
 
@@ -10171,28 +11209,32 @@ Relato:
                       {/* Profissional */}
                       {(!profileSettings?.cpfCnpj || !profileSettings?.address || !profileSettings?.phone) && (
                         <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-2xl text-xs space-y-2">
-                          <p className="font-bold uppercase tracking-wider">⚠️ Dados do Profissional Incompletos</p>
+                          <p className="font-bold uppercase tracking-wider">{isPT ? '⚠️ Dados do Profissional Incompletos' : '⚠️ Dados do Profissional Incompletos'}</p>
                           <p className="text-[11px] text-yellow-600 dark:text-yellow-400">
-                            Para gerar o Relatório do Terapeuta oficial para reembolso, você precisa cadastrar seu **CPF/CNPJ, Endereço e Telefone** nas configurações de perfil.
+                            {isPT 
+                              ? 'Para gerar a Declaração oficial para reembolso/seguro, precisa de registar o seu NIF, Morada e Telemóvel nas definições de perfil.'
+                              : 'Para gerar o Relatório do Terapeuta oficial para reembolso, você precisa cadastrar seu **CPF/CNPJ, Endereço e Telefone** nas configurações de perfil.'}
                           </p>
                         </div>
                       )}
 
-                      {/* Paciente */}
-                      {!patient.cpf && (
+                      {/* Paciente / Utente */}
+                      {!(patient.nif || patient.cpf) && (
                         <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-2xl text-xs space-y-2">
-                          <p className="font-bold uppercase tracking-wider">⚠️ CPF do Paciente não Cadastrado</p>
+                          <p className="font-bold uppercase tracking-wider">{isPT ? '⚠️ NIF do Utente não Registado' : '⚠️ CPF do Paciente não Cadastrado'}</p>
                           <p className="text-[11px] text-yellow-600 dark:text-yellow-400">
-                            O CPF do paciente é obrigatório para reembolso. Vá na aba "Perfil" e adicione o CPF do paciente.
+                            {isPT 
+                              ? 'O NIF do utente é obrigatório para reembolso/seguro. Vá ao separador "Perfil" e adicione o NIF do utente.'
+                              : 'O CPF do paciente é obrigatório para reembolso. Vá na aba "Perfil" e adicione o CPF do paciente.'}
                           </p>
                         </div>
                       )}
                     </div>
 
-                    {/* Seleção de Sessões */}
+                    {/* Seleção de Sessões / Consultas */}
                     <div className="space-y-4">
                       <div className="flex items-center justify-between border-b border-white/5 pb-2">
-                        <h4 className="text-xs font-bold text-text-main uppercase tracking-widest">1. Selecione as Sessões Realizadas</h4>
+                        <h4 className="text-xs font-bold text-text-main uppercase tracking-widest">{isPT ? '1. Selecione as Consultas Realizadas' : '1. Selecione as Sessões Realizadas'}</h4>
                         <div className="flex gap-2 text-[10px]">
                           <button 
                             onClick={() => {
@@ -10215,7 +11257,7 @@ Relato:
 
                       {patientSessions.filter(s => s.status !== 'Cancelada').length === 0 ? (
                         <div className="py-10 text-center text-xs text-text-muted border border-dashed border-border-ui rounded-2xl">
-                          Nenhum agendamento não-cancelado encontrado para este paciente.
+                          {isPT ? 'Nenhum agendamento não-cancelado encontrado para este utente.' : 'Nenhum agendamento não-cancelado encontrado para este paciente.'}
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
@@ -10249,7 +11291,7 @@ Relato:
                                   className="rounded border-border-ui text-primary focus:ring-primary"
                                 />
                                 <div className="text-left flex-1 min-w-0">
-                                  <p className="text-xs font-bold truncate">Sessão {patientSessions.filter(s => s.status !== 'Cancelada').length - index}</p>
+                                  <p className="text-xs font-bold truncate">{isPT ? 'Consulta ' : 'Sessão '}{patientSessions.filter(s => s.status !== 'Cancelada').length - index}</p>
                                   <p className="text-[10px] text-text-muted mt-0.5">{formattedDate} às {session.time} • {session.type}</p>
                                 </div>
                                 <div className="text-right">
@@ -10270,8 +11312,8 @@ Relato:
                       <div className="space-y-6 pt-4 border-t border-white/5 animate-in fade-in slide-in-from-bottom-2 duration-300">
                         {/* Ação 1: Texto de Descrição do Recibo */}
                         <div className="space-y-2">
-                          <h4 className="text-xs font-bold text-text-main uppercase tracking-widest">2. Descrição para o seu Recibo (Copiar)</h4>
-                          <p className="text-[10px] text-text-muted">Use este texto no campo de descrição dos serviços prestados do seu recibo externo (ex: Receita Federal, Nota Fiscal, etc.):</p>
+                          <h4 className="text-xs font-bold text-text-main uppercase tracking-widest">{isPT ? '2. Descrição para o seu Recibo (Copiar)' : '2. Descrição para o seu Recibo (Copiar)'}</h4>
+                          <p className="text-[10px] text-text-muted">{isPT ? 'Use este texto no campo de descrição dos serviços prestados do seu recibo (ex: Autoridade Tributária / Fatura-Recibo Verde, etc.):' : 'Use este texto no campo de descrição dos serviços prestados do seu recibo externo (ex: Receita Federal, Nota Fiscal, etc.):'}</p>
                           <div className="relative mt-2">
                             <textarea 
                               readOnly 
@@ -10294,15 +11336,15 @@ Relato:
 
                         {/* Ação 2: Relatório do Terapeuta PDF */}
                         <div className="space-y-2 pt-2 text-left">
-                          <h4 className="text-xs font-bold text-text-main uppercase tracking-widest">3. Relatório do Terapeuta (PDF)</h4>
-                          <p className="text-[10px] text-text-muted">Gere o documento oficial exigido pelo plano contendo a declaração de acompanhamento e o cronograma de sessões assinados digitalmente.</p>
+                          <h4 className="text-xs font-bold text-text-main uppercase tracking-widest">{isPT ? '3. Declaração do Terapeuta (PDF)' : '3. Relatório do Terapeuta (PDF)'}</h4>
+                          <p className="text-[10px] text-text-muted">{isPT ? 'Gere o documento oficial exigido pela seguradora/subsistema de saúde contendo a declaração de acompanhamento e o cronograma de consultas assinados digitalmente.' : 'Gere o documento oficial exigido pelo plano contendo a declaração de acompanhamento e o cronograma de sessões assinados digitalmente.'}</p>
                           
                           <button
                             onClick={handleGenerateTherapistReportPDF}
                             className="bg-primary text-white px-6 py-3.5 rounded-2xl text-xs font-bold uppercase hover:opacity-90 transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/20 cursor-pointer"
                           >
                             <FileDown size={16} />
-                            <span>Gerar Relatório do Terapeuta</span>
+                            <span>{isPT ? 'Gerar Declaração do Terapeuta' : 'Gerar Relatório do Terapeuta'}</span>
                           </button>
                         </div>
                       </div>
@@ -10939,11 +11981,11 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
             <select
               value={selectedPatientId}
               onChange={(e) => setSelectedPatientId(e.target.value)}
-              className="text-xs font-bold bg-surface-muted border border-border-ui rounded-xl px-4 py-2 text-text-main outline-none focus:border-primary appearance-none cursor-pointer"
+              className="text-xs font-bold bg-card border border-border-ui rounded-xl px-4 py-2 text-text-main outline-none focus:border-primary cursor-pointer shadow-sm"
             >
-              <option value="all">TODOS OS PACIENTES</option>
+              <option value="all" className="bg-card text-text-main font-bold">TODOS OS PACIENTES</option>
               {patients.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
+                <option key={p.id} value={p.id} className="bg-card text-text-main">{p.name}</option>
               ))}
             </select>
           </div>
@@ -11283,7 +12325,8 @@ function CalendarView({
   onConnectGoogleCalendar,
   isScheduleAutonomyDisabled = false,
   onOpenWhatsAppReminders,
-  isWhatsAppAdmin = false
+  isWhatsAppAdmin = false,
+  isPT: isPTProp
 }: { 
   sessions: any[], 
   patients: any[], 
@@ -11299,8 +12342,14 @@ function CalendarView({
   onConnectGoogleCalendar?: () => void,
   isScheduleAutonomyDisabled?: boolean,
   onOpenWhatsAppReminders?: () => void,
-  isWhatsAppAdmin?: boolean
+  isWhatsAppAdmin?: boolean,
+  isPT?: boolean
 }) {
+  const isPT = isPTProp ?? (typeof window !== 'undefined' && (
+    localStorage.getItem('simplepsi_country') === 'PT' ||
+    localStorage.getItem('prof_country') === 'PT' ||
+    window.location.pathname.startsWith('/pt')
+  ));
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewModeState] = useState<'day' | 'week' | 'month'>(() => {
     return (localStorage.getItem('simplepsi_calendar_view') as any) || 'week';
@@ -11520,7 +12569,7 @@ function CalendarView({
                 {isGoogleCalendarEnabled ? 'Reconectar Google Agenda' : 'Conectar Google Agenda'}
               </button>
             )}
-            {isWhatsAppAdmin && onOpenWhatsAppReminders && (
+            {onOpenWhatsAppReminders && (
               <button
                 type="button"
                 onClick={onOpenWhatsAppReminders}
@@ -12387,6 +13436,7 @@ function CalendarView({
             }} 
             patients={patients} 
             initialData={editingSession}
+            isPT={isPT}
             onSave={(data) => {
               onAddSession({
                 ...data,
@@ -12403,12 +13453,18 @@ function CalendarView({
   );
 }
 
-function ScheduleModal({ onClose, patients, onSave, initialData }: { 
+function ScheduleModal({ onClose, patients, onSave, initialData, isPT: isPTProp }: { 
   onClose: () => void, 
   patients: any[], 
   onSave: (data: any) => void,
-  initialData?: any
+  initialData?: any,
+  isPT?: boolean
 }) {
+  const isPT = isPTProp ?? (typeof window !== 'undefined' && (
+    localStorage.getItem('simplepsi_country') === 'PT' ||
+    localStorage.getItem('prof_country') === 'PT' ||
+    window.location.pathname.startsWith('/pt')
+  ));
   const [editScope, setEditScope] = useState<'single' | 'all'>('single');
   const [formData, setFormData] = useState({
     id: initialData?.id || null,
@@ -12448,7 +13504,7 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
         <div className="p-8">
           <div className="flex items-center justify-between mb-8">
             <h3 className="text-xl font-bold text-text-main">
-              {initialData?.status === 'Recorrente' ? 'Ajustar Horário' : (initialData?.id ? 'Editar Sessão' : 'Agendar Sessão')}
+              {initialData?.status === 'Recorrente' ? 'Ajustar Horário' : (initialData?.id ? (isPT ? 'Editar Consulta' : 'Editar Sessão') : (isPT ? 'Agendar Consulta' : 'Agendar Sessão'))}
             </h3>
             <button onClick={onClose} className="p-2 rounded-xl hover:bg-surface-muted transition-colors">
                <Plus className="rotate-45" size={20} />
@@ -12458,7 +13514,7 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
           <div className="space-y-6">
             {!initialData?.id ? (
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Paciente ou Nome (Triagem)</label>
+                <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">{isPT ? 'Utente ou Nome (Triagem)' : 'Paciente ou Nome (Triagem)'}</label>
                 <input 
                   value={formData.triageName}
                   onChange={(e) => {
@@ -12467,7 +13523,7 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
                     setFormData({...formData, triageName: val, patientId: matchedPatient ? matchedPatient.id : ''});
                   }}
                   list="patients-list"
-                  placeholder="Selecione um paciente ou digite um novo nome"
+                  placeholder={isPT ? 'Selecione um utente ou digite um novo nome' : 'Selecione um paciente ou digite um novo nome'}
                   className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary"
                 />
                 <datalist id="patients-list">
@@ -12478,7 +13534,7 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
               </div>
             ) : (
               <div className="p-4 rounded-2xl bg-primary/5 border border-primary/20">
-                <p className="text-[10px] text-text-muted uppercase tracking-widest font-bold">Ajustando sessão de:</p>
+                <p className="text-[10px] text-text-muted uppercase tracking-widest font-bold">{isPT ? 'Ajustando consulta de:' : 'Ajustando sessão de:'}</p>
                 <p className="text-sm font-bold text-text-main mt-1 uppercase">{formData.triageName}</p>
               </div>
             )}
@@ -12518,10 +13574,10 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
               </div>
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Valor da Sessão (R$)</label>
+              <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">{isPT ? 'Valor da Consulta (€)' : 'Valor da Sessão (R$)'}</label>
               <input 
                 type="number"
-                placeholder="Ex: 150"
+                placeholder={isPT ? 'Ex: 50' : 'Ex: 150'}
                 value={formData.amount}
                 onChange={(e) => setFormData({...formData, amount: e.target.value})}
                 className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary font-mono"
@@ -12532,7 +13588,7 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
-                  Status da Sessão
+                  {isPT ? 'Estado da Consulta' : 'Status da Sessão'}
                 </label>
                 {formData.status === 'Desmarcou' && (
                   <span className="text-[9px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20 uppercase tracking-wider">
@@ -12555,7 +13611,7 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
                       ? "bg-primary text-white border-primary shadow-sm shadow-primary/20"
                       : "bg-surface-muted text-text-muted border-border-ui hover:border-primary/40 hover:text-text-main"
                   )}
-                  title="Sessão ativa e normal na agenda"
+                  title={isPT ? 'Consulta ativa e normal na agenda' : 'Sessão ativa e normal na agenda'}
                 >
                   <Clock size={13} className={formData.status === 'Agendada' ? "text-white" : "text-primary"} />
                   <span>Agendada (Ativa)</span>
@@ -12569,7 +13625,7 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
                       ? "bg-emerald-500 text-white border-emerald-500 shadow-sm shadow-emerald-500/20 font-extrabold"
                       : "bg-surface-muted text-text-muted border-border-ui hover:border-emerald-500/40 hover:text-text-main"
                   )}
-                  title="Presença confirmada pelo paciente"
+                  title={isPT ? 'Presença confirmada pelo utente' : 'Presença confirmada pelo paciente'}
                 >
                   <Check size={13} className={formData.status === 'Confirmada' ? "text-white" : "text-emerald-400"} />
                   <span>Confirmada</span>
@@ -12583,7 +13639,7 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
                       ? "bg-amber-500 text-black border-amber-500 shadow-sm shadow-amber-500/20 font-extrabold"
                       : "bg-surface-muted text-text-muted border-border-ui hover:border-amber-500/40 hover:text-text-main"
                   )}
-                  title="Paciente desmarcou"
+                  title={isPT ? 'Utente desmarcou' : 'Paciente desmarcou'}
                 >
                   <AlertTriangle size={13} className={formData.status === 'Desmarcou' ? "text-black" : "text-amber-400"} />
                   <span>Desmarcou</span>
@@ -12591,7 +13647,7 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
               </div>
               {formData.status === 'Desmarcou' && (
                 <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 flex items-center justify-between gap-2">
-                  <span>Sessão desmarcada. Para remarcar, altere a data acima ou clique em <strong>Agendada (Ativa)</strong>.</span>
+                  <span>{isPT ? 'Consulta desmarcada. Para remarcar, altere a data acima ou clique em ' : 'Sessão desmarcada. Para remarcar, altere a data acima ou clique em '}<strong>Agendada (Ativa)</strong>.</span>
                   <button
                     type="button"
                     onClick={() => setFormData(prev => ({ ...prev, status: 'Agendada' }))}
@@ -12605,7 +13661,7 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
             
             {initialData && initialData.status === 'Recorrente' && (
               <div className="space-y-3 p-4 rounded-2xl bg-orange-500/10 border border-orange-500/20">
-                <label className="text-[10px] font-bold text-orange-500 uppercase tracking-widest pl-1">Alterar Recorrência</label>
+                <label className="text-[10px] font-bold text-orange-500 uppercase tracking-widest pl-1">{isPT ? 'Alterar Periodicidade' : 'Alterar Recorrência'}</label>
                 <div className="flex gap-2">
                    <button 
                     type="button"
@@ -12637,7 +13693,7 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
 
             {!initialData && (
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Recorrência</label>
+                <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">{isPT ? 'Periodicidade' : 'Recorrência'}</label>
                 <div className="grid grid-cols-2 gap-2">
                    {[
                      { label: 'Nenhuma (Avaliação)', value: 'none' },
@@ -12665,7 +13721,7 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
 
             {!initialData && (
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Tipo de Sessão</label>
+                <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">{isPT ? 'Tipo de Consulta' : 'Tipo de Sessão'}</label>
                 <div className="flex gap-2">
                    {[
                      { label: 'Presencial', value: 'Presencial' },
@@ -12701,7 +13757,7 @@ function ScheduleModal({ onClose, patients, onSave, initialData }: {
                 type="button"
                 onClick={() => {
                   if (!formData.patientId && !formData.triageName.trim()) {
-                    return alert('Por favor, selecione um paciente ou digite um nome para triagem.');
+                    return alert(isPT ? 'Por favor, selecione um utente ou digite um nome para triagem.' : 'Por favor, selecione um paciente ou digite um nome para triagem.');
                   }
                   onSave({ 
                     ...formData, 
@@ -12731,7 +13787,12 @@ function ProfileSettingsModal({
   hasAcceptedExtensionTerms = false,
   onOpenExtensionModal
 }: any) {
-  const [formData, setFormData] = useState(initialData);
+  const isMasterAdmin = auth.currentUser?.email?.toLowerCase().trim() === 'wellcoutinho99@gmail.com' || auth.currentUser?.email?.toLowerCase().trim() === 'juniorcoutinho58@gmail.com';
+  const initialCountry = isMasterAdmin ? 'BR' : (initialData?.country || 'BR');
+  const [formData, setFormData] = useState({
+    ...initialData,
+    country: initialCountry
+  });
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [adminTickets, setAdminTickets] = useState<any[]>([]);
   const [selectedTicket, setSelectedTicket] = useState<any | null>(null);
@@ -12777,130 +13838,195 @@ function ProfileSettingsModal({
         className="glass-card w-full max-w-md rounded-[32px] overflow-hidden shadow-2xl p-8"
       >
         <div className="flex items-center justify-between mb-8">
-          <h3 className="text-xl font-bold text-text-main">Configurações do Perfil</h3>
+          <h3 className="text-xl font-bold text-text-main">
+            {formData.country === 'PT' ? 'Definições do Perfil' : 'Configurações do Perfil'}
+          </h3>
           <button onClick={onClose} className="p-2 rounded-xl hover:bg-surface-muted transition-colors">
             <Plus className="rotate-45" size={20} />
           </button>
         </div>
 
         <div className="space-y-4 max-h-[50vh] overflow-y-auto pr-1 custom-scrollbar">
+          {/* País / Região de Atuação */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">País de Atuação Clínica</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setFormData({ ...formData, country: 'BR' })}
+                className={`py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  (formData.country || 'BR') === 'BR'
+                    ? 'bg-primary text-white border-primary shadow-sm'
+                    : 'bg-surface-muted text-text-muted border-border-ui hover:bg-surface-muted/80'
+                }`}
+              >
+                <span>🇧🇷 Brasil (CFP)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setFormData({ ...formData, country: 'PT' })}
+                className={`py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  formData.country === 'PT'
+                    ? 'bg-primary text-white border-primary shadow-sm'
+                    : 'bg-surface-muted text-text-muted border-border-ui hover:bg-surface-muted/80'
+                }`}
+              >
+                <span>🇵🇹 Portugal (OPP)</span>
+              </button>
+            </div>
+          </div>
+
           <div className="space-y-2">
             <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Nome do Profissional</label>
             <input 
               value={formData.name} 
               onChange={e => setFormData({...formData, name: e.target.value})} 
-              placeholder="Ex: Dr. João Silva"
+              placeholder={formData.country === 'PT' ? "Ex: Dra. Sofia Lourenço" : "Ex: Dr. João Silva"}
               className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
             />
           </div>
+
+          {/* Regional Identification & Payments */}
+          {formData.country === 'PT' ? (
+            <>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Cédula Profissional OPP</label>
+                <input 
+                  value={formData.opp || formData.crp || ''} 
+                  onChange={e => setFormData({...formData, opp: e.target.value, crp: e.target.value})} 
+                  placeholder="Ex: Cédula OPP 24192"
+                  className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">NIF do Profissional (Declarações / Faturação)</label>
+                <input 
+                  value={formData.nif || formData.cpfCnpj || ''} 
+                  onChange={e => setFormData({...formData, nif: e.target.value, cpfCnpj: e.target.value})} 
+                  placeholder="Ex: 123456789 (9 dígitos)"
+                  className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Contacto MB WAY (Recebimentos)</label>
+                  <input 
+                    value={formData.mbwayPhone || formData.pixKey || ''} 
+                    onChange={e => setFormData({...formData, mbwayPhone: e.target.value, pixKey: e.target.value})} 
+                    placeholder="Ex: 912 345 678"
+                    className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">IBAN SEPA (Transferências)</label>
+                  <input 
+                    value={formData.iban || ''} 
+                    onChange={e => setFormData({...formData, iban: e.target.value})} 
+                    placeholder="PT50 0000 0000 0000 0000 0000 0"
+                    className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary font-mono text-xs" 
+                  />
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Número do CRP</label>
+                <input 
+                  value={formData.crp || ''} 
+                  onChange={e => setFormData({...formData, crp: e.target.value})} 
+                  placeholder="Ex: CRP 06/12345"
+                  className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Tipo de Chave Pix</label>
+                  <select
+                    value={formData.pixType || ''}
+                    onChange={e => setFormData({...formData, pixType: e.target.value})}
+                    className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary cursor-pointer appearance-none"
+                    style={{
+                      backgroundImage: `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%23888' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E")`,
+                      backgroundPosition: 'right 1rem center',
+                      backgroundSize: '1.25rem',
+                      backgroundRepeat: 'no-repeat',
+                      paddingRight: '2.5rem'
+                    }}
+                  >
+                    <option value="" className="bg-background-dark">Não configurado</option>
+                    <option value="CPF" className="bg-background-dark">CPF</option>
+                    <option value="CNPJ" className="bg-background-dark">CNPJ</option>
+                    <option value="E-mail" className="bg-background-dark">E-mail</option>
+                    <option value="Celular" className="bg-background-dark">Celular</option>
+                    <option value="Chave Aleatória" className="bg-background-dark">Chave Aleatória</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Chave Pix</label>
+                  <input 
+                    value={formData.pixKey || ''} 
+                    onChange={e => setFormData({...formData, pixKey: e.target.value})} 
+                    placeholder="Insira a chave"
+                    className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Favorecido Pix (Opcional)</label>
+                <input 
+                  value={formData.pixName || ''} 
+                  onChange={e => setFormData({...formData, pixName: e.target.value})} 
+                  placeholder="Ex: Nome do beneficiário"
+                  className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">CPF ou CNPJ (Reembolso)</label>
+                <input 
+                  value={formData.cpfCnpj || ''} 
+                  onChange={e => setFormData({...formData, cpfCnpj: e.target.value})} 
+                  placeholder="Ex: 000.000.000-00"
+                  className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
+                />
+              </div>
+            </>
+          )}
           <div className="space-y-2">
-            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Número do CRP</label>
-            <input 
-              value={formData.crp} 
-              onChange={e => setFormData({...formData, crp: e.target.value})} 
-              placeholder="Ex: CRP 06/12345"
-              className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Tipo de Chave Pix</label>
-              <select
-                value={formData.pixType || ''}
-                onChange={e => setFormData({...formData, pixType: e.target.value})}
-                className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary cursor-pointer appearance-none"
-                style={{
-                  backgroundImage: `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%23888' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E")`,
-                  backgroundPosition: 'right 1rem center',
-                  backgroundSize: '1.25rem',
-                  backgroundRepeat: 'no-repeat',
-                  paddingRight: '2.5rem'
-                }}
-              >
-                <option value="" className="bg-background-dark">Não configurado</option>
-                <option value="CPF" className="bg-background-dark">CPF</option>
-                <option value="CNPJ" className="bg-background-dark">CNPJ</option>
-                <option value="E-mail" className="bg-background-dark">E-mail</option>
-                <option value="Celular" className="bg-background-dark">Celular</option>
-                <option value="Chave Aleatória" className="bg-background-dark">Chave Aleatória</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Chave Pix</label>
-              <input 
-                value={formData.pixKey || ''} 
-                onChange={e => setFormData({...formData, pixKey: e.target.value})} 
-                placeholder="Insira a chave"
-                className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
-              />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Favorecido Pix (Opcional)</label>
-            <input 
-              value={formData.pixName || ''} 
-              onChange={e => setFormData({...formData, pixName: e.target.value})} 
-              placeholder="Ex: Nome do beneficiário"
-              className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Abordagem Clínica Principal</label>
-            <select
-              value={formData.clinicalApproach || 'tcc'}
-              onChange={e => setFormData({...formData, clinicalApproach: e.target.value})}
-              className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary cursor-pointer appearance-none"
-              style={{
-                backgroundImage: `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%23888' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E")`,
-                backgroundPosition: 'right 1rem center',
-                backgroundSize: '1.25rem',
-                backgroundRepeat: 'no-repeat',
-                paddingRight: '2.5rem'
-              }}
-            >
-              <option value="tcc" className="bg-background-dark">TCC (Terapia Cognitivo-Comportamental)</option>
-              <option value="psicanalise" className="bg-background-dark">Psicanálise</option>
-              <option value="gestalt" className="bg-background-dark">Gestalt-Terapia</option>
-              <option value="humanista" className="bg-background-dark">Existencial / ACP (Centrada na Pessoa)</option>
-              <option value="behaviorismo" className="bg-background-dark">Análise do Comportamento (Behaviorismo)</option>
-              <option value="junguiana" className="bg-background-dark">Psicologia Analítica (Junguiana)</option>
-              <option value="act" className="bg-background-dark">ACT (Terapia de Aceitação e Compromisso)</option>
-              <option value="dbt" className="bg-background-dark">DBT (Terapia Dialética Comportamental)</option>
-            </select>
-          </div>
-          <div className="space-y-2">
-            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">CPF ou CNPJ (Reembolso)</label>
-            <input 
-              value={formData.cpfCnpj || ''} 
-              onChange={e => setFormData({...formData, cpfCnpj: e.target.value})} 
-              placeholder="Ex: 000.000.000-00"
-              className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Endereço do Consultório (Reembolso)</label>
+            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+              {formData.country === 'PT' ? 'Morada do Consultório (Seguros de Saúde / ADSE)' : 'Endereço do Consultório (Reembolso)'}
+            </label>
             <input 
               value={formData.address || ''} 
               onChange={e => setFormData({...formData, address: e.target.value})} 
-              placeholder="Ex: Av. Paulista, 1000 - Sala 50"
+              placeholder={formData.country === 'PT' ? "Ex: Av. da Liberdade, 100 - Lisboa" : "Ex: Av. Paulista, 1000 - Sala 50"}
               className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
             />
           </div>
           <div className="space-y-2">
-            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Telefone Comercial (Reembolso)</label>
+            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+              {formData.country === 'PT' ? 'Telemóvel / Telefone de Contacto' : 'Telefone Comercial (Reembolso)'}
+            </label>
             <input 
               value={formData.phone || ''} 
               onChange={e => setFormData({...formData, phone: e.target.value})} 
-              placeholder="Ex: (11) 99999-9999"
+              placeholder={formData.country === 'PT' ? "Ex: +351 912 345 678" : "Ex: (11) 99999-9999"}
               className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
             />
           </div>
           <div className="space-y-2">
-            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Nome para Assinatura em Relatórios</label>
+            <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">
+              {formData.country === 'PT' ? 'Nome para Assinatura nos Processos Clínicos' : 'Nome para Assinatura em Relatórios'}
+            </label>
             <input 
               value={formData.signatureText || ''} 
               onChange={e => setFormData({...formData, signatureText: e.target.value})} 
-              placeholder="Ex: João da Silva - Psicólogo Clínico"
+              placeholder={formData.country === 'PT' ? "Ex: Dra. Sofia Lourenço - Psicóloga Clínica" : "Ex: João da Silva - Psicólogo Clínico"}
               className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary" 
             />
           </div>
@@ -12985,7 +14111,9 @@ function ProfileSettingsModal({
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs font-bold text-text-main uppercase tracking-tight">Extensão Oficial Google Meet</p>
-                <p className="text-[10px] text-text-muted">Transcrição e evolução clínica com IA.</p>
+                <p className="text-[10px] text-text-muted">
+                  {formData.country === 'PT' ? 'Transcrição e processo clínico com IA.' : 'Transcrição e evolução clínica com IA.'}
+                </p>
               </div>
               <div className="flex items-center gap-2">
                 <div className={`w-2 h-2 rounded-full ${hasAcceptedExtensionTerms ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
@@ -13003,18 +14131,20 @@ function ProfileSettingsModal({
                   className="flex-1 px-3 py-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Chrome size={13} />
-                  {hasAcceptedExtensionTerms ? 'Gerenciar & Reinstalar' : 'Ativar Extensão'}
+                  {hasAcceptedExtensionTerms 
+                    ? (formData.country === 'PT' ? 'Gerir & Reinstalar' : 'Gerenciar & Reinstalar') 
+                    : (formData.country === 'PT' ? 'Ativar Extensão' : 'Ativar Extensão')}
                 </button>
                 <button
                   type="button"
                   onClick={() => {
-                    navigator.clipboard.writeText(TCLE_TEMPLATE_TEXT);
-                    alert("Modelo de termo TCLE copiado com sucesso!");
+                    navigator.clipboard.writeText(formData.country === 'PT' ? TCLE_TEMPLATE_TEXT_PT : TCLE_TEMPLATE_TEXT);
+                    alert(formData.country === 'PT' ? "Modelo de termo de consentimento informado copiado com sucesso!" : "Modelo de termo TCLE copiado com sucesso!");
                   }}
                   className="px-3 py-2 bg-surface-muted hover:bg-border-ui text-text-muted hover:text-text-main border border-border-ui rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Copy size={13} />
-                  Copiar Termo TCLE
+                  {formData.country === 'PT' ? 'Copiar Consentimento' : 'Copiar Termo TCLE'}
                 </button>
               </div>
               <p className="text-[9.5px] text-text-muted leading-relaxed">
@@ -13040,7 +14170,7 @@ function ProfileSettingsModal({
           onClick={() => onSave(formData)} 
           className="w-full mt-8 bg-primary text-white py-4 rounded-2xl font-bold hover:opacity-90 transition-opacity font-mono uppercase text-xs"
         >
-          Salvar Configurações
+          {formData.country === 'PT' ? 'Guardar Definições' : 'Salvar Configurações'}
         </button>
       </motion.div>
 
@@ -13235,10 +14365,17 @@ function CustomTooltip({
   const mutedColor = isLight ? 'text-slate-500' : 'text-slate-400';
   const borderColor = isLight ? 'border-slate-200' : 'border-white/10';
   
+  const isPT = typeof window !== 'undefined' && (
+    localStorage.getItem('simplepsi_country') === 'PT' ||
+    localStorage.getItem('prof_country') === 'PT' ||
+    window.location.pathname.startsWith('/pt') ||
+    window.location.search.includes('country=pt')
+  );
+
   const getButtonText = () => {
-    if (index === 0) return 'Começar o Tour 🚀';
+    if (index === 0) return isPT ? 'Iniciar Visita 🚀' : 'Começar o Tour 🚀';
     if (index === size - 1) return 'Concluir ✨';
-    return 'Avançar ➡️';
+    return isPT ? 'Seguinte ➡️' : 'Avançar ➡️';
   };
 
   return (
@@ -13263,7 +14400,7 @@ function CustomTooltip({
             {...skipProps}
             className="text-xs text-text-muted hover:text-text-main transition-colors uppercase tracking-wider font-bold"
           >
-            Pular
+            {isPT ? 'Saltar' : 'Pular'}
           </button>
         )}
       </div>
@@ -13288,7 +14425,7 @@ function CustomTooltip({
             {...backProps}
             className="px-4 py-2 text-xs font-bold text-text-muted hover:text-text-main transition-colors uppercase tracking-wider flex items-center gap-1.5"
           >
-            <ChevronLeft size={14} /> Voltar
+            <ChevronLeft size={14} /> {isPT ? 'Anterior' : 'Voltar'}
           </button>
         ) : (
           <div />

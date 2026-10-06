@@ -85,8 +85,16 @@ export default function AdminPanel() {
     
     return profiles.map(p => {
       const email = p.email ? p.email.toLowerCase().trim() : '';
-      const isPaid = authorizedEmails.includes(email) || p.isTrial === false;
+      const sub = p.subscription;
+      const isStripeActive = sub?.status === 'active';
+      const isLifetime = authorizedEmails.includes(email) || sub?.plan === 'lifetime' || (p.isTrial === false && !sub?.plan);
+      const isPaid = isLifetime || isStripeActive;
       
+      let planDisplay = 'Start (Grátis)';
+      if (isLifetime) planDisplay = 'Vitalício';
+      else if (sub?.plan === 'ilimitado') planDisplay = 'Ilimitado (R$ 79,90)';
+      else if (sub?.plan === 'consultorio') planDisplay = 'Consultório (R$ 49,90)';
+
       let remainingDays = 0;
       let status: 'paid' | 'trial' | 'expired' = 'trial';
 
@@ -112,31 +120,39 @@ export default function AdminPanel() {
         ...p,
         email,
         isPaid,
+        planDisplay,
         status,
         remainingDays
       };
     });
   }, [profiles, authorizedEmails]);
 
-  // Handle Action: Make Paid (Vitalício)
-  const handleMakePaid = async (userId: string, email: string) => {
+  // Handle Action: Make Paid (Vitalício ou Plano Selecionado)
+  const handleMakePaid = async (userId: string, email: string, plan: 'lifetime' | 'consultorio' | 'ilimitado' = 'lifetime') => {
     if (!email) {
       alert("Erro: O usuário não possui e-mail cadastrado.");
       return;
     }
-    const confirm = window.confirm(`Deseja liberar acesso vitalício para o e-mail: ${email}?`);
+    const confirm = window.confirm(`Deseja liberar o plano ${plan} para o e-mail: ${email}?`);
     if (!confirm) return;
 
     try {
       // 1. Add to authorized_emails collection
       const emailDocRef = doc(db, 'authorized_emails', email.toLowerCase().trim());
-      await setDoc(emailDocRef, { active: true, createdAt: new Date().toISOString() });
+      await setDoc(emailDocRef, { active: true, plan, createdAt: new Date().toISOString() });
 
       // 2. Update profiles document
       const profileRef = doc(db, 'profiles', userId);
-      await updateDoc(profileRef, { isTrial: false });
+      await updateDoc(profileRef, { 
+        isTrial: false,
+        subscription: {
+          plan,
+          status: 'active',
+          updatedAt: new Date().toISOString()
+        }
+      });
 
-      alert("Acesso vitalício concedido com sucesso!");
+      alert(`Plano ${plan} concedido com sucesso!`);
     } catch (err: any) {
       console.error(err);
       alert("Erro ao conceder acesso: " + (err.message || String(err)));
@@ -671,7 +687,7 @@ export default function AdminPanel() {
                           {u.status === 'paid' && (
                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#5F7D5C]/15 text-[#5F7D5C]">
                               <Unlock size={10} />
-                              <span>Vitalício</span>
+                              <span>{u.planDisplay}</span>
                             </span>
                           )}
                           
@@ -683,9 +699,9 @@ export default function AdminPanel() {
                           )}
 
                           {u.status === 'expired' && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-500/10 text-red-500">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-500/10 text-slate-600">
                               <Lock size={10} />
-                              <span>Expirado</span>
+                              <span>{u.planDisplay}</span>
                             </span>
                           )}
                         </td>
@@ -695,15 +711,22 @@ export default function AdminPanel() {
                           {u.status !== 'paid' ? (
                             <>
                               <button
-                                onClick={() => handleMakePaid(u.id, u.email)}
-                                className="px-3 py-1.5 bg-[#5F7D5C] hover:bg-[#4E674C] text-white text-xs font-bold rounded-lg transition-colors flex-inline items-center gap-1.5"
+                                onClick={() => handleMakePaid(u.id, u.email, 'ilimitado')}
+                                className="px-2.5 py-1.5 bg-[#5F7D5C] hover:bg-[#4E674C] text-white text-xs font-bold rounded-lg transition-colors flex-inline items-center gap-1"
                               >
-                                Liberar Vitalício
+                                + Ilimitado
+                              </button>
+
+                              <button
+                                onClick={() => handleMakePaid(u.id, u.email, 'consultorio')}
+                                className="px-2.5 py-1.5 bg-[#5F7D5C]/20 hover:bg-[#5F7D5C]/30 text-[#5F7D5C] text-xs font-bold rounded-lg transition-colors flex-inline items-center gap-1"
+                              >
+                                + Consultório
                               </button>
                               
                               <button
                                 onClick={() => handleResetTrial(u.id, u.email)}
-                                className="px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 text-xs font-bold rounded-lg transition-colors flex-inline items-center gap-1.5"
+                                className="px-2.5 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 text-xs font-bold rounded-lg transition-colors flex-inline items-center gap-1"
                               >
                                 +7 Dias Teste
                               </button>

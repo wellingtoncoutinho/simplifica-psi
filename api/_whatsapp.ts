@@ -19,10 +19,18 @@ export function formatWhatsAppPhone(phone: string): string {
   const digits = phone.replace(/\D/g, '');
   if (!digits) return '';
 
+  // Portugal (+351): 9 digits (starts with 9) or already has 351 (12 digits)
+  if (digits.startsWith('351') && digits.length === 12) {
+    return digits;
+  }
+  if (digits.length === 9 && digits.startsWith('9')) {
+    return `351${digits}`;
+  }
+
+  // Brazil (+55): 10 or 11 digits
   if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
     return digits;
   }
-
   if (digits.length === 10 || digits.length === 11) {
     return `55${digits}`;
   }
@@ -94,15 +102,21 @@ export async function sendD1ConfirmationReminder(
   const formattedTime = session.time || '10:00';
   const psyName = psychologistName || session.psychologistName || 'Wellington Coutinho';
 
+  const isPT = formattedPhone.startsWith('351');
+  const d1TemplateName = isPT && process.env.WHATSAPP_TEMPLATE_D1_PT 
+    ? process.env.WHATSAPP_TEMPLATE_D1_PT 
+    : 'lembrete_sessao_confirmacao';
+  const d1LangCode = isPT ? 'pt_PT' : 'pt_BR';
+
   const payload = {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
     to: formattedPhone,
     type: 'template',
     template: {
-      name: 'lembrete_sessao_confirmacao',
+      name: d1TemplateName,
       language: {
-        code: 'pt_BR',
+        code: d1LangCode,
       },
       components: [
         {
@@ -201,15 +215,21 @@ export async function sendD0StartReminder(
     meetingInfo = 'Sessão online (seu psicólogo enviará o link da chamada em instantes).';
   }
 
+  const isPT = formattedPhone.startsWith('351');
+  const d0TemplateName = isPT && process.env.WHATSAPP_TEMPLATE_D0_PT 
+    ? process.env.WHATSAPP_TEMPLATE_D0_PT 
+    : 'lembrete_sessao_inicio';
+  const d0LangCode = isPT ? 'pt_PT' : 'pt_BR';
+
   const payload = {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
     to: formattedPhone,
     type: 'template',
     template: {
-      name: 'lembrete_sessao_inicio',
+      name: d0TemplateName,
       language: {
-        code: 'pt_BR',
+        code: d0LangCode,
       },
       components: [
         {
@@ -254,6 +274,7 @@ export async function sendWhatsAppCancellationAlert(
 ) {
   const cfg = config || getWhatsAppConfig();
   const formattedPhone = formatWhatsAppPhone(to);
+  const isPT = formattedPhone.startsWith('351');
 
   const payload = {
     messaging_product: 'whatsapp',
@@ -263,7 +284,7 @@ export async function sendWhatsAppCancellationAlert(
     template: {
       name: 'notificacao_cancelamento_psi',
       language: {
-        code: 'pt_BR',
+        code: isPT ? 'pt_PT' : 'pt_BR',
       },
       components: [
         {

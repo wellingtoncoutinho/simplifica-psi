@@ -24,32 +24,9 @@ function isContextValid() {
 let lastCheckedPatientId = null;
 
 function checkPendingTranscriptions() {
-  if (!isContextValid()) return;
-  const activePatientEl = document.getElementById("simplepsi-active-patient");
-  const textarea = document.getElementById("transcription-textarea");
-
-  if (!activePatientEl || !textarea) {
-    removeImportBanner();
-    lastCheckedPatientId = null;
-    return;
-  }
-
-  const patientId = activePatientEl.getAttribute("data-id");
-  const patientName = activePatientEl.getAttribute("data-name") || "Paciente";
-
-  if (patientId === lastCheckedPatientId) return;
-  lastCheckedPatientId = patientId;
-
-  // Busca no chrome.storage local se há transcrição gravada para este paciente específico
-  chrome.storage.local.get([`transcript_${patientId}`], (result) => {
-    const transcript = result[`transcript_${patientId}`] || [];
-    
-    if (transcript.length > 0) {
-      showImportBanner(patientId, patientName, transcript, textarea);
-    } else {
-      removeImportBanner();
-    }
-  });
+  // Banner automático desativado a pedido do usuário para evitar sobreposição invasiva.
+  // A importação agora ocorre de forma limpa pela rota /import-transcript ou injeção direta do popup.
+  removeImportBanner();
 }
 
 function showImportBanner(patientId, patientName, transcript, textarea) {

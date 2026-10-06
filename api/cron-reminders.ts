@@ -29,33 +29,47 @@ export default async function handler(req: any, res: any) {
       console.warn('Executando cron com Client SDK (modo limitado)');
     }
 
-    // Definir Horários no Fuso Horário de Brasília (America/Sao_Paulo)
+    // Definir Horários no Fuso Horário de Brasília (America/Sao_Paulo) e Portugal (Europe/Lisbon)
     const now = new Date();
-    const brDateString = now.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }); // DD/MM/YYYY
-    const [dayStr, monthStr, yearStr] = brDateString.split('/');
-    const todayYMD = `${yearStr}-${monthStr.padStart(2, '0')}-${dayStr.padStart(2, '0')}`;
+    const getDatesForTz = (tz: string) => {
+      const dStr = now.toLocaleDateString('pt-BR', { timeZone: tz });
+      const [dayStr, monthStr, yearStr] = dStr.split('/');
+      const todayYMD = `${yearStr}-${monthStr.padStart(2, '0')}-${dayStr.padStart(2, '0')}`;
 
-    // Amanhã
-    const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    const brTomorrowString = tomorrow.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-    const [tDay, tMonth, tYear] = brTomorrowString.split('/');
-    const tomorrowYMD = `${tYear}-${tMonth.padStart(2, '0')}-${tDay.padStart(2, '0')}`;
+      const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+      const tomStr = tomorrow.toLocaleDateString('pt-BR', { timeZone: tz });
+      const [tDay, tMonth, tYear] = tomStr.split('/');
+      const tomorrowYMD = `${tYear}-${tMonth.padStart(2, '0')}-${tDay.padStart(2, '0')}`;
 
-    // Hora atual em minutos do dia (em Brasília)
-    const brTimeFormatter = new Intl.DateTimeFormat('pt-BR', {
-      timeZone: 'America/Sao_Paulo',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
-    });
-    const [curHour, curMin] = brTimeFormatter.format(now).split(':').map(Number);
-    const currentMinutesOfDay = curHour * 60 + curMin;
+      const dayFormatter = new Intl.DateTimeFormat('pt-BR', { timeZone: tz, weekday: 'long' });
+      const capDay = (d: Date) => {
+        const formatted = dayFormatter.format(d);
+        return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+      };
 
-    console.log(`[Cron Lembretes] Executando em ${todayYMD} às ${curHour}:${curMin} (Amanhã: ${tomorrowYMD})`);
+      return {
+        todayYMD,
+        tomorrowYMD,
+        todayDayName: capDay(now),
+        tomorrowDayName: capDay(tomorrow)
+      };
+    };
 
-    // 1. Carregar apenas Sessões de Hoje e Amanhã (economiza 99% da cota do Firestore)
+    const brTzInfo = getDatesForTz('America/Sao_Paulo');
+    const ptTzInfo = getDatesForTz('Europe/Lisbon');
+
+    const relevantDates = Array.from(new Set([
+      brTzInfo.todayYMD,
+      brTzInfo.tomorrowYMD,
+      ptTzInfo.todayYMD,
+      ptTzInfo.tomorrowYMD
+    ]));
+
+    console.log(`[Cron Lembretes] Executando datas relevantes: ${relevantDates.join(', ')}`);
+
+    // 1. Carregar apenas Sessões das datas relevantes (economiza cota do Firestore)
     const sessionsSnapshot = await db.collection('sessions')
-      .where('date', 'in', [todayYMD, tomorrowYMD])
+      .where('date', 'in', relevantDates)
       .get();
 
     const recordedSessions: Session[] = [];
@@ -63,36 +77,190 @@ export default async function handler(req: any, res: any) {
       recordedSessions.push({ id: doc.id, ...doc.data() } as Session);
     });
 
-    // 2. Carregar apenas os pacientes dessas sessões
+    // 2. Carregar pacientes ativos e projetar sessões recorrentes para hoje e amanhã
     const patientsMap = new Map<string, Patient>();
+
+    try {
+      const activePatientsSnap = await db.collection('patients')
+        .where('status', '==', 'Ativo')
+        .get();
+
+      activePatientsSnap.forEach((doc: any) => {
+        const p = { id: doc.id, ...doc.data() } as Patient;
+        if (!p.optOutWhatsapp && p.phone) {
+          patientsMap.set(p.id, p);
+
+          const isPatientPT = p.phone.replace(/\D/g, '').startsWith('351');
+          const tzInfo = isPatientPT ? ptTzInfo : brTzInfo;
+
+          // Projetar recorrência para hoje e amanhã no fuso correspondente (BR ou PT)
+          [ { date: tzInfo.todayYMD, dayName: tzInfo.todayDayName }, { date: tzInfo.tomorrowYMD, dayName: tzInfo.tomorrowDayName } ].forEach(({ date, dayName }) => {
+            if (p.sessionDay === dayName && p.sessionTime) {
+              const hasExisting = recordedSessions.some(s => s.patientId === p.id && s.date === date);
+              if (!hasExisting) {
+                const pRecurrenceStart = p.recurrenceStart || p.firstSessionDate || p.createdAt || '2024-01-01';
+                const startDateObj = new Date(pRecurrenceStart.split('T')[0] + 'T00:00:00');
+                const targetDateObj = new Date(date + 'T00:00:00');
+                if (targetDateObj >= startDateObj) {
+                  const diffWeeks = Math.floor((targetDateObj.getTime() - startDateObj.getTime()) / (7 * 24 * 60 * 60 * 1000));
+                  let shouldInclude = false;
+                  if (!p.recurrence || p.recurrence === 'Semanal') shouldInclude = true;
+                  else if (p.recurrence === 'Quinzenal') shouldInclude = diffWeeks % 2 === 0;
+                  else if (p.recurrence === 'Mensal') shouldInclude = diffWeeks % 4 === 0;
+
+                  if (shouldInclude) {
+                    recordedSessions.push({
+                      id: `virtual-${p.id}-${date}`,
+                      patientId: p.id,
+                      patientName: p.name,
+                      date,
+                      time: p.sessionTime,
+                      status: 'Agendada',
+                      type: p.modality || 'Online',
+                      ownerId: p.ownerId,
+                      isVirtualSlot: true,
+                      reminderDisabled: false,
+                      reminderD1Sent: false,
+                      reminderD0Sent: false
+                    });
+                  }
+                }
+              }
+            }
+          });
+        }
+      });
+    } catch (e: any) {
+      console.warn('Erro ao carregar pacientes ativos no cron:', e.message);
+    }
+
+    // Carregar pacientes faltantes de sessões gravadas que não foram capturados
     const patientIds = Array.from(new Set(recordedSessions.map(s => s.patientId).filter(Boolean)));
     for (const pid of patientIds) {
-      try {
-        const pDoc = await db.collection('patients').doc(pid).get();
-        if (pDoc.exists) {
-          const p = { id: pDoc.id, ...pDoc.data() } as Patient;
-          if (p.status === 'Ativo' && !p.optOutWhatsapp && p.phone) {
-            patientsMap.set(p.id, p);
+      if (!patientsMap.has(pid)) {
+        try {
+          const pDoc = await db.collection('patients').doc(pid).get();
+          if (pDoc.exists) {
+            const p = { id: pDoc.id, ...pDoc.data() } as Patient;
+            if (p.status === 'Ativo' && !p.optOutWhatsapp && p.phone) {
+              patientsMap.set(p.id, p);
+            }
           }
+        } catch (e: any) {
+          console.warn(`Erro ao carregar paciente ${pid}:`, e.message);
         }
-      } catch (e: any) {
-        console.warn(`Erro ao carregar paciente ${pid}:`, e.message);
       }
     }
+
+    // 3. Carregar perfis dos donos das sessões (para validar plano e regras de WhatsApp)
+    const ownerIds = Array.from(new Set(recordedSessions.map(s => s.ownerId).filter(Boolean)));
+    const profilesMap = new Map<string, any>();
+    for (const oid of ownerIds) {
+      try {
+        const pDoc = await db.collection('profiles').doc(oid).get();
+        if (pDoc.exists) {
+          profilesMap.set(oid, pDoc.data());
+        }
+      } catch (e: any) {
+        console.warn(`Erro ao carregar perfil do psicólogo ${oid}:`, e.message);
+      }
+    }
+
+    // Carregar lista de authorized_emails para suporte a clientes vitalícios legados
+    const authEmailsSet = new Set<string>();
+    try {
+      const authSnap = await db.collection('authorized_emails').get();
+      authSnap.forEach((doc: any) => {
+        if (doc.data()?.active !== false) {
+          authEmailsSet.add(doc.id.toLowerCase().trim());
+        }
+      });
+    } catch (e: any) {
+      console.warn('Erro ao carregar authorized_emails no cron:', e.message);
+    }
+
+    const checkWhatsAppAccess = (ownerId: string): { allowD1: boolean; allowD0: boolean } => {
+      const profile = profilesMap.get(ownerId);
+      if (!profile) return { allowD1: false, allowD0: false };
+
+      const email = (profile.email || '').toLowerCase().trim();
+      // Administrador Wellington sempre tem acesso para testes do robô
+      if (email === 'wellcoutinho99@gmail.com') {
+        return { allowD1: true, allowD0: true };
+      }
+
+      // Regra de Negócio: Lembretes de WhatsApp via Meta Graph API possuem custo unitário por disparo.
+      // Usuários com licença vitalícia mantêm acesso perpétuo a todo o sistema, MAS NÃO aos disparos automáticos de WhatsApp.
+      // Para ter o robô de WhatsApp, o profissional precisa de uma assinatura mensal ativa (Consultório ou Ilimitado).
+      const sub = profile.subscription;
+      const plan = sub?.plan;
+      const status = sub?.status;
+
+      // Se não tiver assinatura mensal ativa, não dispara WhatsApp
+      if (status !== 'active' || !plan) {
+        return { allowD1: false, allowD0: false };
+      }
+
+      // Plano Ilimitado (Véspera D-1 e Dia da Sessão D-0)
+      if (plan === 'ilimitado') {
+        return { allowD1: true, allowD0: true };
+      }
+
+      // Plano Consultório (Apenas Véspera D-1)
+      if (plan === 'consultorio') {
+        return { allowD1: true, allowD0: false };
+      }
+
+      // Plano Start / Gratuito: sem disparos automáticos
+      return { allowD1: false, allowD0: false };
+    };
+
+    const getOwnerTimeInfo = (ownerId: string, patientPhone?: string) => {
+      const profile = profilesMap.get(ownerId);
+      const isPT = profile?.country === 'PT' || (patientPhone && patientPhone.replace(/\D/g, '').startsWith('351'));
+      const timeZone = isPT ? 'Europe/Lisbon' : 'America/Sao_Paulo';
+
+      const dStr = now.toLocaleDateString('pt-BR', { timeZone });
+      const [dayStr, monthStr, yearStr] = dStr.split('/');
+      const todayYMD = `${yearStr}-${monthStr.padStart(2, '0')}-${dayStr.padStart(2, '0')}`;
+
+      const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+      const tomStr = tomorrow.toLocaleDateString('pt-BR', { timeZone });
+      const [tDay, tMonth, tYear] = tomStr.split('/');
+      const tomorrowYMD = `${tYear}-${tMonth.padStart(2, '0')}-${tDay.padStart(2, '0')}`;
+
+      const timeFormatter = new Intl.DateTimeFormat('pt-BR', {
+        timeZone,
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+      const [h, min] = timeFormatter.format(now).split(':').map(Number);
+      const currentMinutesOfDay = h * 60 + min;
+
+      return {
+        isPT,
+        timeZone,
+        todayYMD,
+        tomorrowYMD,
+        curHour: h,
+        currentMinutesOfDay
+      };
+    };
 
     // ==========================================
     // DISPARO 1: LEMBRETE DE VÉSPERA (D-1)
     // ==========================================
-    // Envia a partir das 08h da manhã até as 21h para sessões do dia seguinte
-    const isDaytimeForD1 = curHour >= 8 && curHour <= 21;
-    const d1Candidates = isDaytimeForD1
-      ? recordedSessions.filter(s => 
-          s.date === tomorrowYMD && 
-          s.status === 'Agendada' && 
-          !s.reminderD1Sent &&
-          !s.reminderDisabled
-        )
-      : [];
+    // Envia a partir das 08h da manhã até as 21h no horário local do psicólogo/paciente para sessões do dia seguinte
+    const d1Candidates = recordedSessions.filter(s => {
+      if (s.date && s.status === 'Agendada' && !s.reminderD1Sent && !s.reminderDisabled && checkWhatsAppAccess(s.ownerId).allowD1) {
+        const patient = patientsMap.get(s.patientId);
+        const timeInfo = getOwnerTimeInfo(s.ownerId, patient?.phone || s.patientPhone);
+        const isDaytime = timeInfo.curHour >= 8 && timeInfo.curHour <= 21;
+        return isDaytime && s.date === timeInfo.tomorrowYMD;
+      }
+      return false;
+    });
 
     for (const session of d1Candidates) {
       const patient = patientsMap.get(session.patientId);
@@ -105,11 +273,27 @@ export default async function handler(req: any, res: any) {
         await sendD1ConfirmationReminder(session, patient, psyName);
         
         if (isAdmin) {
-          await db.collection('sessions').doc(session.id).update({
+          const updateData = {
             reminderD1Sent: true,
             reminderD1SentAt: new Date().toISOString(),
             reminderStatus: 'd1_sent',
-          });
+          };
+          if (session.id.startsWith('virtual-')) {
+            await db.collection('sessions').doc(session.id).set({
+              patientId: session.patientId,
+              patientName: session.patientName || patient.name,
+              date: session.date,
+              time: session.time,
+              status: 'Agendada',
+              type: session.type || 'Online',
+              ownerId: session.ownerId,
+              ...updateData,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+          } else {
+            await db.collection('sessions').doc(session.id).update(updateData);
+          }
         }
         results.d1Sent.push(`${patient.name} (${session.time})`);
       } catch (err: any) {
@@ -122,38 +306,54 @@ export default async function handler(req: any, res: any) {
     // DISPARO 2: LEMBRETE IMEDIATO (1h30 antes da sessão)
     // ===================================================
     // Sessões de hoje com status 'Agendada' ou 'Confirmada' que ainda não receberam D-0
-    const d0Candidates = recordedSessions.filter(s => 
-      s.date === todayYMD && 
-      (s.status === 'Agendada' || s.status === 'Confirmada') && 
-      !s.reminderD0Sent &&
-      !s.reminderDisabled &&
-      s.time
-    );
+    const d0Candidates = recordedSessions.filter(s => {
+      if ((s.status === 'Agendada' || s.status === 'Confirmada') && !s.reminderD0Sent && !s.reminderDisabled && s.time && checkWhatsAppAccess(s.ownerId).allowD0) {
+        const patient = patientsMap.get(s.patientId);
+        const timeInfo = getOwnerTimeInfo(s.ownerId, patient?.phone || s.patientPhone);
+        if (s.date !== timeInfo.todayYMD) return false;
+
+        const [sHour, sMin] = s.time.split(':').map(Number);
+        const sessionMinutesOfDay = sHour * 60 + (sMin || 0);
+        const diffMinutes = sessionMinutesOfDay - timeInfo.currentMinutesOfDay;
+
+        // Janela de 1h30 (entre 70 e 110 minutos de antecedência no fuso local)
+        return diffMinutes >= 70 && diffMinutes <= 110;
+      }
+      return false;
+    });
 
     for (const session of d0Candidates) {
-      const [sHour, sMin] = session.time.split(':').map(Number);
-      const sessionMinutesOfDay = sHour * 60 + (sMin || 0);
+      const patient = patientsMap.get(session.patientId);
+      if (!patient || !patient.phone) continue;
 
-      // Diferença em minutos entre a sessão e o momento atual
-      const diffMinutes = sessionMinutesOfDay - currentMinutesOfDay;
+      try {
+        const psyName = session.psychologistName || 'Wellington Coutinho';
+        console.log(`[D-0] Enviando lembrete 1h30 antes para ${patient.name} (${session.time})`);
 
-      // Janela de 1h30 (entre 70 e 110 minutos de antecedência)
-      if (diffMinutes >= 70 && diffMinutes <= 110) {
-        const patient = patientsMap.get(session.patientId);
-        if (!patient || !patient.phone) continue;
-
-        try {
-          const psyName = session.psychologistName || 'Wellington Coutinho';
-          console.log(`[D-0] Enviando lembrete 1h30 antes para ${patient.name} (${session.time})`);
-
-          await sendD0StartReminder(session, patient, psyName);
+        await sendD0StartReminder(session, patient, psyName);
 
           if (isAdmin) {
-            await db.collection('sessions').doc(session.id).update({
+            const updateData = {
               reminderD0Sent: true,
               reminderD0SentAt: new Date().toISOString(),
               reminderStatus: 'd0_sent',
-            });
+            };
+            if (session.id.startsWith('virtual-')) {
+              await db.collection('sessions').doc(session.id).set({
+                patientId: session.patientId,
+                patientName: session.patientName || patient.name,
+                date: session.date,
+                time: session.time,
+                status: 'Agendada',
+                type: session.type || 'Online',
+                ownerId: session.ownerId,
+                ...updateData,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+              }, { merge: true });
+            } else {
+              await db.collection('sessions').doc(session.id).update(updateData);
+            }
           }
           results.d0Sent.push(`${patient.name} (${session.time})`);
         } catch (err: any) {
@@ -161,7 +361,6 @@ export default async function handler(req: any, res: any) {
           results.errors.push(`D-0 ${patient.name}: ${err.message}`);
         }
       }
-    }
 
     return res.status(200).json({
       success: true,

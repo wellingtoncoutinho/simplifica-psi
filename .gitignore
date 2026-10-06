@@ -10,4 +10,5 @@ coverage/
 .env*.local
 scratch/
 service-account*.json
-
+sessao_*.txt
+*.swp

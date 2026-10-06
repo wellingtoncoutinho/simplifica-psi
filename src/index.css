@@ -52,6 +52,19 @@
     --color-border-ui: #e6e1da;     /* Very fine linen beige border */
     --color-bg-muted: rgba(95, 125, 92, 0.04);
   }
+
+  select {
+    color-scheme: dark;
+  }
+
+  body.light select {
+    color-scheme: light;
+  }
+
+  select option {
+    background-color: var(--color-card) !important;
+    color: var(--color-text-main) !important;
+  }
 }
 
 .glass-card {

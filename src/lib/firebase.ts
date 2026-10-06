@@ -1,5 +1,13 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { 
+  getAuth, 
+  GoogleAuthProvider, 
+  signInWithPopup,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  updateProfile
+} from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -25,6 +33,20 @@ googleCalendarProvider.setCustomParameters({
 
 export const signInWithGoogle = () => signInWithPopup(auth, googleProvider);
 export const signInWithGoogleCalendar = () => signInWithPopup(auth, googleCalendarProvider);
+
+export const signInWithEmail = (email: string, pass: string) => 
+  signInWithEmailAndPassword(auth, email, pass);
+
+export const signUpWithEmail = async (email: string, pass: string, name?: string) => {
+  const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
+  if (name && userCredential.user) {
+    await updateProfile(userCredential.user, { displayName: name });
+  }
+  return userCredential;
+};
+
+export const resetPassword = (email: string) => 
+  sendPasswordResetEmail(auth, email);
 
 // Validation check
 async function testConnection() {

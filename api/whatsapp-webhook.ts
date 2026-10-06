@@ -188,16 +188,31 @@ export default async function handler(req: any, res: any) {
         const replyMsg = `Entendido, ${patientName}. Registramos o cancelamento da sua sessão de ${sessionDate}${timeSuffix} e o seu psicólogo já foi notificado 🤝. Caso precise remarcar para um novo horário, por favor entre em contato diretamente com ele.`;
         await sendWhatsAppTextMessage(fromPhone, replyMsg);
 
-        // Notificar o psicólogo (Wellington) imediatamente no WhatsApp pessoal dele
-        const wellingtonPhone = process.env.WELLINGTON_PERSONAL_PHONE || '5562983208784';
+        // Notificar o psicólogo responsável no WhatsApp dele
+        let psychologistPhone = process.env.WELLINGTON_PERSONAL_PHONE || '5562983208784';
+        const ownerId = sessionData?.ownerId || matchedPatient?.ownerId;
+        if (ownerId && isAdmin) {
+          try {
+            const ownerSnap = await db.collection('profiles').doc(ownerId).get();
+            if (ownerSnap.exists && ownerSnap.data()?.phone) {
+              const cleanedPhone = formatWhatsAppPhone(ownerSnap.data().phone);
+              if (cleanedPhone) {
+                psychologistPhone = cleanedPhone;
+              }
+            }
+          } catch (e: any) {
+            console.warn('Não foi possível obter telefone do psicólogo:', e.message);
+          }
+        }
+
         try {
-          await sendWhatsAppCancellationAlert(wellingtonPhone, patientName, sessionDate, safeTimeForTemplate);
-          console.log(`📢 Alerta de cancelamento enviado via template para o WhatsApp do Wellington (${wellingtonPhone})!`);
+          await sendWhatsAppCancellationAlert(psychologistPhone, patientName, sessionDate, safeTimeForTemplate);
+          console.log(`📢 Alerta de cancelamento enviado via template para o WhatsApp do psicólogo (${psychologistPhone})!`);
         } catch (alertErr: any) {
           console.warn('⚠️ Falha ao enviar template de cancelamento para o psicólogo, tentando texto simples:', alertErr?.message);
           try {
             await sendWhatsAppTextMessage(
-              wellingtonPhone, 
+              psychologistPhone, 
               `🚨 *Aviso do Consultório*\n\nO paciente *${patientName}* acabou de desmarcar a sessão que estava agendada para *${sessionDate}*${sessionTime ? ` às *${sessionTime}*` : ''}.\n\nAcesse sua agenda no Simple Psi para ver os detalhes.`
             );
           } catch (textErr: any) {

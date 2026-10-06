@@ -257,6 +257,12 @@ export default function PatientPortalDashboard() {
   const [psychologistProfile, setPsychologistProfile] = useState<any | null>(null);
   const [copiedPix, setCopiedPix] = useState<boolean>(false);
 
+  const isPT = psychologistProfile?.country === 'PT' || (typeof window !== 'undefined' && (
+    localStorage.getItem('simplepsi_country') === 'PT' ||
+    localStorage.getItem('prof_country') === 'PT' ||
+    window.location.pathname.startsWith('/pt')
+  )) || (portalData as any)?.country === 'PT';
+
   // Diary State
   const [diaryEntries, setDiaryEntries] = useState<DiaryEntry[]>([]);
   const [loadingDiary, setLoadingDiary] = useState<boolean>(false);
@@ -695,6 +701,10 @@ export default function PatientPortalDashboard() {
     return unpaidCompletedSessions.reduce((acc, s) => acc + (parseFloat(s.amount as any) || 0), 0);
   }, [unpaidCompletedSessions]);
 
+  const activePixKey = portalData?.pixKey || psychologistProfile?.pixKey || '';
+  const activePixType = portalData?.pixType || psychologistProfile?.pixType || 'Chave';
+  const activePixName = portalData?.pixName || psychologistProfile?.pixName || psychologistProfile?.name || 'Psicólogo(a)';
+
   const handleQuickMoodCheckIn = async (moodScore: number, label: string) => {
     if (!portalData || quickMoodSaving) return;
     setQuickMoodSaving(true);
@@ -721,9 +731,9 @@ export default function PatientPortalDashboard() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
-    const cleanCpf = cpf.replace(/\D/g, '');
-    if (cleanCpf.length !== 11) {
-      setLoginError('Por favor, insira um CPF válido com 11 dígitos.');
+    const cleanDoc = cpf.replace(/\D/g, '');
+    if (cleanDoc.length !== 11 && cleanDoc.length !== 9) {
+      setLoginError(isPT ? 'Por favor, insira um NIF válido com 9 dígitos.' : 'Por favor, insira um CPF válido com 11 dígitos.');
       return;
     }
 
@@ -742,7 +752,7 @@ export default function PatientPortalDashboard() {
       const uid = credential.user.uid;
 
       if (!patientId) {
-        setLoginError('Link de acesso inválido. Por favor, acesse o portal utilizando o link completo enviado pelo seu psicólogo.');
+        setLoginError(isPT ? 'Link de acesso inválido. Por favor, aceda ao portal utilizando o link completo enviado pelo seu psicólogo.' : 'Link de acesso inválido. Por favor, acesse o portal utilizando o link completo enviado pelo seu psicólogo.');
         await auth.signOut();
         setLoadingLogin(false);
         loggingInRef.current = false;
@@ -756,7 +766,7 @@ export default function PatientPortalDashboard() {
 
       setLoginProgress('Verificando cadastro...');
       if (!portalSnap.exists()) {
-        setLoginError('Acesso não encontrado. O link pode estar incorreto ou o portal foi removido pelo psicólogo.');
+        setLoginError(isPT ? 'Acesso não encontrado. O link pode estar incorreto ou o portal foi removido pelo psicólogo.' : 'Acesso não encontrado. O link pode estar incorreto ou o portal foi removido pelo psicólogo.');
         await auth.signOut();
         setLoadingLogin(false);
         loggingInRef.current = false;
@@ -765,10 +775,10 @@ export default function PatientPortalDashboard() {
 
       const data = portalSnap.data() as PatientPortal;
 
-      // 3. Match CPF
-      const normalizedCpf = data.cpf ? data.cpf.replace(/\D/g, '') : '';
-      if (normalizedCpf && normalizedCpf !== cleanCpf) {
-        setLoginError('CPF incorreto para este link de acesso. Verifique os dados digitados.');
+      // 3. Match CPF or NIF
+      const normalizedDoc = ((data as any).nif || data.cpf || (data as any).document || '').replace(/\D/g, '');
+      if (normalizedDoc && normalizedDoc !== cleanDoc) {
+        setLoginError(isPT ? 'NIF incorreto para este link de acesso. Verifique os dados digitados.' : 'CPF incorreto para este link de acesso. Verifique os dados digitados.');
         await auth.signOut();
         setLoadingLogin(false);
         loggingInRef.current = false;
@@ -999,8 +1009,13 @@ export default function PatientPortalDashboard() {
     }
   };
 
-  const formatCpf = (val: string) => {
+  const formatDocument = (val: string) => {
     const digits = val.replace(/\D/g, '');
+    if (isPT) {
+      if (digits.length <= 3) return digits;
+      if (digits.length <= 6) return `${digits.substring(0, 3)} ${digits.substring(3)}`;
+      return `${digits.substring(0, 3)} ${digits.substring(3, 6)} ${digits.substring(6, 9)}`;
+    }
     if (digits.length <= 3) return digits;
     if (digits.length <= 6) return `${digits.substring(0, 3)}.${digits.substring(3)}`;
     if (digits.length <= 9) return `${digits.substring(0, 3)}.${digits.substring(3, 6)}.${digits.substring(6)}`;
@@ -1018,7 +1033,7 @@ export default function PatientPortalDashboard() {
       <div className="flex items-center justify-center min-h-screen bg-background text-text-main">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="w-10 h-10 animate-spin text-primary" />
-          <p className="text-xs font-bold uppercase tracking-widest animate-pulse">Acessando portal...</p>
+          <p className="text-xs font-bold uppercase tracking-widest animate-pulse">{isPT ? 'A aceder ao portal...' : 'Acessando portal...'}</p>
         </div>
       </div>
     );
@@ -1027,26 +1042,28 @@ export default function PatientPortalDashboard() {
   // LOGIN SCREEN
   if (!authenticated) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-background text-[#2E3C2B] p-4 text-left">
-        <div className="bg-[#FAF9F6] border border-[#2E3C2B]/10 max-w-md w-full rounded-3xl p-8 space-y-6 shadow-2xl animate-in fade-in zoom-in duration-300">
+      <div className="flex items-center justify-center min-h-screen bg-background text-text-main p-4 text-left">
+        <div className="bg-card border border-border-ui max-w-md w-full rounded-3xl p-8 space-y-6 shadow-2xl animate-in fade-in zoom-in duration-300">
           <div className="flex flex-col items-center gap-3 text-center">
             <img src="/apple-touch-icon.png" className="w-16 h-16 object-contain rounded-2xl shadow-md" alt="Logo" />
-            <h1 className="text-2xl font-bold tracking-tight text-[#2E3C2B]">Área do Paciente</h1>
-            <p className="text-xs text-[#2E3C2B]/60 max-w-xs leading-relaxed">
-              Bem-vindo ao seu espaço terapêutico do SimplePsi. Digite seu CPF para acessar.
+            <h1 className="text-2xl font-bold tracking-tight text-text-main">{isPT ? 'Área do Utente' : 'Área do Paciente'}</h1>
+            <p className="text-xs text-text-muted max-w-xs leading-relaxed">
+              {isPT 
+                ? 'Bem-vindo ao seu espaço terapêutico do SimplePsi. Digite o seu NIF para aceder.' 
+                : 'Bem-vindo ao seu espaço terapêutico do SimplePsi. Digite seu CPF para acessar.'}
             </p>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-[#2E3C2B]/55 uppercase tracking-widest pl-1">Seu CPF</label>
+              <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">{isPT ? 'O seu NIF' : 'Seu CPF'}</label>
               <input
                 required
                 type="text"
-                placeholder="000.000.000-00"
+                placeholder={isPT ? 'Ex: 123456789' : '000.000.000-00'}
                 value={cpf}
-                onChange={(e) => setCpf(formatCpf(e.target.value))}
-                className="w-full bg-[#2E3C2B]/5 border border-[#2E3C2B]/10 rounded-xl px-4 py-3 text-sm text-[#2E3C2B] outline-none focus:border-primary"
+                onChange={(e) => setCpf(formatDocument(e.target.value))}
+                className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-primary"
               />
             </div>
 
@@ -1060,15 +1077,15 @@ export default function PatientPortalDashboard() {
             <button
               type="submit"
               disabled={loadingLogin}
-              className="w-full py-3.5 bg-[#2E3C2B] hover:bg-[#2E3C2B]/95 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center justify-center gap-2 select-none disabled:opacity-50"
+              className="w-full py-3.5 bg-primary hover:bg-primary-dark text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center justify-center gap-2 select-none disabled:opacity-50 cursor-pointer"
             >
               {loadingLogin ? (
                 <>
                   <Loader2 className="animate-spin" size={14} />
-                  <span>{loginProgress || 'Acessando...'}</span>
+                  <span>{loginProgress || (isPT ? 'A aceder...' : 'Acessando...')}</span>
                 </>
               ) : (
-                <span>Acessar Portal</span>
+                <span>{isPT ? 'Aceder ao Portal' : 'Acessar Portal'}</span>
               )}
             </button>
           </form>
@@ -1296,13 +1313,13 @@ export default function PatientPortalDashboard() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-[#2E3C2B]/60 uppercase tracking-widest pl-1">CPF do Signatário</label>
+                <label className="text-[10px] font-bold text-[#2E3C2B]/60 uppercase tracking-widest pl-1">{isPT ? 'NIF do Signatário' : 'CPF do Signatário'}</label>
                 <input
                   required
                   type="text"
                   value={signerDocument}
                   onChange={(e) => setSignerDocument(e.target.value)}
-                  placeholder="000.000.000-00"
+                  placeholder={isPT ? 'Ex: 123456789' : '000.000.000-00'}
                   className="w-full bg-[#2E3C2B]/5 border border-[#2E3C2B]/10 rounded-xl px-4 py-2.5 text-xs text-[#2E3C2B] outline-none focus:border-primary"
                 />
               </div>
@@ -1418,7 +1435,7 @@ export default function PatientPortalDashboard() {
 
   // MAIN PATIENT DASHBOARD
   return (
-    <div className="min-h-screen bg-background text-[#2E3C2B] flex flex-col text-left">
+    <div className="min-h-screen bg-background text-text-main flex flex-col text-left">
       
       {/* Header */}
       <header className="bg-card border-b border-border-ui sticky top-0 z-30 shrink-0">
@@ -1435,7 +1452,7 @@ export default function PatientPortalDashboard() {
             </span>
             <button
               onClick={handleLogout}
-              className="p-2 text-[#2E3C2B]/60 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all"
+              className="p-2 text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all"
               title="Sair"
             >
               <LogOut size={16} />
@@ -1452,7 +1469,7 @@ export default function PatientPortalDashboard() {
           <button
             onClick={() => setActiveTab('overview')}
             className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 cursor-pointer ${
-              activeTab === 'overview' ? 'bg-[#2E3C2B] text-white shadow-md' : 'text-text-muted hover:text-text-main'
+              activeTab === 'overview' ? 'bg-primary text-white shadow-md' : 'text-text-muted hover:text-text-main'
             }`}
           >
             <Sparkles size={14} />
@@ -1461,7 +1478,7 @@ export default function PatientPortalDashboard() {
           <button
             onClick={() => setActiveTab('diary')}
             className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 cursor-pointer ${
-              activeTab === 'diary' ? 'bg-[#2E3C2B] text-white shadow-md' : 'text-text-muted hover:text-text-main'
+              activeTab === 'diary' ? 'bg-primary text-white shadow-md' : 'text-text-muted hover:text-text-main'
             }`}
           >
             <Calendar size={14} />
@@ -1471,7 +1488,7 @@ export default function PatientPortalDashboard() {
             <button
               onClick={() => setActiveTab('safety')}
               className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 cursor-pointer ${
-                activeTab === 'safety' ? 'bg-[#2E3C2B] text-white shadow-md' : 'text-text-muted hover:text-text-main'
+                activeTab === 'safety' ? 'bg-primary text-white shadow-md' : 'text-text-muted hover:text-text-main'
               }`}
             >
               <ShieldAlert size={14} />
@@ -1481,7 +1498,7 @@ export default function PatientPortalDashboard() {
           <button
             onClick={() => setActiveTab('finance')}
             className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 cursor-pointer ${
-              activeTab === 'finance' ? 'bg-[#2E3C2B] text-white shadow-md' : 'text-text-muted hover:text-text-main'
+              activeTab === 'finance' ? 'bg-primary text-white shadow-md' : 'text-text-muted hover:text-text-main'
             }`}
           >
             <DollarSign size={14} />
@@ -1490,7 +1507,7 @@ export default function PatientPortalDashboard() {
           <button
             onClick={() => setActiveTab('materials')}
             className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 cursor-pointer ${
-              activeTab === 'materials' ? 'bg-[#2E3C2B] text-white shadow-md' : 'text-text-muted hover:text-text-main'
+              activeTab === 'materials' ? 'bg-primary text-white shadow-md' : 'text-text-muted hover:text-text-main'
             }`}
           >
             <BookOpen size={14} />
@@ -1499,7 +1516,7 @@ export default function PatientPortalDashboard() {
           <button
             onClick={() => setActiveTab('contract')}
             className={`flex-1 py-3 text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1.5 cursor-pointer ${
-              activeTab === 'contract' ? 'bg-[#2E3C2B] text-white shadow-md' : 'text-text-muted hover:text-text-main'
+              activeTab === 'contract' ? 'bg-primary text-white shadow-md' : 'text-text-muted hover:text-text-main'
             }`}
           >
             <FileCheck size={14} />
@@ -1638,49 +1655,47 @@ export default function PatientPortalDashboard() {
                   </div>
 
                   {/* Pix Box for Immediate Payment */}
-                  {psychologistProfile && (psychologistProfile.pixKey || psychologistProfile.pixType) && (
+                  {activePixKey && (
                     <div className="bg-card border border-border-ui rounded-2xl p-4 space-y-3">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted">
                           Chave Pix do Psicólogo(a) para Pagamento
                         </span>
                         <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-bold uppercase">
-                          {psychologistProfile.pixType || 'Chave'}
+                          {activePixType}
                         </span>
                       </div>
 
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-surface-muted border border-border-ui rounded-xl p-3">
                         <div className="min-w-0 flex-1">
                           <span className="text-xs font-mono select-all text-text-main font-bold block truncate">
-                            {psychologistProfile.pixKey || 'Não informada'}
+                            {activePixKey}
                           </span>
                           <span className="text-[10px] text-text-muted block mt-0.5">
-                            Favorecido: {psychologistProfile.pixName || psychologistProfile.name || 'Psicólogo(a)'}
+                            Favorecido: {activePixName}
                           </span>
                         </div>
-                        {psychologistProfile.pixKey && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              navigator.clipboard.writeText(psychologistProfile.pixKey);
-                              setCopiedPix(true);
-                              setTimeout(() => setCopiedPix(false), 2000);
-                            }}
-                            className="py-2 px-3.5 bg-primary text-white text-xs font-bold rounded-xl hover:opacity-90 transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-sm"
-                          >
-                            {copiedPix ? (
-                              <>
-                                <Check size={14} className="text-emerald-300" />
-                                <span>Chave Copiada!</span>
-                              </>
-                            ) : (
-                              <>
-                                <Copy size={14} />
-                                <span>Copiar Chave Pix</span>
-                              </>
-                            )}
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(activePixKey);
+                            setCopiedPix(true);
+                            setTimeout(() => setCopiedPix(false), 2000);
+                          }}
+                          className="py-2 px-3.5 bg-primary text-white text-xs font-bold rounded-xl hover:opacity-90 transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-sm"
+                        >
+                          {copiedPix ? (
+                            <>
+                              <Check size={14} className="text-emerald-300" />
+                              <span>Chave Copiada!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy size={14} />
+                              <span>Copiar Chave Pix</span>
+                            </>
+                          )}
+                        </button>
                       </div>
                       <p className="text-[11px] text-text-muted">
                         💡 Após efetuar o Pix, envie o comprovante diretamente pelo WhatsApp do seu psicólogo.
@@ -1689,19 +1704,65 @@ export default function PatientPortalDashboard() {
                   )}
                 </div>
               ) : (
-                <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-2xl p-4 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-lg">✨</span>
-                    <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                      Tudo em dia! Você não possui sessões realizadas pendentes de pagamento.
-                    </span>
+                <div className="space-y-4">
+                  <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-2xl p-4 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-lg">✨</span>
+                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                        Tudo em dia! Você não possui sessões realizadas pendentes de pagamento.
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setActiveTab('finance')}
+                      className="text-xs font-bold text-emerald-600 hover:underline shrink-0 cursor-pointer"
+                    >
+                      Ver Histórico
+                    </button>
                   </div>
-                  <button
-                    onClick={() => setActiveTab('finance')}
-                    className="text-xs font-bold text-emerald-600 hover:underline shrink-0 cursor-pointer"
-                  >
-                    Ver Histórico
-                  </button>
+
+                  {activePixKey && (
+                    <div className="bg-card border border-border-ui rounded-[24px] p-5 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted">
+                          Chave Pix do Psicólogo(a)
+                        </span>
+                        <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-bold uppercase">
+                          {activePixType}
+                        </span>
+                      </div>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-surface-muted border border-border-ui rounded-xl p-3">
+                        <div className="min-w-0 flex-1">
+                          <span className="text-xs font-mono select-all text-text-main font-bold block truncate">
+                            {activePixKey}
+                          </span>
+                          <span className="text-[10px] text-text-muted block mt-0.5">
+                            Favorecido: {activePixName}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(activePixKey);
+                            setCopiedPix(true);
+                            setTimeout(() => setCopiedPix(false), 2000);
+                          }}
+                          className="py-2 px-3.5 bg-primary text-white text-xs font-bold rounded-xl hover:opacity-90 transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-sm"
+                        >
+                          {copiedPix ? (
+                            <>
+                              <Check size={14} className="text-emerald-300" />
+                              <span>Chave Copiada!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy size={14} />
+                              <span>Copiar Chave Pix</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -4016,10 +4077,16 @@ export default function PatientPortalDashboard() {
                     <span className="text-2xl">⚠️</span>
                     <div>
                       <h4 className="font-bold text-sm text-text-main">
-                        Você possui {unpaidCompletedSessions.length} {unpaidCompletedSessions.length === 1 ? 'sessão realizada aguardando acerto' : 'sessões realizadas aguardando acerto'}
+                        {isPT 
+                          ? `Tem ${unpaidCompletedSessions.length} ${unpaidCompletedSessions.length === 1 ? 'consulta realizada a aguardar pagamento' : 'consultas realizadas a aguardar pagamento'}`
+                          : `Você possui ${unpaidCompletedSessions.length} ${unpaidCompletedSessions.length === 1 ? 'sessão realizada aguardando acerto' : 'sessões realizadas aguardando acerto'}`}
                       </h4>
                       <p className="text-xs text-text-muted mt-0.5">
-                        Valor total pendente: <strong className="text-amber-500 font-bold">R$ {totalUnpaidCompletedAmount.toFixed(2)}</strong>. Por favor, utilize a Chave Pix abaixo para realizar o pagamento e envie o comprovante.
+                        {isPT ? (
+                          <>Valor total pendente: <strong className="text-amber-500 font-bold">€ {totalUnpaidCompletedAmount.toFixed(2)}</strong>. Por favor, utilize as informações abaixo para realizar o pagamento e envie o comprovativo.</>
+                        ) : (
+                          <>Valor total pendente: <strong className="text-amber-500 font-bold">R$ {totalUnpaidCompletedAmount.toFixed(2)}</strong>. Por favor, utilize a Chave Pix abaixo para realizar o pagamento e envie o comprovante.</>
+                        )}
                       </p>
                     </div>
                   </div>
@@ -4027,24 +4094,24 @@ export default function PatientPortalDashboard() {
               ) : (
                 <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-3.5 px-4 flex items-center gap-2.5 text-xs text-emerald-600 font-bold">
                   <CheckCircle2 size={16} className="text-emerald-500 shrink-0" />
-                  <span>Tudo em dia! Todas as sessões realizadas estão acertadas.</span>
+                  <span>{isPT ? 'Tudo em dia! Todas as consultas realizadas estão liquidadas.' : 'Tudo em dia! Todas as sessões realizadas estão acertadas.'}</span>
                 </div>
               )}
 
-              {/* PIX INFO CARD */}
-              {psychologistProfile && (psychologistProfile.pixKey || psychologistProfile.pixType) && (
+              {/* PIX / MB WAY INFO CARD */}
+              {activePixKey ? (
                 <div className="bg-card border border-border-ui rounded-[24px] p-5 space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border-ui/50 pb-3">
                     <div className="flex items-center gap-2">
                       <span className="text-lg">💸</span>
                       <div>
-                        <h4 className="font-bold text-xs text-text-main uppercase tracking-widest">Dados do Pix para Pagamento</h4>
-                        <p className="text-[10px] text-text-muted">Utilize as informações abaixo para transferência</p>
+                        <h4 className="font-bold text-xs text-text-main uppercase tracking-widest">{isPT ? 'Dados para Pagamento (MB WAY / Transferência)' : 'Dados do Pix para Pagamento'}</h4>
+                        <p className="text-[10px] text-text-muted">{isPT ? 'Utilize as informações abaixo para transferência ou pagamento' : 'Utilize as informações abaixo para transferência'}</p>
                       </div>
                     </div>
-                    {psychologistProfile.crp && (
+                    {(psychologistProfile?.opp || psychologistProfile?.crp) && (
                       <span className="self-start sm:self-auto text-[9px] bg-primary/10 text-primary border border-primary/20 rounded-full px-2.5 py-0.5 font-bold uppercase tracking-wider">
-                        CRP: {psychologistProfile.crp}
+                        {isPT ? `Cédula OPP: ${psychologistProfile.opp || psychologistProfile.crp}` : `CRP: ${psychologistProfile.crp}`}
                       </span>
                     )}
                   </div>
@@ -4055,34 +4122,32 @@ export default function PatientPortalDashboard() {
                       <div className="flex items-center justify-between bg-surface-muted border border-border-ui rounded-xl px-4 py-2.5">
                         <div className="truncate pr-2 flex items-center gap-2">
                           <span className="text-[10px] font-extrabold text-primary uppercase tracking-wider bg-primary/5 px-2 py-0.5 rounded border border-primary/10">
-                            {psychologistProfile.pixType || 'Chave'}
+                            {activePixType}
                           </span>
                           <span className="text-xs text-text-main font-mono select-all truncate">
-                            {psychologistProfile.pixKey || 'Não informada'}
+                            {activePixKey}
                           </span>
                         </div>
-                        {psychologistProfile.pixKey && (
-                          <button
-                            onClick={() => {
-                              navigator.clipboard.writeText(psychologistProfile.pixKey);
-                              setCopiedPix(true);
-                              setTimeout(() => setCopiedPix(false), 2000);
-                            }}
-                            className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-primary hover:text-primary-dark transition-all bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-lg shrink-0"
-                          >
-                            {copiedPix ? (
-                              <>
-                                <Check size={12} className="text-emerald-500 animate-pulse" />
-                                <span className="text-emerald-500">Copiado!</span>
-                              </>
-                            ) : (
-                              <>
-                                <Copy size={12} />
-                                <span>Copiar</span>
-                              </>
-                            )}
-                          </button>
-                        )}
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(activePixKey);
+                            setCopiedPix(true);
+                            setTimeout(() => setCopiedPix(false), 2000);
+                          }}
+                          className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-primary hover:text-primary-dark transition-all bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-lg shrink-0 cursor-pointer"
+                        >
+                          {copiedPix ? (
+                            <>
+                              <Check size={12} className="text-emerald-500 animate-pulse" />
+                              <span className="text-emerald-500">Copiado!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy size={12} />
+                              <span>Copiar</span>
+                            </>
+                          )}
+                        </button>
                       </div>
                     </div>
 
@@ -4090,11 +4155,16 @@ export default function PatientPortalDashboard() {
                       <span className="text-[9px] font-bold text-text-muted uppercase tracking-wider block pl-1">Favorecido / Beneficiário</span>
                       <div className="bg-surface-muted border border-border-ui rounded-xl px-4 py-2.5 h-[40px] flex items-center">
                         <span className="text-xs text-text-main font-semibold truncate">
-                          {psychologistProfile.pixName || psychologistProfile.name || 'Psicólogo(a)'}
+                          {activePixName}
                         </span>
                       </div>
                     </div>
                   </div>
+                </div>
+              ) : (
+                <div className="bg-card border border-border-ui rounded-[24px] p-5 flex items-center gap-3 text-text-muted text-xs">
+                  <Info size={18} className="text-primary shrink-0" />
+                  <span>Chave Pix ainda não cadastrada pelo profissional. Para combinar o pagamento, fale diretamente com seu psicólogo pelo WhatsApp.</span>
                 </div>
               )}
 
@@ -4116,7 +4186,7 @@ export default function PatientPortalDashboard() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs">
                       <thead>
-                        <tr className="bg-[#2E3C2B]/5 text-[#2E3C2B]/60 uppercase tracking-widest text-[9px] border-b border-[#2E3C2B]/10">
+                        <tr className="bg-surface-muted text-text-muted uppercase tracking-widest text-[9px] border-b border-border-ui">
                           <th className="py-4 px-4 font-bold">Data</th>
                           <th className="py-4 px-4 font-bold">Modalidade</th>
                           <th className="py-4 px-4 font-bold">Status da Sessão</th>
@@ -4259,7 +4329,7 @@ export default function PatientPortalDashboard() {
                   <div>
                     <span className="text-[10px] text-text-muted uppercase tracking-wider font-bold block">Documento do Signatário</span>
                     <span className="font-semibold text-text-main">
-                      CPF: {portalData?.contractSignedDocument || portalData?.cpf || 'Não informado'}
+                      {isPT ? 'NIF: ' : 'CPF: '}{portalData?.contractSignedDocument || (portalData as any)?.nif || portalData?.cpf || 'Não informado'}
                     </span>
                   </div>
                   {portalData?.contractSignature && (
