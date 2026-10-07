@@ -1,0 +1,19 @@
+name: SimplePsi WhatsApp Reminders Cron
+
+on:
+  schedule:
+    # Roda a cada 30 minutos das 10h UTC às 23h59 UTC (equivalente a 07h00 até 21h00 em Brasília)
+    - cron: '*/30 10-23 * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger-reminders:
+    name: Executar Robô de Lembretes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Disparar rota cron na Vercel
+        run: |
+          echo "Disparando /api/cron-reminders..."
+          RESPONSE=$(curl -s -X POST https://simplifica-psi.vercel.app/api/cron-reminders)
+          echo "Resposta do robô:"
+          echo "$RESPONSE"

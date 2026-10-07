@@ -1327,6 +1327,48 @@ Como posso te ajudar hoje?`
     };
   }, [user]);
 
+  // Robô de Lembretes Automático: Multi-layer fail-safe
+  // Garante que, independentemente de crons externos da nuvem, o próprio app verifica e dispara
+  // lembretes pendentes automaticamente ao carregar, a cada 10 min e ao reativar a aba.
+  useEffect(() => {
+    if (!user) return;
+
+    const runSilentCronSync = async () => {
+      try {
+        const lastSyncKey = 'simplepsi_last_reminder_cron_sync';
+        const lastSync = localStorage.getItem(lastSyncKey);
+        const now = Date.now();
+        // Cooldown de 10 minutos para não repetir requisições no mesmo minuto
+        if (lastSync && now - parseInt(lastSync, 10) < 10 * 60 * 1000) {
+          return;
+        }
+        localStorage.setItem(lastSyncKey, now.toString());
+        await fetch('/api/cron-reminders', { method: 'POST' });
+      } catch (err) {
+        // Falhas silenciosas de rede não afetam o fluxo da aplicação
+      }
+    };
+
+    // 1. Executa 3 segundos após carregar
+    const initTimer = setTimeout(runSilentCronSync, 3000);
+    // 2. Executa a cada 10 minutos com o app aberto
+    const interval = setInterval(runSilentCronSync, 10 * 60 * 1000);
+
+    // 3. Executa imediatamente quando o profissional retornar à aba
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        runSilentCronSync();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearTimeout(initTimer);
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [user]);
+
   // Auto-garantir documentos do portal e sincronizar dados bidirecionalmente em tempo real
   useEffect(() => {
     if (!user || patients.length === 0) return;
@@ -2857,6 +2899,9 @@ Como posso te ajudar hoje?`
         await syncSessionToGoogleCalendar(sessionData, ref.id);
       }
       
+      // Auto-trigger fail-safe: verificar e enviar lembretes imediatos/véspera caso elegível
+      fetch('/api/cron-reminders', { method: 'POST' }).catch(() => {});
+
       setLastAction({ type: 'add', ids: createdIds });
       setShowUndoToast(true);
       setTimeout(() => setShowUndoToast(false), 8000);
@@ -3082,6 +3127,9 @@ Como posso te ajudar hoje?`
           await updateSessionInGoogleCalendar({ ...data, googleEventId: data.googleEventId });
         }
       }
+
+      // Auto-trigger fail-safe: verificar e enviar lembretes imediatos/véspera caso elegível
+      fetch('/api/cron-reminders', { method: 'POST' }).catch(() => {});
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `sessions/${updatedSession.id}`);
     }
@@ -12866,6 +12914,16 @@ function CalendarView({
                                        session.status === 'Desmarcou' ? 'Desmarcou' : 
                                        session.isTriage ? 'Triagem' : session.type || 'Sessão'}
                                     </span>
+                                    {session.reminderD1Sent && (
+                                      <span className="text-[8px] bg-emerald-500/15 text-emerald-400 font-bold px-1.5 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-0.5" title="Lembrete de confirmação D-1 enviado pelo WhatsApp">
+                                        <CheckCircle2 size={9} /> D-1
+                                      </span>
+                                    )}
+                                    {session.reminderD0Sent && (
+                                      <span className="text-[8px] bg-indigo-500/15 text-indigo-400 font-bold px-1.5 py-0.5 rounded-full border border-indigo-500/30 flex items-center gap-0.5" title="Lembrete imediato D-0 enviado pelo WhatsApp">
+                                        <CheckCircle2 size={9} /> D-0
+                                      </span>
+                                    )}
                                     {session.sessionNumber && (
                                       <span className="text-[9px] text-text-muted font-bold">
                                         #{session.sessionNumber}
@@ -13315,6 +13373,18 @@ function CalendarView({
                            session.status === 'Desmarcou' ? 'Desmarcou' : 
                            session.type}
                         </span>
+                        <div className="flex items-center gap-1.5">
+                          {session.reminderD1Sent && (
+                            <span className="text-[9px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 flex items-center gap-1">
+                              <CheckCircle2 size={10} /> D-1 Enviado
+                            </span>
+                          )}
+                          {session.reminderD0Sent && (
+                            <span className="text-[9px] text-indigo-400 font-bold bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/20 flex items-center gap-1">
+                              <CheckCircle2 size={10} /> D-0 Enviado
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       {!isScheduleAutonomyDisabled && (

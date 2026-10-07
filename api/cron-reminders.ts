@@ -335,8 +335,8 @@ export default async function handler(req: any, res: any) {
         const sessionMinutesOfDay = sHour * 60 + (sMin || 0);
         const diffMinutes = sessionMinutesOfDay - timeInfo.currentMinutesOfDay;
 
-        // Janela de 1h30 (entre 70 e 110 minutos de antecedência no fuso local)
-        return diffMinutes >= 70 && diffMinutes <= 110;
+        // Janela de antecedência flexível: entre 15 e 120 minutos (ideal 1h30, mas não perde o envio se o robô rodar até 15min antes)
+        return diffMinutes >= 15 && diffMinutes <= 120;
       }
       return false;
     });
