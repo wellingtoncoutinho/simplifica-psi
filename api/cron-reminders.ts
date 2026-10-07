@@ -158,9 +158,17 @@ export default async function handler(req: any, res: any) {
     for (const oid of ownerIds) {
       try {
         const pDoc = await db.collection('profiles').doc(oid).get();
-        if (pDoc.exists) {
-          profilesMap.set(oid, pDoc.data());
+        let profData = pDoc.exists ? pDoc.data() : {};
+        if (!profData?.email && isAdmin) {
+          try {
+            const { getAuth } = await import('firebase-admin/auth');
+            const uRecord = await getAuth().getUser(oid);
+            if (uRecord?.email) {
+              profData = { ...profData, email: uRecord.email };
+            }
+          } catch {}
         }
+        profilesMap.set(oid, profData);
       } catch (e: any) {
         console.warn(`Erro ao carregar perfil do psicólogo ${oid}:`, e.message);
       }
@@ -180,12 +188,23 @@ export default async function handler(req: any, res: any) {
     }
 
     const checkWhatsAppAccess = (ownerId: string): { allowD1: boolean; allowD0: boolean } => {
+      // Administrador Wellington e contas admin sempre têm acesso total para disparos
+      if (
+        ownerId === 'xezsKkfVNyUvu7iCeX9lCNPWhbx2' ||
+        ownerId === 'BnlJbXzAmRSzCYAOKbA9rwycLam1'
+      ) {
+        return { allowD1: true, allowD0: true };
+      }
+
       const profile = profilesMap.get(ownerId);
       if (!profile) return { allowD1: false, allowD0: false };
 
       const email = (profile.email || '').toLowerCase().trim();
-      // Administrador Wellington sempre tem acesso para testes do robô
-      if (email === 'wellcoutinho99@gmail.com') {
+      if (
+        email === 'wellcoutinho99@gmail.com' ||
+        email === 'juniorcoutinho58@gmail.com' ||
+        email === 'psiwellingtoncoutinho@gmail.com'
+      ) {
         return { allowD1: true, allowD0: true };
       }
 

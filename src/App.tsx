@@ -4315,9 +4315,10 @@ Como posso te ajudar hoje?`
                     const targetCountry = isWellington ? 'BR' : (data.country || 'BR');
                     await setDoc(doc(db, 'profiles', user.uid), {
                       ...data,
+                      email: user.email || data.email,
                       country: targetCountry,
                       updatedAt: serverTimestamp()
-                    });
+                    }, { merge: true });
                     safeSetStorage('prof_country', targetCountry);
                     if (targetCountry === 'BR') {
                       safeSetStorage('simplepsi_country', 'BR');
