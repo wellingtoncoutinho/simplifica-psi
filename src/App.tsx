@@ -4086,6 +4086,7 @@ Como posso te ajudar hoje?`
                 onAddTransaction={handleAddTransaction}
                 onDeleteTransaction={handleDeleteTransaction}
                 onDeleteSession={handleDeleteSession}
+                isPT={isPT}
               />
             )}
 
@@ -11455,15 +11456,30 @@ Relato:
   );
 }
 
-function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddTransaction, onDeleteTransaction, onDeleteSession }: { 
+function FinanceView({ 
+  sessions, 
+  transactions, 
+  patients, 
+  onUpdateSession, 
+  onAddTransaction, 
+  onDeleteTransaction, 
+  onDeleteSession,
+  isPT: isPTProp
+}: { 
   sessions: any[], 
   transactions: any[], 
   patients: any[],
   onUpdateSession: (session: any) => void,
   onAddTransaction: (data: any) => void,
   onDeleteTransaction: (id: string) => void,
-  onDeleteSession: (id: string) => void
+  onDeleteSession: (id: string) => void,
+  isPT?: boolean
 }) {
+  const isPT = isPTProp ?? (typeof window !== 'undefined' && (
+    localStorage.getItem('simplepsi_country') === 'PT' ||
+    localStorage.getItem('prof_country') === 'PT' ||
+    window.location.pathname.startsWith('/pt')
+  ));
   const [filter, setFilter] = useState<'all' | 'paid' | 'pending'>('all');
   const [currentFinanceDate, setCurrentFinanceDate] = useState(new Date());
   const [selectedPatientId, setSelectedPatientId] = useState<string>('all');
@@ -11936,13 +11952,13 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
       <section className="glass-card rounded-[32px] overflow-hidden border border-white/5 shadow-2xl">
         <div className="p-8 border-b border-white/5 flex flex-col md:flex-row items-center justify-between gap-4 bg-white/5">
           <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-            <h4 className="font-bold text-lg text-text-main uppercase tracking-widest">Controle de Atendimentos</h4>
+            <h4 className="font-bold text-lg text-text-main uppercase tracking-widest">{isPT ? 'Controlo de Consultas' : 'Controle de Atendimentos'}</h4>
             <select
               value={selectedPatientId}
               onChange={(e) => setSelectedPatientId(e.target.value)}
               className="text-xs font-bold bg-card border border-border-ui rounded-xl px-4 py-2 text-text-main outline-none focus:border-primary cursor-pointer shadow-sm"
             >
-              <option value="all" className="bg-card text-text-main font-bold">TODOS OS PACIENTES</option>
+              <option value="all" className="bg-card text-text-main font-bold">{isPT ? 'TODOS OS UTENTES' : 'TODOS OS PACIENTES'}</option>
               {patients.map(p => (
                 <option key={p.id} value={p.id} className="bg-card text-text-main">{p.name}</option>
               ))}
@@ -11996,11 +12012,11 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
           <table className="w-full text-left hidden md:table">
             <thead>
               <tr className="bg-surface-muted text-[10px] text-text-muted font-bold uppercase tracking-widest">
-                <th className="px-8 py-4">Paciente / Sessão</th>
-                <th className="px-8 py-4">Data / Horário</th>
+                <th className="px-8 py-4">{isPT ? 'Utente / Consulta' : 'Paciente / Sessão'}</th>
+                <th className="px-8 py-4">{isPT ? 'Data / Hora' : 'Data / Horário'}</th>
                 <th className="px-8 py-4">Valor</th>
-                <th className="px-8 py-4">Status Pagamento</th>
-                <th className="px-8 py-4">Nota Fiscal</th>
+                <th className="px-8 py-4">{isPT ? 'Estado Pagamento' : 'Status Pagamento'}</th>
+                <th className="px-8 py-4">{isPT ? 'Recibo' : 'Nota Fiscal'}</th>
                 <th className="px-8 py-4 text-center">Ações</th>
               </tr>
             </thead>
@@ -12012,11 +12028,11 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
                     <td className="px-8 py-5">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-lg bg-surface-muted flex items-center justify-center text-xs font-bold text-text-muted group-hover:text-primary transition-colors">
-                          {session.isTriage ? 'T' : (p?.name?.[0] || 'P')}
+                          {session.isTriage ? 'T' : (p?.name?.[0] || (isPT ? 'U' : 'P'))}
                         </div>
                         <div>
-                          <p className="text-sm font-bold text-text-main uppercase">{p?.name || session.triageName || 'Paciente'}</p>
-                          <p className="text-[10px] text-text-muted uppercase tracking-tighter">{session.type} • {p?.cpf || p?.document ? `CPF: ${p.cpf || p.document}` : 'SEM CPF'}</p>
+                          <p className="text-sm font-bold text-text-main uppercase">{p?.name || session.triageName || (isPT ? 'Utente' : 'Paciente')}</p>
+                          <p className="text-[10px] text-text-muted uppercase tracking-tighter">{session.type} • {p?.cpf || p?.document || p?.nif ? `${isPT ? 'NIF' : 'CPF'}: ${p.nif || p.cpf || p.document}` : (isPT ? 'SEM NIF' : 'SEM CPF')}</p>
                         </div>
                       </div>
                     </td>
@@ -12050,7 +12066,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
                             ? "bg-primary/10 text-primary border-primary/20" 
                             : "bg-surface-muted text-text-muted border-transparent hover:border-border-ui"
                         )}
-                        title={session.nfIssued ? "NF Emitida" : "Marcar NF Emitida"}
+                        title={session.nfIssued ? (isPT ? "Recibo Emitido" : "NF Emitida") : (isPT ? "Emitir Recibo" : "Marcar NF Emitida")}
                       >
                         <Receipt size={18} />
                       </button>
@@ -12058,12 +12074,12 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
                     <td className="px-8 py-5 text-center">
                       <button 
                         onClick={() => {
-                          if (confirm('Tem certeza que deseja excluir este registro de atendimento? Esta ação é irreversível.')) {
+                          if (confirm(isPT ? 'Tem a certeza que deseja eliminar este registo de consulta? Esta ação é irreversível.' : 'Tem certeza que deseja excluir este registro de atendimento? Esta ação é irreversível.')) {
                             onDeleteSession(session.id);
                           }
                         }}
                         className="p-2 rounded-xl text-text-muted hover:text-red-500 transition-colors"
-                        title="Excluir Atendimento"
+                        title={isPT ? "Eliminar Consulta" : "Excluir Atendimento"}
                       >
                         <Trash2 size={18} />
                       </button>
@@ -12074,7 +12090,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
               {displaySessions.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-8 py-20 text-center text-text-muted uppercase text-xs tracking-widest opacity-50">
-                    Nenhum registro encontrado para este filtro.
+                    {isPT ? 'Nenhum registo encontrado para este filtro.' : 'Nenhum registro encontrado para este filtro.'}
                   </td>
                 </tr>
               )}
@@ -12089,8 +12105,8 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
                 <div key={session.id} className="p-4 space-y-4">
                   <div className="flex justify-between items-start">
                     <div>
-                      <p className="text-sm font-bold text-text-main uppercase">{p?.name || session.triageName || 'Paciente'}</p>
-                      <p className="text-[10px] text-text-muted uppercase tracking-tighter">{format(new Date(session.date + 'T12:00:00'), 'dd/MM/yyyy')} • {session.time} • {session.type} • {p?.cpf || p?.document ? `CPF: ${p.cpf || p.document}` : 'SEM CPF'}</p>
+                      <p className="text-sm font-bold text-text-main uppercase">{p?.name || session.triageName || (isPT ? 'Utente' : 'Paciente')}</p>
+                      <p className="text-[10px] text-text-muted uppercase tracking-tighter">{format(new Date(session.date + 'T12:00:00'), 'dd/MM/yyyy')} • {session.time} • {session.type} • {p?.cpf || p?.document || p?.nif ? `${isPT ? 'NIF' : 'CPF'}: ${p.nif || p.cpf || p.document}` : (isPT ? 'SEM NIF' : 'SEM CPF')}</p>
                     </div>
                     <p className="text-sm font-bold text-text-main font-mono">{formatCurrency(parseFloat(session.amount) || parseFloat(p?.amount) || 0)}</p>
                   </div>
@@ -12110,12 +12126,14 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
                         "w-12 flex items-center justify-center rounded-xl border transition-all",
                         session.nfIssued ? "bg-primary/10 text-primary border-primary/20" : "bg-surface-muted text-text-muted border-transparent"
                       )}
+                      title={session.nfIssued ? (isPT ? "Recibo Emitido" : "NF Emitida") : (isPT ? "Emitir Recibo" : "Marcar NF Emitida")}
                     >
                       <Receipt size={18} />
                     </button>
                     <button 
                       onClick={() => onDeleteSession(session.id)}
                       className="w-12 flex items-center justify-center rounded-xl bg-red-500/10 text-red-500"
+                      title={isPT ? "Eliminar Consulta" : "Excluir Atendimento"}
                     >
                       <Trash2 size={18} />
                     </button>
@@ -12125,7 +12143,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
             })}
             {displaySessions.length === 0 && (
               <div className="p-12 text-center text-text-muted uppercase text-[10px] tracking-widest opacity-50">
-                Nenhum registro.
+                {isPT ? 'Nenhum registo.' : 'Nenhum registro.'}
               </div>
             )}
           </div>
@@ -12189,7 +12207,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
                     onClick={() => onDeleteTransaction(expense.id)}
                     className="w-full py-2.5 rounded-xl bg-red-500/10 text-red-500 text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2"
                   >
-                    <Trash2 size={14} /> Excluir Despesa
+                    <Trash2 size={14} /> {isPT ? 'Eliminar Despesa' : 'Excluir Despesa'}
                   </button>
                 </div>
               ))}
@@ -12219,7 +12237,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
                   <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Descrição</label>
                   <input 
                     type="text"
-                    placeholder="Ex: Aluguel, Luz, Software..."
+                    placeholder={isPT ? "Ex: Renda, Eletricidade, Software..." : "Ex: Aluguel, Luz, Software..."}
                     value={expenseForm.description}
                     onChange={(e) => setExpenseForm({...expenseForm, description: e.target.value})}
                     className="w-full bg-surface-muted border border-border-ui rounded-xl px-4 py-3 text-sm text-text-main outline-none focus:border-red-500"
@@ -12227,7 +12245,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">Valor (R$)</label>
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest pl-1">{isPT ? 'Valor (€)' : 'Valor (R$)'}</label>
                     <input 
                       type="number"
                       placeholder="0.00"
@@ -12257,7 +12275,7 @@ function FinanceView({ sessions, transactions, patients, onUpdateSession, onAddT
                     onClick={handleSaveExpense}
                     className="flex-[2] bg-red-500 text-white py-4 rounded-2xl font-bold hover:bg-red-600 shadow-lg shadow-red-500/20 transition-all uppercase text-[10px] tracking-widest"
                   >
-                    Salvar Despesa
+                    {isPT ? 'Guardar Despesa' : 'Salvar Despesa'}
                   </button>
                 </div>
               </div>

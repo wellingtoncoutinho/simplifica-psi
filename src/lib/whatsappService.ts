@@ -114,6 +114,7 @@ export async function sendD1ConfirmationReminder(
   const formattedDate = `${dayName}, ${day}/${month}`;
   const formattedTime = session.time || '10:00';
   const psyName = psychologistName || session.psychologistName || 'Seu psicólogo';
+  const isPT = formattedPhone.startsWith('351');
 
   const payload = {
     messaging_product: 'whatsapp',
@@ -123,7 +124,7 @@ export async function sendD1ConfirmationReminder(
     template: {
       name: 'lembrete_sessao_confirmacao',
       language: {
-        code: 'pt_BR',
+        code: isPT ? 'pt_PT' : 'pt_BR',
       },
       components: [
         {
@@ -232,6 +233,8 @@ export async function sendD0StartReminder(
     meetingInfo = 'Sessão online (seu psicólogo enviará o link da chamada em instantes).';
   }
 
+  const isPT = formattedPhone.startsWith('351');
+
   const payload = {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
@@ -240,7 +243,7 @@ export async function sendD0StartReminder(
     template: {
       name: 'lembrete_sessao_inicio',
       language: {
-        code: 'pt_BR',
+        code: isPT ? 'pt_PT' : 'pt_BR',
       },
       components: [
         {
@@ -288,6 +291,7 @@ export async function sendWhatsAppCancellationAlert(
 ) {
   const cfg = config || getWhatsAppConfig();
   const formattedPhone = formatWhatsAppPhone(to);
+  const isPT = formattedPhone.startsWith('351');
 
   const payload = {
     messaging_product: 'whatsapp',
@@ -297,7 +301,7 @@ export async function sendWhatsAppCancellationAlert(
     template: {
       name: 'notificacao_cancelamento_psi',
       language: {
-        code: 'pt_BR',
+        code: isPT ? 'pt_PT' : 'pt_BR',
       },
       components: [
         {
