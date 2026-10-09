@@ -248,30 +248,66 @@ export function WhatsAppRemindersPanel({
   // Montar lista unificada das próximas sessões da agenda
   const upcomingSessions = useMemo(() => {
     const list: any[] = [];
-    const todayStr = new Date().toISOString().split('T')[0];
+    const targetTz = isPT ? 'Europe/Lisbon' : 'America/Sao_Paulo';
+    const now = new Date();
 
-    // 1. Sessões gravadas
+    const getTzYMD = (date: Date) => {
+      const parts = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: targetTz,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).formatToParts(date);
+      const year = parts.find(p => p.type === 'year')?.value;
+      const month = parts.find(p => p.type === 'month')?.value;
+      const day = parts.find(p => p.type === 'day')?.value;
+      return `${year}-${month}-${day}`;
+    };
+
+    const todayStr = getTzYMD(now);
+    const [todayY, todayM, todayD] = todayStr.split('-').map(Number);
+
+    const nowParts = new Intl.DateTimeFormat('pt-BR', {
+      timeZone: targetTz,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(now).split(':').map(Number);
+    const currentMinutes = (nowParts[0] || 0) * 60 + (nowParts[1] || 0);
+
+    const weekdays = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+
+    // 1. Sessões gravadas (a partir de hoje no fuso local)
     sessions.forEach(s => {
       if (s.date >= todayStr && s.status !== 'Cancelada') {
         list.push({ ...s, isRecurrentSlot: false });
       }
     });
 
-    // 2. Projetar sessões recorrentes
+    // 2. Projetar sessões recorrentes (utilizando o fuso horário correto para não descompassar dias e datas)
     const nextDays = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() + i);
-      const ymd = d.toISOString().split('T')[0];
-      const weekdays = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
-      return { dateStr: ymd, dayName: weekdays[d.getDay()] };
+      const d = new Date(todayY, todayM - 1, todayD + i, 12, 0, 0);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const dateStr = `${year}-${month}-${day}`;
+      const dayName = weekdays[d.getDay()];
+      return { dateStr, dayName, isToday: i === 0 };
     });
 
     patients.forEach(p => {
       if (p.status === 'Ativo' && p.sessionDay && p.sessionTime) {
-        nextDays.forEach(({ dateStr, dayName }) => {
+        nextDays.forEach(({ dateStr, dayName, isToday }) => {
           if (p.sessionDay === dayName) {
             const hasRecorded = list.some(s => s.patientId === p.id && s.date === dateStr);
             if (hasRecorded) return;
+
+            // Se for hoje e o horário da sessão já passou, não deve projetar lembrete futuro virtual
+            if (isToday) {
+              const [sH, sM] = (p.sessionTime || '00:00').split(':').map(Number);
+              const sessionMinutes = (sH || 0) * 60 + (sM || 0);
+              if (sessionMinutes <= currentMinutes) return;
+            }
 
             const pRecurrenceStart = p.recurrenceStart || p.firstSessionDate || p.createdAt || '2024-01-01';
             const startDateObj = new Date(pRecurrenceStart.split('T')[0] + 'T00:00:00');
@@ -308,7 +344,7 @@ export function WhatsAppRemindersPanel({
     });
 
     return list.sort((a, b) => new Date(`${a.date}T${a.time || '00:00'}`).getTime() - new Date(`${b.date}T${b.time || '00:00'}`).getTime());
-  }, [sessions, patients]);
+  }, [sessions, patients, isPT]);
 
   return (
     <div className="space-y-6">

@@ -822,6 +822,7 @@ Como posso te ajudar hoje?`
     signatureText: safeGetStorage('prof_signature_text'),
     pixKey: safeGetStorage('prof_pix_key'),
     pixType: safeGetStorage('prof_pix_type'),
+    pixName: safeGetStorage('prof_pix_name'),
     country: (() => {
       const crp = safeGetStorage('prof_crp');
       const pix = safeGetStorage('prof_pix_key');
@@ -2703,7 +2704,7 @@ Como posso te ajudar hoje?`
                });
 
                // Update all future scheduled sessions for this patient to the new day of the week & time
-               const todayStr = new Date().toISOString().split('T')[0];
+               const todayStr = format(new Date(), 'yyyy-MM-dd');
                const patientSessionsToUpdate = sessions.filter(s => 
                  s.patientId === p.id && 
                  s.status === 'Agendada' && 
@@ -2999,7 +3000,7 @@ Como posso te ajudar hoje?`
 
       // If default schedule day/time, recurrence, recurrence start date, or modality changed, update/align future scheduled sessions
       if (isDayChanged || isTimeChanged || isRecurrenceChanged || isRecurrenceStartChanged || isModalityChanged) {
-        const todayStr = new Date().toISOString().split('T')[0];
+        const todayStr = format(new Date(), 'yyyy-MM-dd');
         const patientSessionsToUpdate = sessions.filter(s => 
           s.patientId === id && 
           s.status === 'Agendada' && 
@@ -5570,7 +5571,7 @@ function DashboardView({
 function getNextDateForWeekday(targetDayName: string, allowToday = false): string {
   const days = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
   const targetDayIndex = days.indexOf(targetDayName);
-  if (targetDayIndex === -1) return new Date().toISOString().split('T')[0];
+  if (targetDayIndex === -1) return format(new Date(), 'yyyy-MM-dd');
   const today = new Date();
   const currentDayIndex = today.getDay();
   let diff = targetDayIndex - currentDayIndex;
@@ -5579,7 +5580,7 @@ function getNextDateForWeekday(targetDayName: string, allowToday = false): strin
   }
   const targetDate = new Date(today);
   targetDate.setDate(today.getDate() + diff);
-  return targetDate.toISOString().split('T')[0];
+  return format(targetDate, 'yyyy-MM-dd');
 }
 
 function AddPatientModal({ 

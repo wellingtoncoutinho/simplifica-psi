@@ -188,34 +188,32 @@ export default async function handler(req: any, res: any) {
     }
 
     const checkWhatsAppAccess = (ownerId: string): { allowD1: boolean; allowD0: boolean } => {
-      // Administrador Wellington e contas admin sempre têm acesso total para disparos
+      const profile = profilesMap.get(ownerId);
+      const email = (profile?.email || '').toLowerCase().trim();
+
+      // REGRA ESTRITA: Apenas o Wellington (sua conta principal wellcoutinho99@gmail.com) tem permissão direta de administrador
       if (
         ownerId === 'xezsKkfVNyUvu7iCeX9lCNPWhbx2' ||
-        ownerId === 'BnlJbXzAmRSzCYAOKbA9rwycLam1'
+        email === 'wellcoutinho99@gmail.com'
       ) {
         return { allowD1: true, allowD0: true };
       }
 
-      const profile = profilesMap.get(ownerId);
+      // Bloqueio categórico: nenhum outro usuário vitalício legado (authorized_emails ou lifetime) recebe WhatsApp
+      if (authEmailsSet.has(email) || profile?.plan === 'lifetime' || profile?.subscription?.plan === 'lifetime') {
+        return { allowD1: false, allowD0: false };
+      }
+
       if (!profile) return { allowD1: false, allowD0: false };
 
-      const email = (profile.email || '').toLowerCase().trim();
-      if (
-        email === 'wellcoutinho99@gmail.com' ||
-        email === 'juniorcoutinho58@gmail.com' ||
-        email === 'psiwellingtoncoutinho@gmail.com'
-      ) {
-        return { allowD1: true, allowD0: true };
-      }
-
       // Regra de Negócio: Lembretes de WhatsApp via Meta Graph API possuem custo unitário por disparo.
-      // Usuários com licença vitalícia mantêm acesso perpétuo a todo o sistema, MAS NÃO aos disparos automáticos de WhatsApp.
-      // Para ter o robô de WhatsApp, o profissional precisa de uma assinatura mensal ativa (Consultório ou Ilimitado).
+      // Usuários com licença vitalícia ou já cadastrados não recebem disparos.
+      // Apenas futuros psicólogos que realizarem assinatura MENSAL PAGA ATIVA (Consultório ou Ilimitado) têm acesso ao robô.
       const sub = profile.subscription;
       const plan = sub?.plan;
       const status = sub?.status;
 
-      // Se não tiver assinatura mensal ativa, não dispara WhatsApp
+      // Se não tiver assinatura mensal paga ativa ('active'), bloqueia 100%
       if (status !== 'active' || !plan) {
         return { allowD1: false, allowD0: false };
       }
@@ -230,7 +228,7 @@ export default async function handler(req: any, res: any) {
         return { allowD1: true, allowD0: false };
       }
 
-      // Plano Start / Gratuito: sem disparos automáticos
+      // Qualquer outro plano: sem disparos automáticos
       return { allowD1: false, allowD0: false };
     };
 
