@@ -24,6 +24,7 @@ import {
   parseMigrationDataWithGemini, 
   saveImportedPatientsToFirestore 
 } from '../utils/migrationParser';
+import { getGeminiApiKey } from '../lib/gemini';
 
 interface DataMigrationModalProps {
   isOpen: boolean;
@@ -112,9 +113,9 @@ export function DataMigrationModal({
 
   const handleStartProcessing = async () => {
     if (files.length === 0) return;
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = getGeminiApiKey();
     if (!apiKey) {
-      alert("Chave da API Gemini não encontrada nas variáveis de ambiente (VITE_GEMINI_API_KEY).");
+      alert("Chave da API Gemini não encontrada nas variáveis de ambiente.");
       return;
     }
 

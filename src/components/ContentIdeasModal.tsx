@@ -26,6 +26,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Patient } from '../types';
 import { cn } from '../lib/utils';
+import { getGeminiApiKey, generateGeminiContentWithFallback } from '../lib/gemini';
 
 export interface ContentIdea {
   id: string;
@@ -62,62 +63,7 @@ const TIMEFRAME_OPTIONS = [
   { id: 'all_recent', label: 'Últimas 3 sessões de cada paciente' },
 ];
 
-async function generateContentWithFallback(
-  ai: any,
-  options: {
-    model?: string;
-    contents: any;
-    config?: any;
-  }
-) {
-  const modelsToTry = [
-    "gemini-3.5-flash",
-    "gemini-3.5-flash-lite",
-    "gemini-3.8-flash",
-    "gemini-flash-latest",
-  ];
-  
-  const modelQueue = options.model 
-    ? [options.model, ...modelsToTry.filter(m => m !== options.model)]
-    : modelsToTry;
-
-  let lastError: any = null;
-
-  for (const model of modelQueue) {
-    let attempts = 2;
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      try {
-        console.log(`[ContentIdeas] Trying Gemini model: ${model} (attempt ${attempt}/${attempts})`);
-        const response = await ai.models.generateContent({
-          ...options,
-          model: model,
-        });
-        return response;
-      } catch (err: any) {
-        lastError = err;
-        const msg = String(err?.message || err);
-        console.warn(`[ContentIdeas] Error on model ${model} (attempt ${attempt}):`, msg);
-        
-        const isTransient = 
-          msg.includes('503') || 
-          msg.includes('UNAVAILABLE') || 
-          msg.includes('high demand') ||
-          msg.includes('429') || 
-          msg.includes('RESOURCE_EXHAUSTED') || 
-          msg.includes('quota');
-
-        if (isTransient && attempt < attempts) {
-          const waitMs = msg.includes('429') ? 2000 : 500 * attempt;
-          await new Promise(r => setTimeout(r, waitMs));
-        } else {
-          break;
-        }
-      }
-    }
-  }
-
-  throw lastError || new Error("Falha ao comunicar com os modelos Gemini.");
-}
+const generateContentWithFallback = generateGeminiContentWithFallback;
 
 export default function ContentIdeasModal({ isOpen, onClose, patients, user }: ContentIdeasModalProps) {
   const [selectedTheme, setSelectedTheme] = useState('all');
@@ -280,9 +226,9 @@ function parseCustomDate(dateStr: string): Date | null {
 
   const handleGenerate = async (overrideKey?: any) => {
     const passedKey = typeof overrideKey === 'string' ? overrideKey : '';
-    const keyToUse = (passedKey || import.meta.env.VITE_GEMINI_API_KEY || localStorage.getItem('simplepsi_gemini_api_key') || '').trim();
+    const keyToUse = getGeminiApiKey(passedKey);
     if (!keyToUse) {
-      alert("Chave da API do Gemini não configurada no ambiente. Verifique o arquivo .env.");
+      alert("Chave da API do Gemini não configurada no ambiente.");
       return;
     }
 

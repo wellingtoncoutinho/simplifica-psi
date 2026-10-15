@@ -27,68 +27,9 @@ import {
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { GoogleGenAI } from "@google/genai";
+import { getGeminiApiKey, generateGeminiContentWithFallback } from './lib/gemini';
 
-async function generateContentWithFallback(
-  ai: any,
-  options: {
-    model?: string;
-    contents: any;
-    config?: any;
-  }
-) {
-  const modelsToTry = [
-    "gemini-3.8-flash",
-    "gemini-3.5-flash",
-    "gemini-3.5-flash-lite",
-    "gemini-flash-latest",
-  ];
-  
-  const requestedModel = (options.model && !options.model.includes('2.5'))
-    ? options.model
-    : "gemini-3.8-flash";
-
-  const modelQueue = [
-    requestedModel,
-    ...modelsToTry.filter(m => m !== requestedModel)
-  ];
-
-  let lastError: any = null;
-
-  for (const model of modelQueue) {
-    let attempts = 2;
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      try {
-        console.log(`Trying Gemini with model: ${model} (attempt ${attempt}/${attempts})`);
-        const response = await ai.models.generateContent({
-          ...options,
-          model: model,
-        });
-        return response;
-      } catch (err: any) {
-        lastError = err;
-        const msg = String(err?.message || err);
-        console.warn(`Error on model ${model} (attempt ${attempt}):`, msg);
-        
-        const isTransient = 
-          msg.includes('503') || 
-          msg.includes('UNAVAILABLE') || 
-          msg.includes('high demand') ||
-          msg.includes('429') || 
-          msg.includes('RESOURCE_EXHAUSTED') || 
-          msg.includes('quota');
-
-        if (isTransient && attempt < attempts) {
-          const waitMs = msg.includes('429') ? 2000 : 500 * attempt;
-          await new Promise(resolve => setTimeout(resolve, waitMs));
-          continue;
-        }
-        break;
-      }
-    }
-  }
-  
-  throw lastError;
-}
+const generateContentWithFallback = generateGeminiContentWithFallback;
 
 function safeJsonParse(rawText: string): any {
   // Strip markdown code fences
@@ -2077,7 +2018,7 @@ Como posso te ajudar hoje?`
         status: 'Nova Sugestão'
       };
       await setDoc(doc(db, 'support_tickets', docId), ticketData, { merge: true });
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      const apiKey = getGeminiApiKey();
       if (!apiKey) {
         setSupportMessages(prev => [...prev, {
           role: 'model',
@@ -7198,7 +7139,7 @@ function PatientDetailsView({
       }
     }
 
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = getGeminiApiKey();
     if (!apiKey) {
       alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
       return;
@@ -7331,7 +7272,7 @@ function PatientDetailsView({
       }
     }
 
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = getGeminiApiKey();
     if (!apiKey) {
       alert("Chave da API do Gemini não configurada.");
       return;
@@ -7472,7 +7413,7 @@ function PatientDetailsView({
       return;
     }
     if (!patient) return;
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = getGeminiApiKey();
     if (!apiKey) {
       alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
       return;
@@ -7644,7 +7585,7 @@ function PatientDetailsView({
       alert("O uso de Inteligência Artificial para Planejamento de Sessões foi desativado pela clínica.");
       return;
     }
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = getGeminiApiKey();
     if (!apiKey) {
       alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
       return;
@@ -7908,7 +7849,7 @@ function PatientDetailsView({
   };
 
   const transcribeAudio = async (blob: Blob) => {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = getGeminiApiKey();
     if (!apiKey) {
       alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
       return;
@@ -8056,7 +7997,7 @@ function PatientDetailsView({
     if (!transcriptionText.trim()) return;
     if (!checkAndConsumeDailyAiUsage()) return;
     
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = getGeminiApiKey();
     if (!apiKey) {
       alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
       return;
@@ -8155,7 +8096,7 @@ TRANSCRIÇÃO / ANOTAÇÕES BRUTAS DA SESSÃO:
       alert("A geração de Prontuários CFP com IA foi desativada pela clínica.");
       return;
     }
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = getGeminiApiKey();
     if (!apiKey) {
       alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
       return;
@@ -8335,7 +8276,7 @@ Relato:
       return;
     }
 
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = getGeminiApiKey();
     if (!apiKey) {
       alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
       return;
@@ -8644,7 +8585,7 @@ Relato:
 
     setIsGeneratingAI(true);
     try {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = getGeminiApiKey();
     if (!apiKey) {
       setIsGeneratingAI(false);
       alert("Chave da API do Gemini não configurada. Verifique o arquivo .env.");
@@ -14633,7 +14574,7 @@ function ImportTranscriptView({
     }
 
     setIsAiLoading(true);
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = getGeminiApiKey();
     if (!apiKey) {
       setAiMessages(prev => [...prev, 
         { role: 'user', content: `Executar: ${actionType === 'relato' ? 'Relato Completo' : actionType === 'proxima_sessao' ? 'Próxima Sessão' : 'Supervisão Clínica'}` },
@@ -14753,7 +14694,7 @@ function ImportTranscriptView({
     setAiMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setIsAiLoading(true);
 
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = getGeminiApiKey();
     if (!apiKey) {
       setAiMessages(prev => [...prev, { role: 'model', content: "Erro: A chave de API do Gemini não está configurada (VITE_GEMINI_API_KEY)." }]);
       setIsAiLoading(false);
