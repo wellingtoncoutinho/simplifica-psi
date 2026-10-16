@@ -422,9 +422,6 @@ Gere entre 4 e 6 ideias profundas, diversificadas e ricas. Retorne APENAS o JSON
               <h2 className="text-lg sm:text-xl font-bold tracking-tight text-white flex items-center gap-2">
                 Laboratório de Conteúdo & Dores Clínicas
               </h2>
-              <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-bold uppercase tracking-wider border border-emerald-500/20">
-                <ShieldCheck size={12} /> Exclusivo Wellington
-              </span>
             </div>
             <p className="text-xs text-text-muted leading-relaxed max-w-2xl">
               Cruza queixas, conflitos e relatos recentes das sessões para extrair <strong className="text-emerald-400 font-semibold">dores invisíveis</strong> e reflexões de alta identificação para suas redes — 100% anonimizado e sem violar o sigilo.
