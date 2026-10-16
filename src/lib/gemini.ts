@@ -7,8 +7,18 @@ import { GoogleGenAI } from '@google/genai';
  */
 const SUSPENDED_KEYS = new Set([
   'AIzaSyAMCIOPEy1gMJUtJq4SM_r9ZWfbQFFH648',
+  'AIzaSyAMClOPEy1gMJUtJq4SM_r9ZWfbQFFH648',
   'AIzaSyDjrxSHcdWHamCwgwNniBueEll_XrM7A3Q',
 ]);
+
+export function isKeySuspended(key?: string): boolean {
+  if (!key) return true;
+  const trimmed = key.trim();
+  if (trimmed.startsWith('AIzaSyAM') || trimmed.startsWith('AIzaSyDj')) {
+    return true;
+  }
+  return SUSPENDED_KEYS.has(trimmed);
+}
 
 /**
  * Chave ativa padrão do SimplePsi no Google AI Studio (verificada e ativa com modelos 3.5).
@@ -49,13 +59,13 @@ export function getGeminiApiKey(customKey?: string): string {
   const fallback = DEFAULT_ACTIVE_GEMINI_KEY || getFallbackActiveKey();
 
   const custom = (customKey || '').trim();
-  if (custom && !SUSPENDED_KEYS.has(custom)) {
+  if (custom && !isKeySuspended(custom)) {
     return custom;
   }
 
   const userStoredKey = (typeof window !== 'undefined' ? (localStorage.getItem('simplepsi_gemini_api_key') || '') : '').trim();
   if (userStoredKey) {
-    if (SUSPENDED_KEYS.has(userStoredKey)) {
+    if (isKeySuspended(userStoredKey)) {
       try {
         localStorage.removeItem('simplepsi_gemini_api_key');
       } catch {}
@@ -65,7 +75,7 @@ export function getGeminiApiKey(customKey?: string): string {
   }
 
   const envKey = (import.meta.env?.VITE_GEMINI_API_KEY || '').trim();
-  if (envKey && !SUSPENDED_KEYS.has(envKey)) {
+  if (envKey && !isKeySuspended(envKey)) {
     return envKey;
   }
 
