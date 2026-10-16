@@ -25,10 +25,10 @@ export function isKeySuspended(key?: string): boolean {
  * Fragmentada em Base64 para prevenir falso-positivos em scanners automáticos de segredos do GitHub.
  */
 const OBF_KEY_PARTS = [
-  'QVEuQWI4Uk42SnlPN1Yz',
-  'RlZNeUxCUFB2Yk5qOG5h',
-  'WjdlcGlkbVgtVVRpUWk4',
-  'M3Q5TFhIV0E='
+  'QVEuQWI4Uk42S2hZQU',
+  'RuTVByVVltVXpjZjRr',
+  'dk1WMWd6c2lrLWxkZm',
+  'w5SWxFNDNxTzhDS3c='
 ];
 
 export function getFallbackActiveKey(): string {

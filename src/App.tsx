@@ -160,7 +160,8 @@ import {
   UserCheck,
   Eye,
   EyeOff,
-  Camera
+  Camera,
+  Stethoscope
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency, getWhatsAppLink, formatPatientFrequency, getPatientLastSessionInfo } from './lib/utils';
@@ -6951,6 +6952,11 @@ function PatientDetailsView({
   const [isGeneratingTccAi, setIsGeneratingTccAi] = useState(false);
   const [isGeneratingApproachAi, setIsGeneratingApproachAi] = useState(false);
   const [isGeneratingNextSession, setIsGeneratingNextSession] = useState(false);
+
+  // Psychiatrist summary states
+  const [isPsychiatristModalOpen, setIsPsychiatristModalOpen] = useState(false);
+  const [psychiatristSummaryText, setPsychiatristSummaryText] = useState('');
+  const [isCopiedPsychiatristText, setIsCopiedPsychiatristText] = useState(false);
   
   // Treatment plan states
   const [newGoalText, setNewGoalText] = useState("");
@@ -7405,6 +7411,93 @@ function PatientDetailsView({
         treatmentNotes: localTreatmentNotes
       }
     });
+  };
+
+  const generatePsychiatristSummaryText = () => {
+    const today = format(new Date(), 'dd/MM/yyyy');
+    const psychologistName = profileSettings?.name || user?.displayName || 'Psicólogo(a)';
+    const crpOrOpp = profileSettings?.crp ? `CRP ${profileSettings.crp}` : profileSettings?.opp ? `OPP ${profileSettings.opp}` : '';
+    const profHeader = crpOrOpp ? `${psychologistName} (${crpOrOpp})` : psychologistName;
+
+    // 1. Queixas e Questões Situacionais
+    let problemList = (localTccData?.problemList || '').trim();
+    if (!problemList && localPsychoanalysisData?.manifestDemand) {
+      problemList = `Demanda Manifesta: ${localPsychoanalysisData.manifestDemand}\nDemanda Latente: ${localPsychoanalysisData.latentDemand || ''}`.trim();
+    }
+    if (!problemList && localGestaltData?.figureAndGround) {
+      problemList = localGestaltData.figureAndGround.trim();
+    }
+    if (!problemList && patient?.clinicalData?.anamnese?.mainComplaint) {
+      problemList = patient.clinicalData.anamnese.mainComplaint.trim();
+    }
+    if (!problemList) problemList = 'Não informado nas anotações clínicas.';
+
+    // 2. História de Vida / Contexto
+    let lifeHistory = (localTccData?.lifeHistory || '').trim();
+    if (!lifeHistory && patient?.clinicalData?.anamnese?.lifeHistory) {
+      lifeHistory = patient.clinicalData.anamnese.lifeHistory.trim();
+    }
+    if (!lifeHistory) lifeHistory = 'Não informado nas anotações clínicas.';
+
+    // 3. Diagnóstico e Medicações
+    let diagnosisAndMeds = (localTccData?.diagnosisAndMeds || '').trim();
+    if (!diagnosisAndMeds && patient?.clinicalData?.anamnese?.currentMedication) {
+      diagnosisAndMeds = `Medicações: ${patient.clinicalData.anamnese.currentMedication}`;
+    }
+    if (!diagnosisAndMeds) diagnosisAndMeds = 'Em investigação diagnóstica / Sem relato de medicação.';
+
+    const birthDateStr = patient?.birthDate ? `\n*Nascimento:* ${patient.birthDate}` : '';
+    const professionStr = patient?.profession ? `\n*Profissão:* ${patient.profession}` : '';
+
+    return `*ALINHAMENTO CLÍNICO INTERPROFISSIONAL — PSIQUIATRIA*
+*Paciente:* ${patient?.name || 'Paciente'}${birthDateStr}${professionStr}
+*Psicólogo(a) Responsável:* ${profHeader}
+*Data do Alinhamento:* ${today}
+
+----------------------------------------
+*1. QUEIXAS PRINCIPAIS & QUESTÕES SITUACIONAIS*
+${problemList}
+
+----------------------------------------
+*2. HISTÓRICO CLÍNICO E DE VIDA RELEVANTE*
+${lifeHistory}
+
+----------------------------------------
+*3. HIPÓTESES DIAGNÓSTICAS & MEDICAÇÕES EM USO*
+${diagnosisAndMeds}
+
+----------------------------------------
+_Nota ética: As informações contidas neste documento destinam-se exclusivamente à comunicação interprofissional entre equipe de saúde mental (Psicologia e Psiquiatria), resguardadas por sigilo profissional._`.trim();
+  };
+
+  const handleOpenPsychiatristModal = () => {
+    const text = generatePsychiatristSummaryText();
+    setPsychiatristSummaryText(text);
+    setIsPsychiatristModalOpen(true);
+    setIsCopiedPsychiatristText(true);
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        navigator.clipboard.writeText(text);
+      }
+    } catch (e) {
+      console.warn('Falha no clipboard automático:', e);
+    }
+    setTimeout(() => {
+      setIsCopiedPsychiatristText(false);
+    }, 2500);
+  };
+
+  const handleCopyPsychiatristText = () => {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        navigator.clipboard.writeText(psychiatristSummaryText);
+      }
+      setIsCopiedPsychiatristText(true);
+      setTimeout(() => setIsCopiedPsychiatristText(false), 2500);
+    } catch (e) {
+      console.error(e);
+      alert('Erro ao copiar texto.');
+    }
   };
 
   const handleGenerateTreatmentPlanWithAi = async () => {
@@ -9959,7 +10052,16 @@ Relato:
                             </div>
                           </div>
                           
-                           <div className="flex items-center gap-3">
+                           <div className="flex items-center gap-2 sm:gap-3">
+                            <button 
+                              type="button"
+                              onClick={handleOpenPsychiatristModal}
+                              className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm hover:shadow"
+                              title="Gerar e copiar resumo clínico para alinhamento com psiquiatra"
+                            >
+                              <Stethoscope size={14} />
+                              <span>Copiar p/ Psiquiatra</span>
+                            </button>
                             <button 
                               onClick={handleGenerateTccWithAi}
                               disabled={isGeneratingTccAi}
@@ -10188,7 +10290,16 @@ Relato:
                             </div>
                           </div>
                           
-                           <div className="flex items-center gap-3">
+                           <div className="flex items-center gap-2 sm:gap-3">
+                            <button 
+                              type="button"
+                              onClick={handleOpenPsychiatristModal}
+                              className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm hover:shadow"
+                              title="Gerar e copiar resumo clínico para alinhamento com psiquiatra"
+                            >
+                              <Stethoscope size={14} />
+                              <span>Copiar p/ Psiquiatra</span>
+                            </button>
                             <button 
                               onClick={() => handleGenerateApproachWithAi('psicanalise')}
                               disabled={isGeneratingApproachAi}
@@ -10290,7 +10401,16 @@ Relato:
                             </div>
                           </div>
                           
-                           <div className="flex items-center gap-3">
+                           <div className="flex items-center gap-2 sm:gap-3">
+                            <button 
+                              type="button"
+                              onClick={handleOpenPsychiatristModal}
+                              className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm hover:shadow"
+                              title="Gerar e copiar resumo clínico para alinhamento com psiquiatra"
+                            >
+                              <Stethoscope size={14} />
+                              <span>Copiar p/ Psiquiatra</span>
+                            </button>
                             <button 
                               onClick={() => handleGenerateApproachWithAi('gestalt')}
                               disabled={isGeneratingApproachAi}
@@ -10382,7 +10502,16 @@ Relato:
                             </div>
                           </div>
                           
-                           <div className="flex items-center gap-3">
+                           <div className="flex items-center gap-2 sm:gap-3">
+                            <button 
+                              type="button"
+                              onClick={handleOpenPsychiatristModal}
+                              className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm hover:shadow"
+                              title="Gerar e copiar resumo clínico para alinhamento com psiquiatra"
+                            >
+                              <Stethoscope size={14} />
+                              <span>Copiar p/ Psiquiatra</span>
+                            </button>
                             <button 
                               onClick={() => handleGenerateApproachWithAi('act')}
                               disabled={isGeneratingApproachAi}
@@ -10467,7 +10596,16 @@ Relato:
                             </div>
                           </div>
                           
-                           <div className="flex items-center gap-3">
+                           <div className="flex items-center gap-2 sm:gap-3">
+                            <button 
+                              type="button"
+                              onClick={handleOpenPsychiatristModal}
+                              className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm hover:shadow"
+                              title="Gerar e copiar resumo clínico para alinhamento com psiquiatra"
+                            >
+                              <Stethoscope size={14} />
+                              <span>Copiar p/ Psiquiatra</span>
+                            </button>
                             <button 
                               onClick={() => handleGenerateApproachWithAi('humanista')}
                               disabled={isGeneratingApproachAi}
@@ -11438,6 +11576,111 @@ Relato:
                     </>
                   )}
                 </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {/* Modal: Resumo para Alinhamento com Psiquiatra */}
+        {isPsychiatristModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 animate-in fade-in duration-200"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              className="bg-surface-elevated border border-border-ui max-w-2xl w-full rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              {/* Header */}
+              <div className="p-5 sm:p-6 border-b border-border-ui flex items-center justify-between bg-surface-muted/40">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20">
+                    <Stethoscope size={20} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base sm:text-lg font-bold text-text-main">
+                        Resumo para Psiquiatra
+                      </h3>
+                      {isCopiedPsychiatristText && (
+                        <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <Check size={12} /> Copiado!
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-text-muted">
+                      História clínica, queixas situacionais e hipóteses estruturadas para comunicação interprofissional.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsPsychiatristModalOpen(false)}
+                  className="text-text-muted hover:text-text-main p-2 rounded-xl hover:bg-white/5 transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-text-muted uppercase tracking-wider">
+                    Documento de Alinhamento (edite livremente antes de colar):
+                  </label>
+                  <span className="text-[11px] text-emerald-400">
+                    ✓ Já copiado para sua área de transferência
+                  </span>
+                </div>
+                <textarea
+                  value={psychiatristSummaryText}
+                  onChange={(e) => setPsychiatristSummaryText(e.target.value)}
+                  className="w-full bg-surface-muted border border-border-ui rounded-2xl p-4 text-xs font-mono text-text-main outline-none focus:border-primary min-h-[300px] resize-y leading-relaxed"
+                  placeholder="Conteúdo do resumo clínico..."
+                />
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 sm:p-5 border-t border-border-ui flex items-center justify-between gap-3 bg-surface-muted/30">
+                <button
+                  type="button"
+                  onClick={() => setIsPsychiatristModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-text-muted hover:text-text-main transition-colors"
+                >
+                  Fechar
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <a
+                    href={`https://api.whatsapp.com/send?text=${encodeURIComponent(psychiatristSummaryText)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+                    title="Abrir WhatsApp com o texto pronto"
+                  >
+                    <MessageSquare size={14} /> WhatsApp
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={handleCopyPsychiatristText}
+                    className="bg-primary hover:bg-primary-hover text-surface-main px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
+                  >
+                    {isCopiedPsychiatristText ? (
+                      <>
+                        <Check size={14} /> Copiado!
+                      </>
+                    ) : (
+                      <>
+                        <Copy size={14} /> Copiar Texto
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             </motion.div>
           </motion.div>
