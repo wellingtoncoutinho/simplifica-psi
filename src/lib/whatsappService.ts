@@ -10,7 +10,7 @@ export interface WhatsAppConfig {
 export const getWhatsAppConfig = (): WhatsAppConfig => {
   return {
     phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '1261779623696198',
-    accessToken: process.env.WHATSAPP_ACCESS_TOKEN || 'EAANsmvCEdG8BStLQbLypOXS0wbrRWoRMfsEkPQIn87LhD1uvZAvoQ6kJ71F1sQZADxVSZBudO6T7hfeLZBXcZAxJHwcndzOoZC3THnHSD4NvQbPtH6dFyO0y8tBYPbzbOH6sJHIfsZCldfgOooQggpVubaHbVJB9kZCO0GOHrA1LBpW1pDamTSelwPZCZC72etRwZDZD',
+    accessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
     businessAccountId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || '1604487048142695',
     verifyToken: process.env.WHATSAPP_VERIFY_TOKEN || 'simplifica_psi_secret_token_2026',
   };

@@ -82,7 +82,7 @@ export function WhatsAppRemindersPanel({
   const checkTemplateStatus = async () => {
     setLoading(true);
     try {
-      const token = 'EAANsmvCEdG8BStLQbLypOXS0wbrRWoRMfsEkPQIn87LhD1uvZAvoQ6kJ71F1sQZADxVSZBudO6T7hfeLZBXcZAxJHwcndzOoZC3THnHSD4NvQbPtH6dFyO0y8tBYPbzbOH6sJHIfsZCldfgOooQggpVubaHbVJB9kZCO0GOHrA1LBpW1pDamTSelwPZCZC72etRwZDZD';
+      const token = import.meta.env.VITE_WHATSAPP_ACCESS_TOKEN || '';
       const wabaId = '1604487048142695';
       const res = await fetch(`https://graph.facebook.com/v21.0/${wabaId}/message_templates`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -123,7 +123,7 @@ export function WhatsAppRemindersPanel({
     setLoading(true);
     setTestResult(null);
     try {
-      const token = 'EAANsmvCEdG8BStLQbLypOXS0wbrRWoRMfsEkPQIn87LhD1uvZAvoQ6kJ71F1sQZADxVSZBudO6T7hfeLZBXcZAxJHwcndzOoZC3THnHSD4NvQbPtH6dFyO0y8tBYPbzbOH6sJHIfsZCldfgOooQggpVubaHbVJB9kZCO0GOHrA1LBpW1pDamTSelwPZCZC72etRwZDZD';
+      const token = import.meta.env.VITE_WHATSAPP_ACCESS_TOKEN || '';
       const phoneId = '1261779623696198';
       const targetPhone = formatWhatsAppPhone(manualPhone);
 

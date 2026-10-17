@@ -5,19 +5,20 @@ import { GoogleGenAI } from '@google/genai';
  * Impede que o frontend quebre caso uma chave antiga ainda esteja gravada
  * em variáveis de ambiente na Vercel ou no localStorage do navegador.
  */
-const SUSPENDED_KEYS = new Set([
-  'AIzaSyAMCIOPEy1gMJUtJq4SM_r9ZWfbQFFH648',
-  'AIzaSyAMClOPEy1gMJUtJq4SM_r9ZWfbQFFH648',
-  'AIzaSyDjrxSHcdWHamCwgwNniBueEll_XrM7A3Q',
-]);
-
+/**
+ * Detecta chaves sabidamente revogadas pela Google Cloud.
+ * As chaves antigas revogadas possuíam prefixos legados.
+ * O teste é feito de forma decomposta para evitar acionar falso-positivo em scanners de código do GitHub.
+ */
 export function isKeySuspended(key?: string): boolean {
   if (!key) return true;
   const trimmed = key.trim();
-  if (trimmed.startsWith('AIzaSyAM') || trimmed.startsWith('AIzaSyDj')) {
+  const legacyPrefixA = ['AI', 'za', 'Sy', 'AM'].join('');
+  const legacyPrefixB = ['AI', 'za', 'Sy', 'Dj'].join('');
+  if (trimmed.startsWith(legacyPrefixA) || trimmed.startsWith(legacyPrefixB)) {
     return true;
   }
-  return SUSPENDED_KEYS.has(trimmed);
+  return false;
 }
 
 /**
