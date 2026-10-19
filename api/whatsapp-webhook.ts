@@ -68,6 +68,34 @@ export default async function handler(req: any, res: any) {
       const normalizedAction = (buttonPayload + ' ' + buttonText).toLowerCase();
       console.log(`📩 Mensagem recebida de ${fromPhone}: "${buttonText}" (payload: "${buttonPayload}")`);
 
+      // ─── REPASSE INTELIGENTE PARA GAIOLA 802 ──────────────────────────────────
+      // Se for uma confirmação de tarefa da Gaiola 802 (lixo ou manutenção), repassa para o webhook da Gaiola:
+      const isGaiolaChore =
+        buttonPayload.startsWith('CONFIRM_TRASH_') ||
+        buttonPayload.startsWith('CONFIRM_CLEANING_') ||
+        buttonPayload === 'CONFIRM_TRASH' ||
+        buttonPayload === 'CONFIRM_CLEANING' ||
+        normalizedAction.includes('confirmar retirada') ||
+        normalizedAction.includes('limpeza concluída') ||
+        normalizedAction.includes('limpeza concluida') ||
+        normalizedAction.includes('retirei') ||
+        normalizedAction.includes('lixo');
+
+      if (isGaiolaChore) {
+        console.log(`🏠 [Repasse Gaiola 802] Encaminhando clique de ${fromPhone} para gaiola-802.vercel.app`);
+        try {
+          await fetch('https://gaiola-802.vercel.app/api/webhook/whatsapp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+        } catch (forwardErr) {
+          console.error('Erro ao repassar webhook para Gaiola 802:', forwardErr);
+        }
+        return res.status(200).json({ status: 'forwarded_to_gaiola_802' });
+      }
+      // ──────────────────────────────────────────────────────────────────────────
+
       const { db, isAdmin } = getDb();
 
       // Localizar o paciente e a sessão correspondente
