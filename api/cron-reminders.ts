@@ -268,16 +268,36 @@ export default async function handler(req: any, res: any) {
     // ==========================================
     // DISPARO 1: LEMBRETE DE VÉSPERA (D-1)
     // ==========================================
-    // Envia a partir das 08h da manhã até as 21h no horário local do psicólogo/paciente para sessões do dia seguinte
-    const d1Candidates = recordedSessions.filter(s => {
-      if (s.date && s.status === 'Agendada' && !s.reminderD1Sent && !s.reminderDisabled && checkWhatsAppAccess(s.ownerId).allowD1) {
-        const patient = patientsMap.get(s.patientId);
-        const timeInfo = getOwnerTimeInfo(s.ownerId, patient?.phone || s.patientPhone);
-        const isDaytime = timeInfo.curHour >= 8 && timeInfo.curHour <= 21;
-        return isDaytime && s.date === timeInfo.tomorrowYMD;
+    // Identificar pares (patientId, date) que estão cancelados ou desmarcados
+    const cancelledOrDesmarcouSet = new Set<string>();
+    recordedSessions.forEach(s => {
+      if (s.patientId && s.date && (s.status === 'Cancelada' || s.status === 'Desmarcou')) {
+        cancelledOrDesmarcouSet.add(`${s.patientId}_${s.date}`);
       }
-      return false;
     });
+
+    // Envia a partir das 08h da manhã até as 21h no horário local do psicólogo/paciente para sessões do dia seguinte
+    // Deduplica por patientId + date para garantir que nenhum paciente receba duas mensagens
+    const seenD1Keys = new Set<string>();
+    const d1Candidates: Session[] = [];
+
+    for (const s of recordedSessions) {
+      if (!s.date || s.status !== 'Agendada' || s.reminderD1Sent || s.reminderDisabled) continue;
+      if (cancelledOrDesmarcouSet.has(`${s.patientId}_${s.date}`)) continue;
+      if (!checkWhatsAppAccess(s.ownerId).allowD1) continue;
+
+      const patient = patientsMap.get(s.patientId);
+      const timeInfo = getOwnerTimeInfo(s.ownerId, patient?.phone || s.patientPhone);
+      const isDaytime = timeInfo.curHour >= 8 && timeInfo.curHour <= 21;
+
+      if (isDaytime && s.date === timeInfo.tomorrowYMD) {
+        const key = `${s.patientId}_${s.date}`;
+        if (!seenD1Keys.has(key)) {
+          seenD1Keys.add(key);
+          d1Candidates.push(s);
+        }
+      }
+    }
 
     for (const session of d1Candidates) {
       const patient = patientsMap.get(session.patientId);
@@ -311,6 +331,15 @@ export default async function handler(req: any, res: any) {
           } else {
             await db.collection('sessions').doc(session.id).update(updateData);
           }
+
+          // Atualizar eventuais sessões duplicadas do mesmo paciente nesta data para evitar envios repetidos
+          for (const other of recordedSessions) {
+            if (other.id !== session.id && other.patientId === session.patientId && other.date === session.date) {
+              try {
+                await db.collection('sessions').doc(other.id).update(updateData);
+              } catch {}
+            }
+          }
         }
         results.d1Sent.push(`${patient.name} (${session.time})`);
       } catch (err: any) {
@@ -323,21 +352,32 @@ export default async function handler(req: any, res: any) {
     // DISPARO 2: LEMBRETE IMEDIATO (1h30 antes da sessão)
     // ===================================================
     // Sessões de hoje com status 'Agendada' ou 'Confirmada' que ainda não receberam D-0
-    const d0Candidates = recordedSessions.filter(s => {
-      if ((s.status === 'Agendada' || s.status === 'Confirmada') && !s.reminderD0Sent && !s.reminderDisabled && s.time && checkWhatsAppAccess(s.ownerId).allowD0) {
-        const patient = patientsMap.get(s.patientId);
-        const timeInfo = getOwnerTimeInfo(s.ownerId, patient?.phone || s.patientPhone);
-        if (s.date !== timeInfo.todayYMD) return false;
+    // Deduplica por patientId + date
+    const seenD0Keys = new Set<string>();
+    const d0Candidates: Session[] = [];
 
-        const [sHour, sMin] = s.time.split(':').map(Number);
-        const sessionMinutesOfDay = sHour * 60 + (sMin || 0);
-        const diffMinutes = sessionMinutesOfDay - timeInfo.currentMinutesOfDay;
+    for (const s of recordedSessions) {
+      if (!s.date || (s.status !== 'Agendada' && s.status !== 'Confirmada') || s.reminderD0Sent || s.reminderDisabled || !s.time) continue;
+      if (cancelledOrDesmarcouSet.has(`${s.patientId}_${s.date}`)) continue;
+      if (!checkWhatsAppAccess(s.ownerId).allowD0) continue;
 
-        // Janela de antecedência flexível: entre 15 e 120 minutos (ideal 1h30, mas não perde o envio se o robô rodar até 15min antes)
-        return diffMinutes >= 15 && diffMinutes <= 120;
+      const patient = patientsMap.get(s.patientId);
+      const timeInfo = getOwnerTimeInfo(s.ownerId, patient?.phone || s.patientPhone);
+      if (s.date !== timeInfo.todayYMD) continue;
+
+      const [sHour, sMin] = s.time.split(':').map(Number);
+      const sessionMinutesOfDay = sHour * 60 + (sMin || 0);
+      const diffMinutes = sessionMinutesOfDay - timeInfo.currentMinutesOfDay;
+
+      // Janela de antecedência flexível: entre 15 e 120 minutos (ideal 1h30, mas não perde o envio se o robô rodar até 15min antes)
+      if (diffMinutes >= 15 && diffMinutes <= 120) {
+        const key = `${s.patientId}_${s.date}`;
+        if (!seenD0Keys.has(key)) {
+          seenD0Keys.add(key);
+          d0Candidates.push(s);
+        }
       }
-      return false;
-    });
+    }
 
     for (const session of d0Candidates) {
       const patient = patientsMap.get(session.patientId);
@@ -349,35 +389,44 @@ export default async function handler(req: any, res: any) {
 
         await sendD0StartReminder(session, patient, psyName);
 
-          if (isAdmin) {
-            const updateData = {
-              reminderD0Sent: true,
-              reminderD0SentAt: new Date().toISOString(),
-              reminderStatus: 'd0_sent',
-            };
-            if (session.id.startsWith('virtual-')) {
-              await db.collection('sessions').doc(session.id).set({
-                patientId: session.patientId,
-                patientName: session.patientName || patient.name,
-                date: session.date,
-                time: session.time,
-                status: 'Agendada',
-                type: session.type || 'Online',
-                ownerId: session.ownerId,
-                ...updateData,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-              }, { merge: true });
-            } else {
-              await db.collection('sessions').doc(session.id).update(updateData);
+        if (isAdmin) {
+          const updateData = {
+            reminderD0Sent: true,
+            reminderD0SentAt: new Date().toISOString(),
+            reminderStatus: 'd0_sent',
+          };
+          if (session.id.startsWith('virtual-')) {
+            await db.collection('sessions').doc(session.id).set({
+              patientId: session.patientId,
+              patientName: session.patientName || patient.name,
+              date: session.date,
+              time: session.time,
+              status: 'Agendada',
+              type: session.type || 'Online',
+              ownerId: session.ownerId,
+              ...updateData,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+          } else {
+            await db.collection('sessions').doc(session.id).update(updateData);
+          }
+
+          // Atualizar eventuais sessões duplicadas do mesmo paciente nesta data para evitar envios repetidos
+          for (const other of recordedSessions) {
+            if (other.id !== session.id && other.patientId === session.patientId && other.date === session.date) {
+              try {
+                await db.collection('sessions').doc(other.id).update(updateData);
+              } catch {}
             }
           }
-          results.d0Sent.push(`${patient.name} (${session.time})`);
-        } catch (err: any) {
-          console.error(`Erro ao enviar D-0 para ${patient.name}:`, err.message);
-          results.errors.push(`D-0 ${patient.name}: ${err.message}`);
         }
+        results.d0Sent.push(`${patient.name} (${session.time})`);
+      } catch (err: any) {
+        console.error(`Erro ao enviar D-0 para ${patient.name}:`, err.message);
+        results.errors.push(`D-0 ${patient.name}: ${err.message}`);
       }
+    }
 
     return res.status(200).json({
       success: true,

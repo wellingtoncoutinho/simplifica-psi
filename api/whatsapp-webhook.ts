@@ -113,7 +113,7 @@ export default async function handler(req: any, res: any) {
       let sessionRef: any = null;
       let matchedPatient: any = null;
 
-      if (targetSessionId && !targetSessionId.startsWith('virtual-') && targetSessionId !== 'TEST') {
+      if (targetSessionId && targetSessionId !== 'TEST') {
         if (isAdmin) {
           sessionRef = db.collection('sessions').doc(targetSessionId);
           const snap = await sessionRef.get();
@@ -125,6 +125,31 @@ export default async function handler(req: any, res: any) {
                 matchedPatient = { id: pSnap.id, ...pSnap.data() };
                 sessionData.patientName = matchedPatient.name;
               }
+            }
+          } else if (targetSessionId.startsWith('virtual-')) {
+            // Documento virtual que ainda não foi salvo no banco: cria e referencia
+            const virtualContent = targetSessionId.substring('virtual-'.length);
+            const dStr = virtualContent.slice(-10); // YYYY-MM-DD
+            const pId = virtualContent.slice(0, -11); // patientId
+
+            const pSnap = await db.collection('patients').doc(pId).get();
+            if (pSnap.exists) {
+              matchedPatient = { id: pSnap.id, ...pSnap.data() };
+              sessionData = {
+                id: targetSessionId,
+                patientId: pId,
+                patientName: matchedPatient.name,
+                date: dStr,
+                time: matchedPatient.sessionTime || '09:00',
+                status: 'Agendada',
+                type: matchedPatient.modality || 'Online',
+                ownerId: matchedPatient.ownerId
+              };
+              await sessionRef.set({
+                ...sessionData,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+              });
             }
           }
         }
@@ -205,12 +230,32 @@ export default async function handler(req: any, res: any) {
       // B) DESMARCAR SESSÃO
       else if (normalizedAction.includes('desmarcar') || normalizedAction.includes('cancelar')) {
         if (sessionRef && isAdmin) {
-          await sessionRef.update({
+          const cancelUpdate = {
             status: 'Desmarcou',
             reminderStatus: 'cancelled',
             desmarcouAt: new Date().toISOString(),
-          });
+            updatedAt: new Date().toISOString()
+          };
+          await sessionRef.update(cancelUpdate);
           console.log(`⚠️ Sessão ${sessionData?.id} marcada como Desmarcou.`);
+
+          // Atualizar eventuais sessões duplicadas no banco para o mesmo paciente nesta data
+          if (sessionData?.patientId && sessionData?.date) {
+            try {
+              const dupSnap = await db.collection('sessions')
+                .where('patientId', '==', sessionData.patientId)
+                .where('date', '==', sessionData.date)
+                .get();
+
+              for (const dDoc of dupSnap.docs) {
+                if (dDoc.id !== sessionRef.id) {
+                  await dDoc.ref.update(cancelUpdate);
+                }
+              }
+            } catch (err: any) {
+              console.warn('Erro ao sincronizar cancelamento em sessões duplicadas:', err.message);
+            }
+          }
         }
 
         const replyMsg = `Entendido, ${patientName}. Registramos o cancelamento da sua sessão de ${sessionDate}${timeSuffix} e o seu psicólogo já foi notificado 🤝. Caso precise remarcar para um novo horário, por favor entre em contato diretamente com ele.`;

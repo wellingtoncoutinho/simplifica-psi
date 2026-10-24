@@ -433,11 +433,23 @@ export function safeDateParse(dateInput: any, fallbackDate: Date = new Date()): 
 const calculateIncomePrediction = (start: Date, end: Date, sessions: any[], patients: any[]) => {
   let predictedTotal = 0;
   
-  // 1. Calculate from recorded non-cancelled sessions
-  const recordedInRange = sessions.filter(s => {
+  // 1. Calculate from recorded non-cancelled sessions (deduplicating by patientId and date/time)
+  const dedupMap = new Map<string, any>();
+  sessions.forEach(s => {
     const d = safeDateParse(s.date);
-    return d >= start && d <= end && s.status !== 'Cancelada';
+    if (d >= start && d <= end && s.status !== 'Cancelada' && (s.paid || s.status !== 'Desmarcou')) {
+      const key = `${s.patientId || s.triageName || 'pat'}_${s.date}_${s.time || ''}`;
+      if (!dedupMap.has(key)) {
+        dedupMap.set(key, s);
+      } else {
+        const existing = dedupMap.get(key);
+        if (s.paid || !s.id?.toString().startsWith('virtual-')) {
+          dedupMap.set(key, s);
+        }
+      }
+    }
   });
+  const recordedInRange = Array.from(dedupMap.values());
   
   recordedInRange.forEach(s => {
     const amount = parseFloat(s.amount) || parseFloat(patients.find(p => p.id === s.patientId)?.amount || '0') || 0;
@@ -459,7 +471,7 @@ const calculateIncomePrediction = (start: Date, end: Date, sessions: any[], pati
         const hasRecorded = recordedInRange.some(s => s.patientId === p.id && isSameDay(safeDateParse(s.date), d));
         if (hasRecorded) return;
 
-        const hasCancelled = sessions.some(s => s.patientId === p.id && s.status === 'Cancelada' && isSameDay(safeDateParse(s.date), d));
+        const hasCancelled = sessions.some(s => s.patientId === p.id && (s.status === 'Cancelada' || s.status === 'Desmarcou') && isSameDay(safeDateParse(s.date), d));
         if (hasCancelled) return;
 
         const weeksDiff = Math.abs(differenceInWeeks(startOfDay(d), startOfDay(pRecurrenceStart)));
@@ -1245,6 +1257,30 @@ Como posso te ajudar hoje?`
     const unsubSessions = onSnapshot(qSessions, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Session));
       setSessions(data);
+
+      // Auto-limpeza preventiva de sessões duplicadas fantasmas no banco
+      // (ex: doc virtual que permaneceu 'Agendada' no banco quando o psicólogo ou webhook desmarcou/cancelou a sessão)
+      const groups = new Map<string, Session[]>();
+      data.forEach(s => {
+        if (s.patientId && s.date && s.time) {
+          const key = `${s.patientId}_${s.date}_${s.time}`;
+          const arr = groups.get(key) || [];
+          arr.push(s);
+          groups.set(key, arr);
+        }
+      });
+
+      groups.forEach((items) => {
+        if (items.length > 1) {
+          const hasDesmarcouOrCancelada = items.find(s => s.status === 'Desmarcou' || s.status === 'Cancelada');
+          if (hasDesmarcouOrCancelada) {
+            // Remove o documento virtual que ficou como 'Agendada'
+            items.filter(s => s.status === 'Agendada' && s.id.startsWith('virtual-')).forEach(stale => {
+              deleteDoc(doc(db, 'sessions', stale.id)).catch(() => {});
+            });
+          }
+        }
+      });
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'sessions'));
 
     const qTransactions = query(collection(db, 'transactions'), where('ownerId', '==', user.uid));
@@ -2601,121 +2637,118 @@ Como posso te ajudar hoje?`
     if (!user) return;
     try {
       const createdIds: string[] = [];
+      const sessionExistsInDb = Boolean(data.id && sessions.some(s => s.id === data.id));
+      const oldDoc = sessionExistsInDb ? sessions.find(s => s.id === data.id) : null;
 
       // 1. Explicit Cancel action
       if (data.status === 'Cancelada') {
-         if (data.id && data.id.toString().startsWith('virtual-')) {
-             const cancelRef = await addDoc(collection(db, 'sessions'), {
-               patientId: data.patientId || '',
-               date: data.originalDate || data.date,
-               time: data.originalTime || data.time,
-               status: 'Cancelada',
-               ownerId: user.uid,
-               createdAt: new Date().toISOString(),
-               updatedAt: new Date().toISOString()
-             });
-             createdIds.push(cancelRef.id);
-             setLastAction({ type: 'cancel', ids: createdIds });
+         if (sessionExistsInDb) {
+           const sessionRef = doc(db, 'sessions', data.id);
+           await updateDoc(sessionRef, { status: 'Cancelada', updatedAt: new Date().toISOString() });
+           createdIds.push(data.id);
+           setLastAction({ type: 'update', ids: createdIds, oldData: oldDoc });
+           if (oldDoc && oldDoc.googleEventId) {
+             await deleteSessionFromGoogleCalendar(oldDoc.googleEventId);
+           }
+         } else if (data.id && data.id.toString().startsWith('virtual-')) {
+           // Documento virtual ainda não gravado no banco: cria diretamente com status 'Cancelada'
+           await setDoc(doc(db, 'sessions', data.id), {
+             patientId: data.patientId || '',
+             date: data.originalDate || data.date,
+             time: data.originalTime || data.time,
+             status: 'Cancelada',
+             ownerId: user.uid,
+             createdAt: new Date().toISOString(),
+             updatedAt: new Date().toISOString()
+           }, { merge: true });
+           createdIds.push(data.id);
+           setLastAction({ type: 'cancel', ids: createdIds });
          } else if (data.id) {
-             const oldDoc = sessions.find(s => s.id === data.id);
-             const sessionRef = doc(db, 'sessions', data.id);
-             await updateDoc(sessionRef, { status: 'Cancelada', updatedAt: new Date().toISOString() });
-             createdIds.push(data.id);
-             setLastAction({ type: 'update', ids: createdIds, oldData: oldDoc });
-             if (oldDoc && oldDoc.googleEventId) {
-               await deleteSessionFromGoogleCalendar(oldDoc.googleEventId);
-             }
+           const sessionRef = doc(db, 'sessions', data.id);
+           await updateDoc(sessionRef, { status: 'Cancelada', updatedAt: new Date().toISOString() });
+           createdIds.push(data.id);
+           setLastAction({ type: 'update', ids: createdIds, oldData: oldDoc });
+           if (oldDoc && oldDoc.googleEventId) {
+             await deleteSessionFromGoogleCalendar(oldDoc.googleEventId);
+           }
          }
          setShowUndoToast(true);
          setTimeout(() => setShowUndoToast(false), 8000);
          return;
       }
 
-      // 2. Edição de Sessão Virtual (Movimentação)
-      if (data.id && data.id.toString().startsWith('virtual-')) {
-         if (data.editScope === 'all') {
-            const p = patients.find(pat => pat.id === data.patientId);
-            if (p) {
-               const dayName = format(new Date(data.date + 'T12:00:00'), 'eeee', { locale: ptBR });
-               const capitalized = dayName.charAt(0).toUpperCase() + dayName.slice(1);
-               const patientRef = doc(db, 'patients', p.id);
-               await updateDoc(patientRef, {
-                 sessionDay: capitalized,
-                 sessionTime: data.time,
-                 updatedAt: new Date().toISOString()
-               });
+      // 2. Edição de Sessão com escopo 'all' (Recorrência toda do paciente)
+      if (data.id && data.editScope === 'all') {
+         const p = patients.find(pat => pat.id === data.patientId);
+         if (p) {
+            const dayName = format(new Date(data.date + 'T12:00:00'), 'eeee', { locale: ptBR });
+            const capitalized = dayName.charAt(0).toUpperCase() + dayName.slice(1);
+            const patientRef = doc(db, 'patients', p.id);
+            await updateDoc(patientRef, {
+              sessionDay: capitalized,
+              sessionTime: data.time,
+              updatedAt: new Date().toISOString()
+            });
 
-               // Update all future scheduled sessions for this patient to the new day of the week & time
-               const todayStr = format(new Date(), 'yyyy-MM-dd');
-               const patientSessionsToUpdate = sessions.filter(s => 
-                 s.patientId === p.id && 
-                 s.status === 'Agendada' && 
-                 s.date >= todayStr
-               );
-               
-               const daysOfWeek = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
-               const newDayIndex = daysOfWeek.indexOf(capitalized);
-               
-               if (newDayIndex !== -1) {
-                 for (const s of patientSessionsToUpdate) {
-                   const currentDate = new Date(s.date + 'T12:00:00');
-                   const currentDayIndex = currentDate.getDay();
-                   const diffDays = newDayIndex - currentDayIndex;
-                   
-                   const newDate = new Date(currentDate);
-                   newDate.setDate(currentDate.getDate() + diffDays);
-                   const newDateStr = newDate.toISOString().split('T')[0];
-                   
-                   await updateDoc(doc(db, 'sessions', s.id), {
-                     date: newDateStr,
-                     time: data.time,
-                     updatedAt: new Date().toISOString()
-                   });
-                   
-                   if (s.googleEventId) {
-                     await updateSessionInGoogleCalendar({
-                       ...s,
-                       date: newDateStr,
-                       time: data.time
-                     });
-                   }
-                 }
-               }
-               return; // Updated pattern, no new specific session needed
+            // Update all future scheduled sessions for this patient to the new day of the week & time
+            const todayStr = format(new Date(), 'yyyy-MM-dd');
+            const patientSessionsToUpdate = sessions.filter(s => 
+              s.patientId === p.id && 
+              s.status === 'Agendada' && 
+              s.date >= todayStr
+            );
+            
+            const daysOfWeek = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+            const newDayIndex = daysOfWeek.indexOf(capitalized);
+            
+            if (newDayIndex !== -1) {
+              for (const s of patientSessionsToUpdate) {
+                const currentDate = new Date(s.date + 'T12:00:00');
+                const currentDayIndex = currentDate.getDay();
+                const diffDays = newDayIndex - currentDayIndex;
+                
+                const newDate = new Date(currentDate);
+                newDate.setDate(currentDate.getDate() + diffDays);
+                const newDateStr = newDate.toISOString().split('T')[0];
+                
+                await updateDoc(doc(db, 'sessions', s.id), {
+                  date: newDateStr,
+                  time: data.time,
+                  updatedAt: new Date().toISOString()
+                });
+                
+                if (s.googleEventId) {
+                  await updateSessionInGoogleCalendar({
+                    ...s,
+                    date: newDateStr,
+                    time: data.time
+                  });
+                }
+              }
             }
-         } else {
-            // Cancel original virtual occurrence if it was moved
-            if (data.originalDate && (data.originalDate !== data.date || data.originalTime !== data.time)) {
-              const cancelRef = await addDoc(collection(db, 'sessions'), {
-                patientId: data.patientId,
-                date: data.originalDate,
-                time: data.originalTime,
-                status: 'Cancelada',
-                ownerId: user.uid,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-              });
-              createdIds.push(cancelRef.id);
-            }
-            delete data.id; // Proceed to create a specific session for this occurrence
+            return; // Updated pattern, no new specific session needed
          }
       }
 
-      // 3. Update an existing non-virtual session
-      if (data.id && !data.id.toString().startsWith('virtual-')) {
-        const oldDoc = sessions.find(s => s.id === data.id);
+      // 3. Atualizar sessão existente no banco (mesmo se o ID começar com 'virtual-')
+      if (sessionExistsInDb) {
         const sessionRef = doc(db, 'sessions', data.id);
         const updatedData: any = {
-          patientId: data.patientId || '',
+          patientId: data.patientId || oldDoc?.patientId || '',
           isTriage: data.isTriage || false,
           triageName: data.triageName || '',
           date: data.date,
           time: data.time,
-          type: data.type || 'Presencial',
+          type: data.type || oldDoc?.type || 'Presencial',
           status: data.status === 'Recorrente' ? 'Agendada' : (data.status || 'Agendada'),
           amount: parseFloat(data.amount) || parseFloat(oldDoc?.amount as any) || 0,
           updatedAt: new Date().toISOString()
         };
+
+        if (updatedData.status === 'Desmarcou') {
+          updatedData.desmarcouAt = new Date().toISOString();
+          updatedData.reminderStatus = 'cancelled';
+        }
 
         // Se a data ou horário mudou, OU se o status foi alterado para 'Agendada' (remarcação / reativação):
         const isDateOrTimeChanged = oldDoc && (oldDoc.date !== data.date || oldDoc.time !== data.time);
@@ -2741,7 +2774,8 @@ Como posso te ajudar hoje?`
             const capitalizedOldDayName = oldDayName.charAt(0).toUpperCase() + oldDayName.slice(1);
             
             if (p.sessionDay === capitalizedOldDayName) {
-              await addDoc(collection(db, 'sessions'), {
+              const cancelMarkerId = `virtual-${oldDoc.patientId}-${oldDoc.date}`;
+              await setDoc(doc(db, 'sessions', cancelMarkerId), {
                 patientId: oldDoc.patientId,
                 date: oldDoc.date,
                 time: oldDoc.time,
@@ -2749,13 +2783,23 @@ Como posso te ajudar hoje?`
                 ownerId: user.uid,
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
-              });
+              }, { merge: true });
             }
           }
         }
 
         await updateDoc(sessionRef, updatedData);
         setLastAction({ type: 'update', ids: [data.id], oldData: oldDoc });
+
+        // Se houver alguma sessão duplicada fantasma deste paciente no mesmo horário/data, exclui
+        if (data.patientId && data.date) {
+          const duplicates = sessions.filter(s => s.id !== data.id && s.patientId === data.patientId && s.date === data.date && s.time === data.time);
+          for (const dup of duplicates) {
+            try {
+              await deleteDoc(doc(db, 'sessions', dup.id));
+            } catch {}
+          }
+        }
 
         // Google Agenda Sync
         if (oldDoc && oldDoc.googleEventId) {
@@ -2769,6 +2813,24 @@ Como posso te ajudar hoje?`
         setShowUndoToast(true);
         setTimeout(() => setShowUndoToast(false), 8000);
         return;
+      }
+
+      // Se era um slot virtual que ainda não existia no banco:
+      const isOriginalVirtualNotPersisted = data.id && data.id.toString().startsWith('virtual-') && !sessionExistsInDb;
+      if (isOriginalVirtualNotPersisted) {
+        // Se a data ou horário foi movido do slot original:
+        if (data.originalDate && (data.originalDate !== data.date || data.originalTime !== data.time)) {
+          const cancelMarkerId = `virtual-${data.patientId}-${data.originalDate}`;
+          await setDoc(doc(db, 'sessions', cancelMarkerId), {
+            patientId: data.patientId,
+            date: data.originalDate,
+            time: data.originalTime,
+            status: 'Cancelada',
+            ownerId: user.uid,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+        }
       }
 
       // 4. Create single session (Exception, Triage or New First Session)
@@ -2808,8 +2870,17 @@ Como posso te ajudar hoje?`
         updatedAt: new Date().toISOString()
       };
       
-      const ref = await addDoc(collection(db, 'sessions'), sessionData);
-      createdIds.push(ref.id);
+      let savedSessionId = '';
+      if (isOriginalVirtualNotPersisted && data.id && (!data.originalDate || (data.originalDate === data.date && data.originalTime === data.time))) {
+        // Se era um slot virtual não movido, salva com o ID determinístico virtual-${patientId}-${date}
+        await setDoc(doc(db, 'sessions', data.id), sessionData);
+        savedSessionId = data.id;
+        createdIds.push(data.id);
+      } else {
+        const ref = await addDoc(collection(db, 'sessions'), sessionData);
+        savedSessionId = ref.id;
+        createdIds.push(ref.id);
+      }
 
       // Sincronização com a Agenda Geral da Clínica caso esteja no modo Clínica
       if (currentClinic) {
@@ -2817,7 +2888,7 @@ Como posso te ajudar hoje?`
         const psyName = currentClinicMember?.name || 'Psicólogo(a)';
         const pat = patients.find(p => p.id === data.patientId);
         const clinicSess: Session = {
-          id: ref.id,
+          id: savedSessionId,
           clinicId: currentClinic.id,
           patientId: data.patientId || '',
           patientName: pat?.name || data.triageName || 'Paciente',
@@ -2839,7 +2910,7 @@ Como posso te ajudar hoje?`
 
       // Google Agenda Sync
       if (sessionData.status !== 'Cancelada') {
-        await syncSessionToGoogleCalendar(sessionData, ref.id);
+        await syncSessionToGoogleCalendar(sessionData, savedSessionId);
       }
       
       // Auto-trigger fail-safe: verificar e enviar lembretes imediatos/véspera caso elegível
@@ -3086,35 +3157,53 @@ Como posso te ajudar hoje?`
         setClinicSessions(updatedList);
       }
 
-      // Se a sessão de fato existe no banco (mesmo com ID iniciando em 'virtual-'), vamos excluí-la
-      const sessionExists = sessions.some(s => s.id === id);
-      if (sessionExists) {
-        const sessionToDelete = sessions.find(s => s.id === id);
-        if (sessionToDelete && sessionToDelete.googleEventId) {
+      const sessionToDelete = sessions.find(s => s.id === id);
+
+      if (sessionToDelete) {
+        if (sessionToDelete.googleEventId) {
           await deleteSessionFromGoogleCalendar(sessionToDelete.googleEventId);
         }
         await deleteDoc(doc(db, 'sessions', id));
+
+        // Se essa sessão era em dia de recorrência fixa do paciente, grava marcador de cancelamento
+        // para que getDaySessions e FinanceView não ressurjam o slot virtual
+        const patient = patients.find(p => p.id === sessionToDelete.patientId);
+        if (patient && patient.sessionDay && sessionToDelete.date) {
+          const dateObj = new Date(sessionToDelete.date + 'T12:00:00');
+          const dayName = format(dateObj, 'eeee', { locale: ptBR });
+          const capitalized = dayName.charAt(0).toUpperCase() + dayName.slice(1);
+          if (patient.sessionDay === capitalized) {
+            const cancelId = `virtual-${patient.id}-${sessionToDelete.date}`;
+            await setDoc(doc(db, 'sessions', cancelId), {
+              patientId: patient.id,
+              date: sessionToDelete.date,
+              time: sessionToDelete.time,
+              status: 'Cancelada',
+              ownerId: user.uid,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+          }
+        }
         return;
       }
 
+      // Se não estava no estado do banco e tem ID virtual (slot ainda não salvo)
       if (id.toString().startsWith('virtual-')) {
-         const virtualContent = id.toString().substring('virtual-'.length);
-         const dStr = virtualContent.slice(-10); // YYYY-MM-DD
-         const pId = virtualContent.slice(0, -11); // pacienteId
-         await addDoc(collection(db, 'sessions'), {
-             patientId: pId,
-             date: dStr,
-             status: 'Cancelada',
-             ownerId: user.uid,
-             createdAt: new Date().toISOString(),
-             updatedAt: new Date().toISOString()
-         });
-         return;
+        const virtualContent = id.toString().substring('virtual-'.length);
+        const dStr = virtualContent.slice(-10); // YYYY-MM-DD
+        const pId = virtualContent.slice(0, -11); // pacienteId
+        await setDoc(doc(db, 'sessions', id), {
+          patientId: pId,
+          date: dStr,
+          status: 'Cancelada',
+          ownerId: user.uid,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+        return;
       }
-      const sessionToDelete = sessions.find(s => s.id === id);
-      if (sessionToDelete && sessionToDelete.googleEventId) {
-        await deleteSessionFromGoogleCalendar(sessionToDelete.googleEventId);
-      }
+
       await deleteDoc(doc(db, 'sessions', id));
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `sessions/${id}`);
@@ -11744,27 +11833,55 @@ function FinanceView({
     return calculatePrediction(startOfWeek(lastWeek, { weekStartsOn: 0 }), endOfWeek(lastWeek, { weekStartsOn: 0 }));
   }, [sessions, patients]);
 
+  // Sessões gravadas e deduplicadas para o módulo financeiro
+  const dedupedSessions = useMemo(() => {
+    const map = new Map<string, any>();
+    for (const s of sessions) {
+      if (s.status === 'Cancelada') continue;
+      const key = `${s.patientId || s.triageName || 'pat'}_${s.date}_${s.time || ''}`;
+      if (!map.has(key)) {
+        map.set(key, s);
+      } else {
+        const existing = map.get(key);
+        const getScore = (item: any) => {
+          let score = 0;
+          if (item.paid) score += 100;
+          if (item.status === 'Desmarcou') score += 50;
+          if (item.status === 'Realizada') score += 40;
+          if (item.status === 'Confirmada') score += 30;
+          if (item.status === 'Agendada') score += 10;
+          if (!item.id?.toString().startsWith('virtual-')) score += 5;
+          return score;
+        };
+        if (getScore(s) > getScore(existing)) {
+          map.set(key, s);
+        }
+      }
+    }
+    return Array.from(map.values());
+  }, [sessions]);
+
   const monthlyReceived = useMemo(() => {
-    return sessions.filter(s => {
+    return dedupedSessions.filter(s => {
       const d = safeDateParse(s.date);
       return isSameMonth(d, new Date()) && s.paid;
     }).reduce((acc, s) => acc + (s.amount || 0), 0);
-  }, [sessions]);
+  }, [dedupedSessions]);
 
   const prevMonthlyReceived = useMemo(() => {
     const lastMonth = subMonths(new Date(), 1);
-    return sessions.filter(s => {
+    return dedupedSessions.filter(s => {
       const d = safeDateParse(s.date);
       return isSameMonth(d, lastMonth) && s.paid;
     }).reduce((acc, s) => acc + (s.amount || 0), 0);
-  }, [sessions]);
+  }, [dedupedSessions]);
 
   const monthlyPending = useMemo(() => {
-    return sessions.filter(s => {
+    return dedupedSessions.filter(s => {
       const d = safeDateParse(s.date);
-      return isSameMonth(d, new Date()) && !s.paid && s.status !== 'Cancelada';
+      return isSameMonth(d, new Date()) && !s.paid && s.status !== 'Cancelada' && s.status !== 'Desmarcou';
     }).reduce((acc, s) => acc + (s.amount || 0), 0);
-  }, [sessions]);
+  }, [dedupedSessions]);
 
   const manualExpenses = useMemo(() => {
     return transactions.filter(t => t.type === 'Despesa' && isSameMonth(safeDateParse(t.date), new Date()))
@@ -11809,7 +11926,7 @@ function FinanceView({
     const end = endOfWeek(currentFinanceDate, { weekStartsOn: 0 });
     const currentWeekEnd = endOfWeek(new Date(), { weekStartsOn: 0 });
 
-    let list = [...sessions.filter(s => s.status !== 'Cancelada')];
+    let list = [...dedupedSessions.filter(s => s.status !== 'Cancelada' && (s.paid || s.status !== 'Desmarcou'))];
     
     patients.filter(p => p.status !== 'Inativo').forEach(p => {
       if (selectedPatientId !== 'all' && p.id !== selectedPatientId) return;
@@ -11837,7 +11954,7 @@ function FinanceView({
             if (!isRecurrenceDay) return;
 
             const hasRecorded = list.some(s => s.patientId === p.id && isSameDay(safeDateParse(s.date), d));
-            const hasCancelled = sessions.some(s => s.patientId === p.id && s.status === 'Cancelada' && isSameDay(safeDateParse(s.date), d));
+            const hasCancelled = sessions.some(s => s.patientId === p.id && (s.status === 'Cancelada' || s.status === 'Desmarcou') && isSameDay(safeDateParse(s.date), d));
 
             if (!hasRecorded && !hasCancelled) {
               list.push({
@@ -11890,7 +12007,7 @@ function FinanceView({
     if (filter === 'pending') list = list.filter(s => !s.paid);
     
     return list;
-  }, [sessions, patients, filter, currentFinanceDate, selectedPatientId]);
+  }, [dedupedSessions, sessions, patients, filter, currentFinanceDate, selectedPatientId]);
 
   const displayExpenses = useMemo(() => {
     return transactions.filter(t => t.type === 'Despesa').sort((a, b) => (b.date || '').localeCompare(a.date || ''));
@@ -12610,7 +12727,34 @@ function CalendarView({
     const daySessions: any[] = [];
 
     // 1. Recorded Sessions from 'sessions' collection
-    const recordedSessions = sessions.filter(s => s.status !== 'Cancelada' && isSameDay(safeDateParse(s.date), day));
+    const rawRecordedSessions = sessions.filter(s => s.status !== 'Cancelada' && isSameDay(safeDateParse(s.date), day));
+    
+    // Deduplica sessões gravadas no mesmo horário/dia para o mesmo paciente
+    // Se existir uma alteração (ex: 'Desmarcou') e um documento virtual antigo ('Agendada'), prioriza o mais relevante
+    const sessionMap = new Map<string, any>();
+    for (const s of rawRecordedSessions) {
+      const key = `${s.patientId || s.triageName || 'pat'}_${s.time || ''}`;
+      if (!sessionMap.has(key)) {
+        sessionMap.set(key, s);
+      } else {
+        const existing = sessionMap.get(key);
+        const getScore = (item: any) => {
+          let score = 0;
+          if (item.status === 'Desmarcou') score += 50;
+          if (item.status === 'Realizada') score += 40;
+          if (item.status === 'Confirmada') score += 30;
+          if (item.status === 'Agendada') score += 10;
+          if (!item.id?.toString().startsWith('virtual-')) score += 5;
+          if (item.updatedAt) score += 1;
+          return score;
+        };
+        if (getScore(s) > getScore(existing)) {
+          sessionMap.set(key, s);
+        }
+      }
+    }
+    const recordedSessions = Array.from(sessionMap.values());
+
     recordedSessions.forEach(s => {
       // Show cancelled sessions but with distinct style (handled by CSS)
       const p = patients.find(pat => pat.id === s.patientId);
@@ -12630,7 +12774,7 @@ function CalendarView({
       if (p.sessionDay === capitalizedDayName && p.sessionTime && p.sessionDay !== '' && p.sessionDay !== 'Nenhum') {
         // Skip if there's already a recorded session for this patient today
         const hasRecorded = recordedSessions.some(s => s.patientId === p.id);
-        const hasCancelled = sessions.some(s => s.patientId === p.id && s.status === 'Cancelada' && isSameDay(safeDateParse(s.date), day));
+        const hasCancelled = sessions.some(s => s.patientId === p.id && (s.status === 'Cancelada' || s.status === 'Desmarcou') && isSameDay(safeDateParse(s.date), day));
         
         if (hasRecorded || hasCancelled) return;
 
@@ -13204,19 +13348,17 @@ function CalendarView({
                                       </button>
                                     </>
                                   )}
-                                  {!session.id?.toString().startsWith('virtual-') && (
-                                    <button
-                                      onClick={() => {
-                                        if (confirm('Deseja excluir permanentemente este registro da agenda?')) {
-                                          onDeleteSession(session.id);
-                                        }
-                                      }}
-                                      className="p-1 rounded-lg bg-red-500/10 hover:bg-red-500 hover:text-white text-red-400 transition-all ml-auto cursor-pointer"
-                                      title="Excluir Registro"
-                                    >
-                                      <Trash2 size={12} />
-                                    </button>
-                                  )}
+                                  <button
+                                    onClick={() => {
+                                      if (confirm('Deseja excluir permanentemente este registro da agenda?')) {
+                                        onDeleteSession(session.id);
+                                      }
+                                    }}
+                                    className="p-1 rounded-lg bg-red-500/10 hover:bg-red-500 hover:text-white text-red-400 transition-all ml-auto cursor-pointer"
+                                    title="Excluir Registro"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
                                 </div>
                               )}
                             </div>
@@ -13636,19 +13778,17 @@ function CalendarView({
                             </>
                           )}
                           
-                          {!session.id?.toString().startsWith('virtual-') && (
-                             <button 
-                              onClick={() => { 
-                                if (confirm('Deseja excluir permanentemente este registro da agenda?')) {
-                                  onDeleteSession(session.id);
-                                }
-                              }}
-                              className="p-2 bg-red-500/10 text-red-400 rounded-xl hover:bg-red-500 hover:text-white transition-all border border-red-500/20"
-                              title="Excluir Registro"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          )}
+                          <button 
+                            onClick={() => { 
+                              if (confirm('Deseja excluir permanentemente este registro da agenda?')) {
+                                onDeleteSession(session.id);
+                              }
+                            }}
+                            className="p-2 bg-red-500/10 text-red-400 rounded-xl hover:bg-red-500 hover:text-white transition-all border border-red-500/20"
+                            title="Excluir Registro"
+                          >
+                            <Trash2 size={16} />
+                          </button>
                         </div>
                       )}
                     </div>
