@@ -118,8 +118,24 @@ export default async function handler(req: any, res: any) {
           sessionRef = db.collection('sessions').doc(targetSessionId);
           const snap = await sessionRef.get();
           if (snap.exists) {
-            sessionData = { id: snap.id, ...snap.data() };
-            if (sessionData.patientId) {
+            const snapData = snap.data() || {};
+            if (snapData.status === 'Cancelada' && snapData.patientId) {
+              // Esta data específica foi cancelada/remarcada (ex: doc virtual virou marcador de cancelamento).
+              // Localiza a sessão ativa atual do paciente para aplicar a confirmação/desmarcação na nova data.
+              const activeQuery = await db.collection('sessions')
+                .where('patientId', '==', snapData.patientId)
+                .where('status', 'in', ['Agendada', 'Confirmada'])
+                .get();
+              if (!activeQuery.empty) {
+                const sortedDocs = activeQuery.docs.sort((a: any, b: any) => (a.data().date || '').localeCompare(b.data().date || ''));
+                const targetDoc = sortedDocs[sortedDocs.length - 1];
+                sessionRef = targetDoc.ref;
+                sessionData = { id: targetDoc.id, ...targetDoc.data() };
+              }
+            } else {
+              sessionData = { id: snap.id, ...snapData };
+            }
+            if (sessionData && sessionData.patientId) {
               const pSnap = await db.collection('patients').doc(sessionData.patientId).get();
               if (pSnap.exists) {
                 matchedPatient = { id: pSnap.id, ...pSnap.data() };

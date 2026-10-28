@@ -300,7 +300,8 @@ export function WhatsAppRemindersPanel({
         nextDays.forEach(({ dateStr, dayName, isToday }) => {
           if (p.sessionDay === dayName) {
             const hasRecorded = list.some(s => s.patientId === p.id && s.date === dateStr);
-            if (hasRecorded) return;
+            const hasCancelled = sessions.some(s => s.patientId === p.id && (s.status === 'Cancelada' || s.status === 'Desmarcou') && s.date === dateStr);
+            if (hasRecorded || hasCancelled) return;
 
             // Se for hoje e o horário da sessão já passou, não deve projetar lembrete futuro virtual
             if (isToday) {
