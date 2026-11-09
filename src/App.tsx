@@ -31,6 +31,22 @@ import { getGeminiApiKey, generateGeminiContentWithFallback } from './lib/gemini
 
 const generateContentWithFallback = generateGeminiContentWithFallback;
 
+function buildMeetingUrl(rawLink?: string, patientId?: string, patientName?: string): string {
+  if (!rawLink || !rawLink.trim()) return '';
+  let link = rawLink.trim();
+  if (!/^https?:\/\//i.test(link)) {
+    link = `https://${link}`;
+  }
+  if (!link.includes('meet.google.com') || !patientId) return link;
+  try {
+    const url = new URL(link);
+    url.hash = `patientId=${encodeURIComponent(patientId)}&patientName=${encodeURIComponent(patientName || '')}`;
+    return url.toString();
+  } catch {
+    return `${link}#patientId=${encodeURIComponent(patientId)}&patientName=${encodeURIComponent(patientName || '')}`;
+  }
+}
+
 function safeJsonParse(rawText: string): any {
   // Strip markdown code fences
   let sanitized = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
@@ -182,6 +198,7 @@ import ClinicFinanceView from './components/clinic/ClinicFinanceView';
 import ClinicLoginPage from './components/clinic/ClinicLoginPage';
 import { WhatsAppRemindersPanel } from './components/WhatsAppRemindersPanel';
 import ContentIdeasModal from './components/ContentIdeasModal';
+import StudyRadarModal from './components/StudyRadarModal';
 import { GoogleMeetExtensionModal, CHROME_EXTENSION_STORE_URL, TCLE_TEMPLATE_TEXT, TCLE_TEMPLATE_TEXT_PT } from './components/GoogleMeetExtensionModal';
 const DataMigrationModal = React.lazy(() => 
   import('./components/DataMigrationModal').then(m => ({ default: m.DataMigrationModal }))
@@ -811,6 +828,7 @@ Como posso te ajudar hoje?`
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [upgradeReason, setUpgradeReason] = useState<string | undefined>(undefined);
   const [isContentIdeasModalOpen, setIsContentIdeasModalOpen] = useState(false);
+  const [isStudyRadarModalOpen, setIsStudyRadarModalOpen] = useState(false);
 
   const openUpgradeModalWithReason = (reason?: string) => {
     setUpgradeReason(reason);
@@ -823,6 +841,16 @@ Como posso te ajudar hoje?`
     } else {
       openUpgradeModalWithReason(
         'O Radar de Conteúdo para Redes Sociais gera pautas, ganchos e carrosséis com IA a partir dos eixos clínicos dos seus pacientes com 100% de sigilo ético. Este recurso é exclusivo do Plano Ilimitado!'
+      );
+    }
+  };
+
+  const handleOpenStudyRadar = () => {
+    if (effectivePlan === 'ilimitado' || effectivePlan === 'lifetime' || user?.email?.toLowerCase().trim() === 'wellcoutinho99@gmail.com') {
+      setIsStudyRadarModalOpen(true);
+    } else {
+      openUpgradeModalWithReason(
+        'O Radar de Estudos & Aprofundamento Clínico analisa suas sessões para mapear onde aprofundar seus estudos além do básico, como lapidar a psicoeducação e quais livros e técnicas consultar. Exclusivo do Plano Ilimitado!'
       );
     }
   };
@@ -4038,6 +4066,19 @@ Como posso te ajudar hoje?`
               </button>
             )}
 
+            {/* Botão de Acesso Rápido: Radar de Estudos (PRO) */}
+            <button
+              onClick={handleOpenStudyRadar}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-500/10 via-sky-500/10 to-emerald-500/10 hover:from-indigo-500/20 hover:to-emerald-500/20 border border-indigo-500/25 hover:border-indigo-500/40 text-text-main text-xs font-bold transition-all shadow-sm group cursor-pointer"
+              title="Radar de Estudos & Aprofundamento Clínico (Onde estudar, psicoeducação e livros)"
+            >
+              <GraduationCap size={14} className="text-indigo-400 group-hover:scale-110 transition-transform shrink-0" />
+              <span className="hidden sm:inline">Radar de Estudos</span>
+              <span className="text-[9px] bg-gradient-to-r from-indigo-500 to-sky-500 text-white font-black px-1.5 py-0.2 rounded-full uppercase tracking-wider shrink-0">
+                PRO
+              </span>
+            </button>
+
             {/* Botão de Acesso Rápido: Radar de Conteúdo (PRO) */}
             <button
               onClick={handleOpenRadar}
@@ -4391,7 +4432,7 @@ Como posso te ajudar hoje?`
                 clinicalApproach={profileSettings.clinicalApproach || 'tcc'}
                 onOpenExtensionModal={() => setShowExtensionModal(true)}
                 isTranscriptionDisabled={Boolean(currentClinic && clinicRole === 'psychologist' && (currentClinic.settings?.aiSettings?.enabled === false || currentClinic.settings?.aiSettings?.allowTranscription === false))}
-                onSaveSession={async (patientId, date, time, duration, amount, type, note) => {
+                onSaveSession={async (patientId, date, time, duration, amount, type, note, supervisionDigest) => {
                   try {
                     const p = patients.find(pat => pat.id === patientId);
                     const existingSession = sessions.find(s =>
@@ -4446,12 +4487,13 @@ Como posso te ajudar hoje?`
                       const evolucoes = p.clinicalData?.evoluções || [];
                       const nextSessionNum = (evolucoes.length > 0 ? Math.max(...evolucoes.map(e => e.sessionNumber || 0)) : 0) + 1;
                       
-                      const newEvo = {
+                      const newEvo: any = {
                         id: sessionId || 'evo_' + Date.now(),
                         date: date.split('-').reverse().join('/'),
                         time,
                         sessionNumber: nextSessionNum,
-                        note: note
+                        note: note,
+                        ...(supervisionDigest ? { supervisionDigest } : {})
                       };
                       
                       const updatedEvolucoes = [newEvo, ...evolucoes];
@@ -4639,6 +4681,15 @@ Como posso te ajudar hoje?`
           onClose={() => setIsContentIdeasModalOpen(false)}
           patients={patients}
           user={user}
+        />
+
+        {/* Modal de Radar de Estudos & Aprofundamento Clínico */}
+        <StudyRadarModal
+          isOpen={isStudyRadarModalOpen}
+          onClose={() => setIsStudyRadarModalOpen(false)}
+          patients={patients}
+          user={user}
+          clinicalApproach={CLINICAL_APPROACHES[profileSettings.clinicalApproach || 'tcc']?.name || 'TCC (Terapia Cognitivo-Comportamental)'}
         />
 
         {/* Modal de Gestão da Equipe da Clínica (B2B) */}
@@ -5191,10 +5242,17 @@ function DashboardView({
       className="space-y-8"
     >
       <div>
-        <h2 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-          Olá {user?.displayName ? user.displayName.split(' ')[0] : 'Doutor(a)'}!
+        <h2 className="text-3xl font-bold tracking-tight flex items-center gap-2 flex-wrap">
+          <span>
+            Olá, {user?.displayName ? user.displayName.split(' ')[0] : 'Doutor(a)'}!{' '}
+            {(() => {
+              const hour = new Date().getHours();
+              if (hour >= 5 && hour < 12) return 'Bom dia';
+              if (hour >= 12 && hour < 18) return 'Boa tarde';
+              return 'Boa noite';
+            })()}
+          </span>
         </h2>
-        <p className="text-text-muted mt-2">Você está no controle da sua rotina. Vamos começar?</p>
         <p className="text-[10px] text-text-muted mt-1 uppercase tracking-wider">Última atualização: {new Date().toLocaleTimeString()}</p>
       </div>
 
@@ -5318,6 +5376,7 @@ function DashboardView({
                const p = patients.find(pat => pat.id === session.patientId);
                const sessionDate = new Date(session.date + 'T12:00:00');
                const modality = session.type || p?.modality || 'Presencial';
+               const meetingUrl = buildMeetingUrl(session.meetingLink || p?.meetingLink, p?.id || session.patientId, p?.name || session.triageName);
                return (
                  <div 
                   key={session.id} 
@@ -5328,7 +5387,7 @@ function DashboardView({
                       <p className="text-sm font-bold text-text-main">{session.time}</p>
                       <p className="text-[10px] text-text-muted">{format(sessionDate, 'dd/MM/yyyy')}</p>
                     </div>
-                    <div className="flex-1">
+                    <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <p className={cn("font-medium text-text-main uppercase transition-all", isPrivacyMode && "privacy-blur")}>{p?.name || session.triageName || 'PACIENTE'}</p>
                         {!isPrivacyMode && p?.phone && getWhatsAppLink(p.phone) && (
@@ -5337,7 +5396,7 @@ function DashboardView({
                             target="_blank" 
                             rel="noopener noreferrer"
                             onClick={(e) => e.stopPropagation()}
-                            className="text-green-500 hover:text-green-400 p-1 transition-colors flex items-center justify-center rounded-lg hover:bg-green-500/10 cursor-pointer"
+                            className="text-green-500 hover:text-green-400 p-1 transition-colors flex items-center justify-center rounded-lg hover:bg-green-500/10 cursor-pointer shrink-0"
                             title="Conversar no WhatsApp"
                           >
                             <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
@@ -5345,8 +5404,24 @@ function DashboardView({
                             </svg>
                           </a>
                         )}
+                        {!isPrivacyMode && meetingUrl && (
+                          <a
+                            href={meetingUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-1 transition-transform hover:scale-110 flex items-center justify-center rounded-lg hover:bg-amber-500/10 cursor-pointer shrink-0"
+                            title={`Entrar na chamada online (${session.meetingLink || p?.meetingLink})`}
+                          >
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none">
+                              <path d="M16 9.5L21.2 6.1C21.86 5.67 22.75 6.14 22.75 6.93V17.07C22.75 17.86 21.86 18.33 21.2 17.9L16 14.5V9.5Z" fill="#FF9800" />
+                              <rect x="1.5" y="4.5" width="15" height="15" rx="4" fill="#FFC107" />
+                              <circle cx="5.5" cy="15.5" r="1.75" fill="#FFFFFF" />
+                            </svg>
+                          </a>
+                        )}
                       </div>
-                      <div className="flex gap-2 mt-1">
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
                         <span className={cn(
                           "text-[10px] px-2 py-0.5 rounded-full border",
                           modality === 'Online' ? "bg-blue-500/20 text-blue-400 border-blue-500/20" : "bg-purple-500/20 text-purple-400 border-purple-500/20"
@@ -12915,6 +12990,7 @@ function CalendarView({
         ...s,
         patientName: s.isTriage ? s.triageName : (p?.name || 'Paciente'),
         patientPhone: p?.phone || '',
+        meetingLink: s.meetingLink || p?.meetingLink || '',
         dayName: capitalizedDayName,
         // For recorded sessions, use the number stored or calculate it
         sessionNumber: s.sessionNumber || (p ? calculateSessionNumber(p, day) : 1)
@@ -12945,6 +13021,7 @@ function CalendarView({
             patientId: p.id,
             patientName: p.name,
             patientPhone: p.phone || '',
+            meetingLink: p.meetingLink || '',
             date: dateStr,
             time: p.sessionTime,
             type: p.modality || 'Online',
@@ -13418,6 +13495,23 @@ function CalendarView({
                                   </h4>
                                 </div>
 
+                                {session.meetingLink && buildMeetingUrl(session.meetingLink, session.patientId, session.patientName) && (
+                                  <a
+                                    href={buildMeetingUrl(session.meetingLink, session.patientId, session.patientName)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="p-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 transition-all shrink-0 cursor-pointer flex items-center justify-center"
+                                    title={`Entrar na Sessão Online (${session.meetingLink})`}
+                                  >
+                                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none">
+                                      <path d="M16 9.5L21.2 6.1C21.86 5.67 22.75 6.14 22.75 6.93V17.07C22.75 17.86 21.86 18.33 21.2 17.9L16 14.5V9.5Z" fill="#FF9800" />
+                                      <rect x="1.5" y="4.5" width="15" height="15" rx="4" fill="#FFC107" />
+                                      <circle cx="5.5" cy="15.5" r="1.75" fill="#FFFFFF" />
+                                    </svg>
+                                  </a>
+                                )}
+
                                 {session.patientPhone && getWhatsAppLink(session.patientPhone) && (
                                   <a
                                     href={getWhatsAppLink(session.patientPhone)!}
@@ -13634,6 +13728,22 @@ function CalendarView({
                             <span className="font-bold truncate text-text-main uppercase">
                               {session.patientName || 'Paciente'}
                             </span>
+                            {session.meetingLink && buildMeetingUrl(session.meetingLink, session.patientId, session.patientName) && (
+                              <a
+                                href={buildMeetingUrl(session.meetingLink, session.patientId, session.patientName)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="hover:scale-110 p-0.5 rounded transition-transform shrink-0 flex items-center justify-center"
+                                title={`Entrar na Sessão Online (${session.meetingLink})`}
+                              >
+                                <svg viewBox="0 0 24 24" width="12" height="12" fill="none">
+                                  <path d="M16 9.5L21.2 6.1C21.86 5.67 22.75 6.14 22.75 6.93V17.07C22.75 17.86 21.86 18.33 21.2 17.9L16 14.5V9.5Z" fill="#FF9800" />
+                                  <rect x="1.5" y="4.5" width="15" height="15" rx="4" fill="#FFC107" />
+                                  <circle cx="5.5" cy="15.5" r="1.75" fill="#FFFFFF" />
+                                </svg>
+                              </a>
+                            )}
                             {session.patientPhone && getWhatsAppLink(session.patientPhone) && (
                               <a
                                 href={getWhatsAppLink(session.patientPhone)!}
@@ -15021,12 +15131,13 @@ function ImportTranscriptView({
 }: { 
   patients: any[], 
   clinicalApproach: string,
-  onSaveSession: (patientId: string, date: string, time: string, duration: string, amount: string, type: 'Presencial' | 'Online', note: string) => void,
+  onSaveSession: (patientId: string, date: string, time: string, duration: string, amount: string, type: 'Presencial' | 'Online', note: string, supervisionDigest?: string) => void,
   onCancel: () => void,
   onOpenExtensionModal?: () => void,
   isTranscriptionDisabled?: boolean
 }) {
   const [transcriptText, setTranscriptText] = useState('');
+  const [supervisionDigest, setSupervisionDigest] = useState('');
   const [selectedPatientId, setSelectedPatientId] = useState('');
   const [sessionDate, setSessionDate] = useState(new Date().toISOString().split('T')[0]);
   const [sessionTime, setSessionTime] = useState(new Date().toTimeString().split(' ')[0].substring(0, 5));
@@ -15211,18 +15322,21 @@ function ImportTranscriptView({
         * Item descrevendo o foco principal e intervenções baseadas na abordagem ${approachInfo.name}.
         `;
       } else if (actionType === 'supervisao') {
-        prompt = `Aja como um supervisor clínico altamente experiente e especializado na abordagem ${approachInfo.name}.
-        Analise criticamente a transcrição de atendimento clínico a seguir e forneça uma supervisão clínica construtiva sobre a atuação do terapeuta.
-        
-        Identifique de forma detalhada e dividida em tópicos claros (utilize numeração simples como 1, 2, 3):
-        1. Pontos fortes e acertos na condução do terapeuta (o que foi bem feito).
-        2. Pontos a melhorar ou possíveis desvios (ex: onde o terapeuta fala demais, se repete, interrompe o paciente, perde oportunidades de aprofundamento, ou comete desvios técnicos).
-        3. Otimização de intervenções: Onde o terapeuta poderia ter aprofundado mais na fala do paciente e quais perguntas reflexivas, hipóteses diagnósticas ou técnicas poderiam ter sido exploradas sob a perspectiva da abordagem ${approachInfo.name}.
-        4. Recomendações e orientações práticas de manejo clínico para as próximas sessões.
-        
+        prompt = `Aja como um supervisor clínico sênior, pragmático e acolhedor, especializado na abordagem ${approachInfo.name}.
+        Analise a transcrição de atendimento clínico a seguir e forneça uma supervisão clínica madura, realista e útil sobre a condução da sessão.
+
+        DIRETRIZES FUNDAMENTAIS DE SUPERVISÃO (ZERO "CRICRI" DE MANUAL):
+        - NUNCA critique o estilo pessoal e autêntico do terapeuta: fazer comentários ou trazer exemplos pessoais breves (autorrevelação estratégica que gera conexão e normaliza a dor do paciente no contexto), usar tom conversacional ou falar um pouco mais em momentos de explicação NÃO são erros técnicos. Avalie sempre pela função clínica (se aproximou o paciente e fez sentido no contexto, valide como acerto de aliança!).
+        - Foque apenas no que realmente agrega profundidade clínica ao terapeuta.
+
+        Divida a análise em 4 tópicos claros (utilize numeração simples 1, 2, 3, 4):
+        1. Pontos fortes, aliança terapêutica e acertos de manejo (o que conectou bem e funcionou na sessão).
+        2. Onde aprofundar além do básico e como lapidar a Psicoeducação: identifique se houve algum momento em que a explicação/psicoeducação ou a intervenção ficou na superfície ou poderia ter entrado de forma mais vivencial, sugerindo metáforas ou explicações mais claras.
+        3. Outras portas de entrada (Manejo Alternativo): para os pontos em que o paciente racionalizou, repetiu queixas ou ficou travado, sugira 2 ou 3 formas diferentes de entrar nesse tema e perguntas cirúrgicas sob a ótica da ${approachInfo.name}.
+        4. Onde estudar isso (Referências Específicas): indique 1 ou 2 livros específicos, autores ou conceitos avançados exatos que ajudam a aprofundar exatamente na demanda desta sessão.
+
         DIRETRIZES DE FORMATAÇÃO (SIGA À RISCA):
         - NÃO utilize nenhum tipo de negrito ou itálico com asteriscos (como **texto** ou ***texto***). O texto deve ser inteiramente limpo de caracteres asteriscos extras.
-        - Mantenha um tom profissional, acadêmico e construtivo, focado na melhoria da prática clínica.
         
         Transcrição:
         "${transcriptText}"`;
@@ -15236,6 +15350,8 @@ function ImportTranscriptView({
 
       setAiMessages(prev => [...prev, { role: 'user', content: `Executar: ${label}` }]);
 
+      const sourceTranscriptSnapshot = transcriptText;
+
       const response = await generateContentWithFallback(ai, {
         model: "gemini-2.5-flash",
         contents: prompt,
@@ -15244,6 +15360,20 @@ function ImportTranscriptView({
       const responseText = response.text || "Não foi possível gerar uma resposta.";
       setAiMessages(prev => [...prev, { role: 'model', content: responseText }]);
       setInteractionCount(prev => prev + 1);
+
+      // Extração silenciosa da Cápsula de Manejo (~350 caracteres) para o Radar de Estudos (sem guardar a transcrição bruta)
+      if ((actionType === 'relato' || actionType === 'supervisao') && !supervisionDigest && sourceTranscriptSnapshot.length > 100) {
+        generateContentWithFallback(ai, {
+          model: "gemini-2.5-flash",
+          contents: `Com base nesta transcrição de sessão na abordagem ${approachInfo.name}, gere uma CÁPSULA DE MANEJO TÉCNICO ultra-compacta (máximo de 350 caracteres, em 2 ou 3 frases curtas, sem nomes próprios e sem asteriscos).
+          REGRA: Não critique estilo pessoal do terapeuta (como exemplos pessoais ou tempo de fala). Registre apenas: (1) o que o terapeuta já conduziu bem, (2) qual ponto específico da demanda ou da psicoeducação pede aprofundamento além do básico, e (3) qual subtema técnico estudar.
+          Transcrição: "${sourceTranscriptSnapshot.substring(0, 18000)}"`
+        }).then(res => {
+          if (res?.text) {
+            setSupervisionDigest(res.text.trim().slice(0, 480));
+          }
+        }).catch(err => console.warn("Aviso ao gerar cápsula silenciosa de manejo:", err));
+      }
     } catch (err: any) {
       console.error(err);
       setAiMessages(prev => [...prev, { role: 'model', content: `Erro ao gerar resposta da IA: ${err.message}` }]);
@@ -15686,7 +15816,7 @@ function ImportTranscriptView({
                   }
                   const type = (selectedPatient?.modality === 'Presencial' ? 'Presencial' : 'Online');
                   const amount = selectedPatient?.amount || selectedPatient?.sessionAmount || 180;
-                  onSaveSession(selectedPatientId, sessionDate, sessionTime, sessionDuration, String(amount), type, transcriptText);
+                  onSaveSession(selectedPatientId, sessionDate, sessionTime, sessionDuration, String(amount), type, transcriptText, supervisionDigest || undefined);
                 }}
                 disabled={!selectedPatientId || !transcriptText.trim()}
                 className="w-full bg-primary text-white py-3 rounded-2xl text-xs font-bold uppercase tracking-widest transition-all shadow-lg shadow-primary/20 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"

@@ -63,6 +63,7 @@ export interface Patient {
       time: string;
       sessionNumber: number;
       note: string;
+      supervisionDigest?: string;
     }>;
     smartNotes?: {
       padroes?: string;
@@ -180,6 +181,8 @@ export interface Session {
   reminderDisabled?: boolean;
   confirmedAt?: string;
   desmarcouAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Transaction {

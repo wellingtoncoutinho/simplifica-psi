@@ -624,12 +624,6 @@ Gere entre 4 e 6 ideias profundas, diversificadas e ricas. Retorne APENAS o JSON
             <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
             <span>Totalmente seguro: todos os nomes e dados sensíveis são removidos antes da análise da IA.</span>
           </div>
-          <button 
-            onClick={onClose}
-            className="text-text-muted hover:text-white transition-colors"
-          >
-            Fechar Janela
-          </button>
         </div>
 
       </div>
